@@ -9,7 +9,7 @@ process.env.EPIC_DATA_FILE = join(tempDir, 'epic.json');
 try {
   const { store } = await import('./kernel/store.js');
   const {
-    bookLaundryOrder, createLaundryExpense, laundryCatalogue, laundryReports, quoteLaundryOrder, seedLaundryDefaults, transitionLaundryOrder,
+    bookLaundryOrder, createLaundryExpense, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryReports, quoteLaundryOrder, seedLaundryDefaults, transitionLaundryOrder,
   } = await import('./modules/laundry/domain.js');
 
   const tenant = 'TEST';
@@ -52,6 +52,16 @@ try {
   assert.equal(expense.amount, 1250, 'store expenses persist with their payment metadata');
   assert.equal(store.rowsOf(tenant, 'journal_entry').length, 1, 'an expense posts a balanced journal entry');
   assert.equal(laundryReports(tenant).summary.expenses, 1250, 'reports include the posted store expense');
+
+  const customerImport = importLaundryCustomers(tenant, 'test@epic.local', [
+    { name: 'Imported Customer', phone: '9810146062', email: 'imported@example.test', address: 'Import street' },
+  ]);
+  assert.equal(customerImport.created, 1, 'customer imports create a reusable customer record');
+  const priceImport = importLaundryPrices(tenant, 'test@epic.local', [
+    { garmentName: 'Imported blazer', categoryName: 'Men\'s Wear', serviceName: 'Dry Cleaning', rate: 450, unit: 'Piece', customerPhone: '9810146062' },
+  ]);
+  assert.equal(priceImport.created, 1, 'price imports create a scoped garment and service rate');
+  assert.equal(laundryCatalogue(tenant).prices.some((price) => price.garmentName === 'Imported blazer' && Number((price as { rate?: number }).rate) === 450), true, 'imported prices are available to the counter catalogue');
 
   console.log('PASS  laundry vertical slice self-test complete');
 } finally {

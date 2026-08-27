@@ -55,6 +55,27 @@ type ExpenseInput = {
   notes?: string;
 };
 
+type ImportCustomerInput = {
+  name?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+};
+
+type ImportPriceInput = {
+  garmentName?: string;
+  categoryName?: string;
+  serviceName?: string;
+  rate?: number | string;
+  unit?: string;
+  hsn?: string;
+  gstRate?: number | string;
+  customerPhone?: string;
+};
+
+type ImportIssue = { row: number; message: string };
+type ImportResult = { created: number; updated: number; skipped: number; errors: ImportIssue[] };
+
 const TRANSITIONS: Record<LaundryState, LaundryState[]> = {
   Booked: ['Picked Up', 'In Process', 'Cancelled'],
   'Picked Up': ['In Process', 'Cancelled'],
@@ -290,6 +311,86 @@ export function searchLaundryCustomers(tenant: string, search = '') {
     .filter((row) => !needle || `${row.data.name || ''} ${row.data.phone || ''}`.toLowerCase().includes(needle))
     .slice(0, 12)
     .map((row) => ({ id: row.id, name: row.data.name, phone: row.data.phone || '', email: row.data.email || '', address: row.data.address || '' }));
+}
+
+function importResult(): ImportResult { return { created: 0, updated: 0, skipped: 0, errors: [] }; }
+
+export function importLaundryCustomers(tenant: string, actor: string, rows: ImportCustomerInput[]) {
+  if (!Array.isArray(rows)) throw new Error('customer import must be a list of rows');
+  if (rows.length === 0) throw new Error('customer import has no rows');
+  if (rows.length > 2_000) throw new Error('customer import is limited to 2,000 rows at a time');
+  const result = importResult();
+  rows.forEach((input, index) => {
+    try {
+      const name = String(input.name || '').trim();
+      const phone = normPhone(input.phone);
+      if (!name) throw new Error('customer name is required');
+      if (phone.length < 6) throw new Error('a valid phone is required');
+      const existing = store.rowsOf(tenant, 'party').find((row) => normPhone(row.data.phone) === phone);
+      if (existing) {
+        existing.data = { ...existing.data, name, phone, email: String(input.email || '').trim() || existing.data.email, address: String(input.address || '').trim() || existing.data.address, is_customer: true };
+        existing.updated_at = new Date().toISOString();
+        store.updateRow(existing);
+        result.updated += 1;
+      } else {
+        createRow(tenant, actor, 'party', { name, phone, email: String(input.email || '').trim(), address: String(input.address || '').trim(), is_customer: true });
+        result.created += 1;
+      }
+    } catch (error: any) { result.skipped += 1; result.errors.push({ row: index + 2, message: error.message || 'Invalid row' }); }
+  });
+  audit(tenant, actor, 'laundry:customers-imported', { after: { ...result, errors: result.errors.slice(0, 20) } });
+  return result;
+}
+
+function findNamedRow(tenant: string, entity: string, name: string) {
+  const target = name.trim().toLowerCase();
+  return store.rowsOf(tenant, entity).find((row) => String(row.data.name || '').trim().toLowerCase() === target);
+}
+
+export function importLaundryPrices(tenant: string, actor: string, rows: ImportPriceInput[]) {
+  if (!Array.isArray(rows)) throw new Error('price import must be a list of rows');
+  if (rows.length === 0) throw new Error('price import has no rows');
+  if (rows.length > 2_000) throw new Error('price import is limited to 2,000 rows at a time');
+  const allowedUnits = new Set(['Piece', 'Kilogram', 'Pair', 'Square Foot']);
+  const result = importResult();
+  rows.forEach((input, index) => {
+    try {
+      const garmentName = String(input.garmentName || '').trim();
+      const categoryName = String(input.categoryName || 'Imported').trim() || 'Imported';
+      const serviceName = String(input.serviceName || '').trim();
+      if (input.rate === undefined || input.rate === null || String(input.rate).trim() === '') throw new Error('rate is required');
+      const rate = round(Number(input.rate));
+      if (!garmentName) throw new Error('garment name is required');
+      if (!serviceName) throw new Error('service name is required');
+      if (!Number.isFinite(rate) || rate < 0) throw new Error('rate must be zero or greater');
+      const requestedUnit = String(input.unit || 'Piece').trim();
+      const unit = allowedUnits.has(requestedUnit) ? requestedUnit : 'Piece';
+      const category = findNamedRow(tenant, 'laundry_category', categoryName) || createRow(tenant, actor, 'laundry_category', { name: categoryName, active: true });
+      const service = findNamedRow(tenant, 'laundry_service', serviceName) || createRow(tenant, actor, 'laundry_service', { name: serviceName, active: true });
+      let garment = findNamedRow(tenant, 'laundry_garment', garmentName);
+      if (!garment) {
+        garment = createRow(tenant, actor, 'laundry_garment', {
+          name: garmentName, code: garmentName.toUpperCase().replace(/[^A-Z0-9]+/g, '-'), category: category.id, unit,
+          hsn: String(input.hsn || '9997').trim() || '9997', gst_rate: Math.max(0, round(Number(input.gstRate) || 0)), active: true,
+        });
+      }
+      const customerPhone = normPhone(input.customerPhone);
+      const customer = customerPhone ? store.rowsOf(tenant, 'party').find((row) => normPhone(row.data.phone) === customerPhone && row.data.is_customer) : undefined;
+      if (customerPhone && !customer) throw new Error('customer phone does not match an imported customer');
+      const existingPrice = store.rowsOf(tenant, 'laundry_price').find((row) => row.data.garment === garment!.id && row.data.service === service.id && row.data.customer === customer?.id);
+      if (existingPrice) {
+        existingPrice.data = { ...existingPrice.data, rate, active: true };
+        existingPrice.updated_at = new Date().toISOString();
+        store.updateRow(existingPrice);
+        result.updated += 1;
+      } else {
+        createRow(tenant, actor, 'laundry_price', { garment: garment.id, service: service.id, customer: customer?.id, rate, active: true });
+        result.created += 1;
+      }
+    } catch (error: any) { result.skipped += 1; result.errors.push({ row: index + 2, message: error.message || 'Invalid row' }); }
+  });
+  audit(tenant, actor, 'laundry:prices-imported', { after: { ...result, errors: result.errors.slice(0, 20) } });
+  return result;
 }
 
 export function laundryDashboard(tenant: string, asOf = today()) {

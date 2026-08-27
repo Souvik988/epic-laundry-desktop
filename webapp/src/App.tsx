@@ -13,6 +13,7 @@ import LaundryOrders from "@/pages/laundry/LaundryOrders";
 import LaundryCatalogue from "@/pages/laundry/LaundryCatalogue";
 import LaundryExpenses from "@/pages/laundry/LaundryExpenses";
 import LaundryReports from "@/pages/laundry/LaundryReports";
+import LaundryImport from "@/pages/laundry/LaundryImport";
 
 export function App() {
   return (
@@ -25,6 +26,8 @@ export function App() {
         <Route path="orders" element={<LaundryOrders />} />
         <Route path="expenses" element={<LaundryExpenses />} />
         <Route path="reports" element={<LaundryReports />} />
+        <Route path="import-prices" element={<LaundryImport mode="prices" />} />
+        <Route path="import-customers" element={<LaundryImport mode="customers" />} />
         <Route path="catalogue" element={<LaundryCatalogue />} />
       </Route>
       <Route path="*" element={<LegacyErp />} />

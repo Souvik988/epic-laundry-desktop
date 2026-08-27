@@ -46,7 +46,7 @@ import {
 } from './modules/crm/engagement.js';
 import { dashboardSummary } from './modules/analytics/dashboard.js';
 import {
-  bookLaundryOrder, createLaundryExpense, getLaundryOrder, laundryCatalogue, laundryDashboard,
+  bookLaundryOrder, createLaundryExpense, getLaundryOrder, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard,
   laundryReports, listLaundryExpenses, listLaundryOrders, quoteLaundryOrder, searchLaundryCustomers, transitionLaundryOrder,
 } from './modules/laundry/domain.js';
 
@@ -111,6 +111,14 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/laundry/reports', { preHandler: guard }, async (req: any) => {
     const query = req.query as any;
     return laundryReports(TENANT, query?.from, query?.to);
+  });
+  app.post('/api/laundry/import/customers', { preHandler: guard }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(importLaundryCustomers(TENANT, USER, req.body?.rows)); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/import/prices', { preHandler: guard }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(importLaundryPrices(TENANT, USER, req.body?.rows)); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
 
   // ---- generic entity CRUD (the Schema Registry in action) ----
