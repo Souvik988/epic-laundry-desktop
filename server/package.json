@@ -8,7 +8,8 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:laundry": "tsx src/_selftest-laundry.ts"
   },
   "dependencies": {
     "fastify": "^4.28.1",

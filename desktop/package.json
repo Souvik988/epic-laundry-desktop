@@ -1,0 +1,52 @@
+{
+  "name": "epic-laundry-desktop",
+  "version": "0.1.0",
+  "author": "Epic BOS",
+  "private": true,
+  "description": "Offline-first Electron desktop application for Epic Laundry.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:server": "npm --prefix ../server run build",
+    "pack": "npm run build:server && electron-builder --dir",
+    "dist": "npm run build:server && electron-builder",
+    "dist:win": "npm run build:server && electron-builder --win"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.epic.laundry",
+    "productName": "Epic Laundry",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../server",
+        "to": "server",
+        "filter": [
+          "dist/**/*",
+          "public/**/*",
+          "node_modules/**/*",
+          "package.json"
+        ]
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { EntityRow, GLEntry, AuditEntry, OutboxEvent, StockLedgerEntry, ImsAction } from './types.js';
 
 export interface DbShape {
@@ -35,8 +36,10 @@ export class Store {
 
   private persist() {
     try {
-      const dir = FILE.slice(0, Math.max(0, FILE.lastIndexOf('/')));
-      if (dir && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+      // dirname is platform-aware. Electron supplies an absolute Windows path in production,
+      // while tests and Linux builds may use forward slashes.
+      const dir = dirname(FILE);
+      if (dir && dir !== '.' && !existsSync(dir)) mkdirSync(dir, { recursive: true });
       writeFileSync(FILE, JSON.stringify(this.db, null, 2));
     } catch (e) {
       console.error('[store] persist failed:', (e as Error).message);

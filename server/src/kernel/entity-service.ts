@@ -85,6 +85,7 @@ export function submitRow(tenant: string, actor: string, entity: string, id: str
     customer: row.data.customer,
     grand_total: row.data.grand_total,
     posting_date: row.data.posting_date,
+    suppress_notifications: Boolean(row.data.suppress_notifications),
   });
   return row;
 }

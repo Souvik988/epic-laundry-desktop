@@ -6,8 +6,30 @@ import { CommandPalette } from "@/components/layout/CommandPalette";
 import Dashboard from "@/pages/Dashboard";
 import { Placeholder } from "@/pages/Placeholder";
 import { ALL_PAGES } from "@/lib/nav";
+import { LaundryShell } from "@/components/laundry/LaundryShell";
+import LaundryDashboard from "@/pages/laundry/LaundryDashboard";
+import LaundryBooking from "@/pages/laundry/LaundryBooking";
+import LaundryOrders from "@/pages/laundry/LaundryOrders";
+import LaundryCatalogue from "@/pages/laundry/LaundryCatalogue";
 
 export function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<Navigate to="/laundry/dashboard" replace />} />
+      <Route path="/laundry" element={<LaundryShell />}>
+        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route path="dashboard" element={<LaundryDashboard />} />
+        <Route path="new-order" element={<LaundryBooking />} />
+        <Route path="orders" element={<LaundryOrders />} />
+        <Route path="catalogue" element={<LaundryCatalogue />} />
+      </Route>
+      <Route path="*" element={<LegacyErp />} />
+    </Routes>
+  );
+}
+
+/** The original generic ERP remains available on its existing routes while Laundry is the default desk. */
+function LegacyErp() {
   const { pathname } = useLocation();
 
   return (

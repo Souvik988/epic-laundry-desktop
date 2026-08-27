@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { registerApi } from './api.js';
 import { registerSeedAutomations } from './automations/seed.js';
 import { createRow, listRows, submitRow } from './kernel/entity-service.js';
+import { seedLaundryDefaults } from './modules/laundry/domain.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const PORT = Number(process.env.PORT || 3001);
@@ -23,6 +24,7 @@ await app.register(fastifyStatic, {
 registerApi(app);
 registerSeedAutomations(TENANT);
 seedDemo();
+seedLaundryDefaults(TENANT);
 
 function seedDemo() {
   if (listRows(TENANT, 'party').length) return;

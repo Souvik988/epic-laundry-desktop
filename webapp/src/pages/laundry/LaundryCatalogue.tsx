@@ -1,0 +1,18 @@
+import { useQuery } from '@tanstack/react-query'
+import { Loader2, Ruler, Shirt, Sparkles } from 'lucide-react'
+import { apiGet } from '@/lib/api'
+import type { LaundryCatalogue as Catalogue } from '@/lib/laundry'
+import { formatINR } from '@/lib/utils'
+
+export default function LaundryCatalogue() {
+  const query = useQuery({ queryKey: ['laundry-catalogue'], queryFn: () => apiGet<Catalogue>('/laundry/catalogue') })
+  if (query.isLoading) return <div className="grid h-80 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-[#3a7d78]" /></div>
+  if (query.isError || !query.data) return <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-rose-800">The laundry catalogue could not be loaded.</div>
+  const data = query.data
+  const garmentById = new Map(data.garments.map((garment) => [garment.id, garment]))
+  return <div className="animate-in fade-in slide-in-from-bottom-2 duration-500"><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#4d8982]">Master data</p><h1 className="mt-1 font-serif text-3xl text-[#17353c]">Garments & price rules</h1><p className="mt-1 text-sm text-[#718087]">The order desk reads this persisted catalogue and never invents a price.</p>
+    <section className="mt-6 grid gap-4 md:grid-cols-3"><Metric label="Categories" value={data.categories.length} note="Organise the counter grid" /><Metric label="Services" value={data.services.length} note="Each can price independently" /><Metric label="Active price rules" value={data.prices.length} note="Garment × service matrix" /></section>
+    <section className="mt-6 overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]"><div className="flex items-center justify-between border-b border-[#263f44]/10 p-5"><div><p className="font-serif text-xl text-[#17353c]">Current pricing matrix</p><p className="text-xs text-[#718087]">Customer-specific rules automatically take priority when booked.</p></div><Sparkles className="h-5 w-5 text-[#d19b39]" /></div><div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-[#fafaf7] text-[10px] font-bold uppercase tracking-[.14em] text-[#718087]"><tr><th className="px-5 py-3">Garment</th><th className="px-3 py-3">Category</th><th className="px-3 py-3">Service</th><th className="px-3 py-3">Unit</th><th className="px-5 py-3 text-right">Rate</th></tr></thead><tbody>{data.prices.map((price) => { const garment = garmentById.get(price.garment); return <tr key={price.id} className="border-t border-[#263f44]/8"><td className="px-5 py-3.5"><span className="flex items-center gap-2"><span className="grid h-7 w-7 place-items-center rounded-lg bg-[#eaf3ef] text-[#39786f]"><Shirt className="h-3.5 w-3.5" /></span><span className="font-semibold">{price.garmentName}</span></span></td><td className="px-3 py-3.5 text-[#617178]">{garment?.categoryName}</td><td className="px-3 py-3.5 text-[#396e69]">{price.serviceName}</td><td className="px-3 py-3.5 text-[#617178]"><Ruler className="mr-1 inline h-3.5 w-3.5" />{garment?.unit}</td><td className="px-5 py-3.5 text-right font-bold tabular-nums">{formatINR(price.rate)}</td></tr> })}</tbody></table></div></section></div>
+}
+
+function Metric({ label, value, note }: { label: string; value: number; note: string }) { return <div className="rounded-[20px] border border-[#263f44]/10 bg-white p-5 shadow-[0_8px_28px_rgba(37,48,43,.04)]"><p className="text-xs font-bold uppercase tracking-[.13em] text-[#718087]">{label}</p><p className="mt-2 font-serif text-3xl text-[#17353c]">{value}</p><p className="mt-1 text-xs text-[#74848a]">{note}</p></div> }

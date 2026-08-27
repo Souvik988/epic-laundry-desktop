@@ -1,0 +1,74 @@
+export type LaundryState = 'Booked' | 'Picked Up' | 'In Process' | 'Ready' | 'Out for Delivery' | 'Delivered' | 'Cancelled'
+
+export type LaundryCatalogue = {
+  categories: Array<{ id: string; name: string; color?: string }>
+  services: Array<{ id: string; name: string; description?: string }>
+  garments: Array<{ id: string; name: string; code?: string; category: string; categoryName: string; unit: string; photo?: string }>
+  prices: Array<{ id: string; garment: string; service: string; garmentName: string; serviceName: string; rate: number }>
+}
+
+export type LaundryOrder = {
+  id: string
+  orderNumber: string
+  invoiceNumber?: string
+  customer: { id?: string; name: string; phone: string }
+  orderDate: string
+  expectedDeliveryDate: string
+  fulfillmentMode: string
+  state: LaundryState
+  itemCount: number
+  grandTotal: number
+  paymentMode: string
+  paymentStatus: string
+  source: string
+  items: Array<{ garmentName: string; serviceName: string; unit: string; qty: number; rate: number; amount: number }>
+  notes: string
+  photoPaths: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type LaundryDashboard = {
+  asOf: string
+  kpis: {
+    collection: number
+    orderRequests: number
+    pendingOrders: number
+    booking: number
+    delivery: number
+    delivered: number
+    todayRevenue: number
+    upcomingDeliveries: number
+  }
+  attention: Array<{ id: string; label: string; count: number; tone: string }>
+  recent: LaundryOrder[]
+}
+
+export type LaundryQuote = {
+  items: LaundryOrder['items']
+  subtotal: number
+  charges: number
+  discounts: number
+  taxable: number
+  taxRate: number
+  taxAmount: number
+  grandTotal: number
+}
+
+export const nextLaundryState: Partial<Record<LaundryState, LaundryState>> = {
+  Booked: 'In Process',
+  'Picked Up': 'In Process',
+  'In Process': 'Ready',
+  Ready: 'Out for Delivery',
+  'Out for Delivery': 'Delivered',
+}
+
+export const stateTone: Record<LaundryState, string> = {
+  Booked: 'bg-sky-100 text-sky-800 ring-sky-200',
+  'Picked Up': 'bg-amber-100 text-amber-800 ring-amber-200',
+  'In Process': 'bg-violet-100 text-violet-800 ring-violet-200',
+  Ready: 'bg-emerald-100 text-emerald-800 ring-emerald-200',
+  'Out for Delivery': 'bg-orange-100 text-orange-800 ring-orange-200',
+  Delivered: 'bg-slate-200 text-slate-700 ring-slate-300',
+  Cancelled: 'bg-rose-100 text-rose-800 ring-rose-200',
+}

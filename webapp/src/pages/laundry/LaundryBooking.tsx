@@ -1,0 +1,108 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Check, ChevronDown, CircleDollarSign, Loader2, Minus, PackagePlus, Plus, Printer, Search, Tag, UserPlus, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { apiGet, apiPost } from '@/lib/api'
+import type { LaundryCatalogue, LaundryQuote } from '@/lib/laundry'
+import { cn, formatINR } from '@/lib/utils'
+
+type CartLine = { garment: string; service: string; qty: number }
+type Customer = { id: string; name: string; phone: string; email?: string; address?: string }
+type Receipt = { orderNumber: string; invoiceNumber?: string; customer: { name: string; phone: string }; orderDate: string; expectedDeliveryDate: string; fulfillmentMode: string; items: LaundryQuote['items']; subtotal: number; charges: number; discounts: number; taxAmount: number; grandTotal: number; paymentMode: string; paymentStatus: string }
+type TagData = { tagNumber: string; orderNumber: string; customer: string; garment: string; service: string; expectedDeliveryDate: string }
+type BookingResult = { receipt: Receipt; tags: TagData[] }
+
+export default function LaundryBooking() {
+  const queryClient = useQueryClient()
+  const [cart, setCart] = useState<Record<string, CartLine>>({})
+  const [customer, setCustomer] = useState<Customer | null>(null)
+  const [customerSearch, setCustomerSearch] = useState('')
+  const [newCustomerName, setNewCustomerName] = useState('')
+  const [newCustomerPhone, setNewCustomerPhone] = useState('')
+  const [category, setCategory] = useState('all')
+  const [service, setService] = useState('all')
+  const [garmentSearch, setGarmentSearch] = useState('')
+  const [deliveryMode, setDeliveryMode] = useState<'Pickup Order' | 'Home Delivery' | 'Express Delivery'>('Home Delivery')
+  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState(defaultDeliveryDate())
+  const [paymentMode, setPaymentMode] = useState<'Pay Later' | 'Cash' | 'UPI' | 'Card'>('Pay Later')
+  const [charges, setCharges] = useState(0)
+  const [discounts, setDiscounts] = useState(0)
+  const [taxRate, setTaxRate] = useState(0)
+  const [notes, setNotes] = useState('')
+  const [receipt, setReceipt] = useState<BookingResult | null>(null)
+
+  const catalogueQuery = useQuery({ queryKey: ['laundry-catalogue'], queryFn: () => apiGet<LaundryCatalogue>('/laundry/catalogue') })
+  const customerQuery = useQuery({ queryKey: ['laundry-customers', customerSearch], queryFn: () => apiGet<Customer[]>(`/laundry/customers?search=${encodeURIComponent(customerSearch)}`), enabled: customerSearch.trim().length >= 2 })
+  const items = useMemo(() => Object.values(cart), [cart])
+  const quoteQuery = useQuery({
+    queryKey: ['laundry-quote', JSON.stringify(items), customer?.id, charges, discounts, taxRate],
+    queryFn: () => apiPost<LaundryQuote>('/laundry/quote', { items, customerId: customer?.id, charges, discounts, taxRate }),
+    enabled: items.length > 0,
+  })
+  const booking = useMutation({
+    mutationFn: () => apiPost<BookingResult>('/laundry/orders', {
+      customer: customer ? { id: customer.id } : { name: newCustomerName, phone: newCustomerPhone },
+      items, expectedDeliveryDate, fulfillmentMode: deliveryMode, paymentMode, charges, discounts, taxRate, notes,
+    }),
+    onSuccess: (result) => {
+      setReceipt(result); setCart({}); setCustomer(null); setCustomerSearch(''); setNewCustomerName(''); setNewCustomerPhone(''); setNotes('')
+      queryClient.invalidateQueries({ queryKey: ['laundry-dashboard'] }); queryClient.invalidateQueries({ queryKey: ['laundry-orders'] }); queryClient.invalidateQueries({ queryKey: ['laundry-customers'] })
+    },
+  })
+
+  const catalogue = catalogueQuery.data
+  const garmentById = useMemo(() => new Map((catalogue?.garments || []).map((item) => [item.id, item])), [catalogue])
+  const visiblePrices = useMemo(() => (catalogue?.prices || []).filter((price) => {
+    const garment = garmentById.get(price.garment)
+    return garment && (category === 'all' || garment.category === category) && (service === 'all' || price.service === service) && `${price.garmentName} ${price.serviceName}`.toLowerCase().includes(garmentSearch.trim().toLowerCase())
+  }), [catalogue, garmentById, category, service, garmentSearch])
+
+  function adjustLine(garment: string, serviceId: string, change: number) {
+    const key = `${garment}:${serviceId}`
+    setCart((previous) => {
+      const next = { ...previous }; const line = next[key]
+      const qty = (line?.qty || 0) + change
+      if (qty <= 0) delete next[key]; else next[key] = { garment, service: serviceId, qty }
+      return next
+    })
+  }
+
+  const canBook = items.length > 0 && expectedDeliveryDate && (customer || (newCustomerName.trim() && newCustomerPhone.trim())) && !booking.isPending
+
+  return <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#4d8982]">Laundry POS</p><h1 className="mt-1 font-serif text-3xl text-[#17353c]">Order & billing</h1><p className="mt-1 text-sm text-[#718087]">Build a clear garment record before it goes to the floor.</p></div><span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#3c796d]/20 bg-[#eaf3ef] px-3 py-1.5 text-xs font-semibold text-[#29635b]"><Check className="h-3.5 w-3.5" /> Server-calculated totals</span></div>
+
+    <div className="grid gap-5 xl:grid-cols-[280px_minmax(0,1fr)_340px]">
+      <section className="h-fit rounded-[22px] border border-[#263f44]/10 bg-white p-4 shadow-[0_8px_28px_rgba(37,48,43,.04)] xl:sticky xl:top-24">
+        <div className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#eaf3ef] text-[#39786f]"><UserPlus className="h-4 w-4" /></span><div><p className="font-semibold">Customer</p><p className="text-xs text-[#74848a]">Find or make one quickly</p></div></div>
+        {customer ? <div className="mt-4 rounded-xl bg-[#edf5f1] p-3"><div className="flex items-start justify-between gap-2"><div><p className="font-semibold text-[#1d4e49]">{customer.name}</p><p className="mt-0.5 text-xs text-[#52716c]">{customer.phone}</p></div><button onClick={() => setCustomer(null)} className="rounded-lg p-1 text-[#52716c] hover:bg-white" aria-label="Clear customer"><X className="h-4 w-4" /></button></div></div> : <>
+          <div className="relative mt-4"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7e8d90]" /><input value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="Search name or phone" className="h-10 w-full rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] pl-9 pr-3 text-sm outline-none transition focus:border-[#438b82] focus:ring-2 focus:ring-[#b9ded6]" /></div>
+          {customerQuery.data && <div className="mt-2 max-h-44 space-y-1 overflow-y-auto rounded-xl border border-[#263f44]/10 p-1">{customerQuery.data.map((result) => <button key={result.id} onClick={() => { setCustomer(result); setCustomerSearch('') }} className="w-full rounded-lg px-2.5 py-2 text-left hover:bg-[#edf5f1]"><span className="block text-sm font-medium">{result.name}</span><span className="text-xs text-[#718087]">{result.phone}</span></button>)}</div>}
+          <div className="mt-5 border-t border-dashed border-[#263f44]/15 pt-4"><p className="mb-2 text-[10px] font-bold uppercase tracking-[.15em] text-[#648077]">New customer</p><input value={newCustomerName} onChange={(event) => setNewCustomerName(event.target.value)} placeholder="Customer name" className="mb-2 h-10 w-full rounded-xl border border-[#263f44]/15 px-3 text-sm outline-none focus:border-[#438b82]" /><input value={newCustomerPhone} onChange={(event) => setNewCustomerPhone(event.target.value)} placeholder="Phone number" inputMode="tel" className="h-10 w-full rounded-xl border border-[#263f44]/15 px-3 text-sm outline-none focus:border-[#438b82]" /></div>
+        </>}
+        <div className="mt-5 border-t border-dashed border-[#263f44]/15 pt-4"><p className="mb-2 text-[10px] font-bold uppercase tracking-[.15em] text-[#648077]">Fulfilment</p><div className="space-y-1.5">{(['Pickup Order', 'Home Delivery', 'Express Delivery'] as const).map((mode) => <button key={mode} onClick={() => setDeliveryMode(mode)} className={cn('flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm font-medium transition', deliveryMode === mode ? 'bg-[#123039] text-white' : 'bg-[#f5f5f1] text-[#526368] hover:bg-[#eaeee8]')}><span>{mode}</span><span className={cn('h-2 w-2 rounded-full', deliveryMode === mode ? 'bg-[#e6bc65]' : 'bg-[#b1c1bc]')} /></button>)}</div>
+          <label className="mt-4 block text-xs font-semibold text-[#617178]">Expected delivery<input type="date" value={expectedDeliveryDate} onChange={(event) => setExpectedDeliveryDate(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-[#263f44]/15 bg-white px-2 text-sm outline-none focus:border-[#438b82]" /></label>
+        </div>
+      </section>
+
+      <section className="min-w-0 rounded-[22px] border border-[#263f44]/10 bg-white p-4 shadow-[0_8px_28px_rgba(37,48,43,.04)] md:p-5">
+        <div className="flex flex-col gap-3 border-b border-[#263f44]/10 pb-4"><div className="flex items-center justify-between"><div><p className="font-serif text-xl text-[#17353c]">Garment catalogue</p><p className="text-xs text-[#74848a]">Select the garment and service combination.</p></div><PackagePlus className="h-5 w-5 text-[#3a7d78]" /></div><div className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7e8d90]" /><input value={garmentSearch} onChange={(event) => setGarmentSearch(event.target.value)} placeholder="Search garments" className="h-10 w-full rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] pl-9 pr-3 text-sm outline-none focus:border-[#438b82]" /></div><Select value={category} onChange={setCategory} options={[{ id: 'all', name: 'All categories' }, ...(catalogue?.categories || [])]} /><Select value={service} onChange={setService} options={[{ id: 'all', name: 'All services' }, ...(catalogue?.services || [])]} /></div></div>
+        {catalogueQuery.isLoading ? <div className="grid h-72 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-[#3a7d78]" /></div> : catalogueQuery.isError ? <p className="p-8 text-center text-rose-700">The laundry catalogue could not be loaded.</p> : <div className="mt-4 grid max-h-[650px] gap-2 overflow-y-auto pr-1 sm:grid-cols-2 2xl:grid-cols-3">{visiblePrices.map((price) => { const garment = garmentById.get(price.garment)!; const line = cart[`${price.garment}:${price.service}`]; return <article key={price.id} className={cn('group rounded-2xl border p-3 transition', line ? 'border-[#57978d] bg-[#eef7f2]' : 'border-[#263f44]/10 bg-[#fcfcfa] hover:border-[#84b7af]')}><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e4ebe5] font-serif text-base font-bold text-[#43736e]">{price.garmentName.slice(0, 1)}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-[#223b40]">{price.garmentName}</p><p className="mt-0.5 truncate text-xs text-[#718087]">{garment.categoryName} · {price.serviceName}</p><p className="mt-1 text-xs font-semibold text-[#4c756e]">{formatINR(price.rate)} / {garment.unit.toLowerCase()}</p></div></div><div className="mt-3 flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-[.13em] text-[#829092]">{garment.unit}</span>{line ? <div className="flex items-center gap-1 rounded-lg bg-white p-0.5 shadow-sm"><button onClick={() => adjustLine(price.garment, price.service, -1)} className="grid h-7 w-7 place-items-center rounded-md text-[#5d7274] hover:bg-[#edf4ef]" aria-label={`Decrease ${price.garmentName}`}><Minus className="h-3.5 w-3.5" /></button><span className="w-6 text-center text-sm font-bold tabular-nums">{line.qty}</span><button onClick={() => adjustLine(price.garment, price.service, 1)} className="grid h-7 w-7 place-items-center rounded-md bg-[#123039] text-white" aria-label={`Increase ${price.garmentName}`}><Plus className="h-3.5 w-3.5" /></button></div> : <button onClick={() => adjustLine(price.garment, price.service, 1)} className="rounded-lg bg-[#123039] px-2.5 py-1.5 text-xs font-bold text-white transition hover:bg-[#1d4a53]">Add</button>}</div></article> })}{visiblePrices.length === 0 && <p className="col-span-full py-14 text-center text-sm text-[#718087]">No active price rules match these filters.</p>}</div>}
+      </section>
+
+      <section className="h-fit rounded-[22px] border border-[#263f44]/10 bg-[#fffdf8] p-4 shadow-[0_8px_28px_rgba(37,48,43,.05)] xl:sticky xl:top-24"><div className="flex items-center justify-between"><div><p className="font-serif text-xl text-[#17353c]">Selected</p><p className="text-xs text-[#74848a]">{items.length} garment line{items.length === 1 ? '' : 's'}</p></div><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#e6bc65]/35 text-[#72511d]"><Tag className="h-4 w-4" /></span></div><div className="mt-4 max-h-60 space-y-2 overflow-y-auto pr-1">{quoteQuery.data?.items.map((item) => <div key={`${item.garmentName}:${item.serviceName}`} className="rounded-xl bg-white p-3"><div className="flex justify-between gap-2"><div className="min-w-0"><p className="truncate text-sm font-semibold">{item.garmentName}</p><p className="text-xs text-[#718087]">{item.serviceName} · {item.qty} {item.unit.toLowerCase()}</p></div><p className="text-sm font-bold tabular-nums">{formatINR(item.amount)}</p></div></div>)}{items.length === 0 && <div className="rounded-2xl border border-dashed border-[#aabbb4] px-4 py-10 text-center text-sm text-[#718087]">Choose garments from the catalogue to start this order.</div>}</div>
+        <div className="mt-4 space-y-2 border-t border-[#263f44]/10 pt-4"><MoneyInput label="Additional charge" value={charges} onChange={setCharges} /><MoneyInput label="Discount" value={discounts} onChange={setDiscounts} /><MoneyInput label="Tax %" value={taxRate} onChange={setTaxRate} /></div>
+        <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Order notes (optional)" className="mt-4 min-h-16 w-full rounded-xl border border-[#263f44]/15 bg-white p-3 text-sm outline-none focus:border-[#438b82]" />
+        <div className="mt-4 rounded-2xl bg-[#123039] p-4 text-[#edf3ec]"><div className="flex justify-between text-sm text-[#c4d7d0]"><span>Sub total</span><span>{formatINR(quoteQuery.data?.subtotal || 0)}</span></div><div className="mt-1.5 flex justify-between text-sm text-[#c4d7d0]"><span>Adjustments</span><span>{formatINR((quoteQuery.data?.charges || 0) - (quoteQuery.data?.discounts || 0) + (quoteQuery.data?.taxAmount || 0))}</span></div><div className="mt-3 flex items-end justify-between border-t border-white/15 pt-3"><span className="font-serif text-lg">Grand total</span><span className="font-serif text-2xl tabular-nums text-[#f1ca75]">{formatINR(quoteQuery.data?.grandTotal || 0)}</span></div></div>
+        <div className="mt-4"><p className="mb-2 text-[10px] font-bold uppercase tracking-[.15em] text-[#648077]">Payment</p><div className="grid grid-cols-2 gap-1.5">{(['Pay Later', 'Cash', 'UPI', 'Card'] as const).map((mode) => <button key={mode} onClick={() => setPaymentMode(mode)} className={cn('rounded-xl px-2 py-2 text-xs font-bold transition', paymentMode === mode ? 'bg-[#e6bc65] text-[#17363e]' : 'bg-white text-[#617178] ring-1 ring-inset ring-[#263f44]/10 hover:bg-[#f2f4ee]')}>{mode}</button>)}</div></div>
+        {booking.isError && <p className="mt-3 rounded-xl bg-rose-50 p-3 text-xs text-rose-700">{booking.error instanceof Error ? booking.error.message : 'The order could not be booked.'}</p>}
+        <button disabled={!canBook} onClick={() => booking.mutate()} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#3a7d78] text-sm font-bold text-white shadow-[0_8px_16px_rgba(45,107,98,.2)] transition hover:bg-[#2d6863] disabled:cursor-not-allowed disabled:bg-[#a8b7b2]">{booking.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CircleDollarSign className="h-4 w-4" />}{booking.isPending ? 'Booking order…' : 'Book order'}</button>
+      </section>
+    </div>
+    {receipt && <ReceiptDialog result={receipt} onClose={() => setReceipt(null)} />}
+  </div>
+}
+
+function Select({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: Array<{ id: string; name: string }> }) { return <label className="relative block"><select aria-label="Filter catalogue" value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full appearance-none rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] px-3 pr-8 text-sm outline-none focus:border-[#438b82]"><>{options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</></select><ChevronDown className="pointer-events-none absolute right-2.5 top-3 h-4 w-4 text-[#718087]" /></label> }
+function MoneyInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) { return <label className="flex items-center justify-between gap-3 text-sm"><span className="text-[#617178]">{label}</span><input aria-label={label} type="number" min="0" step="0.01" value={value || ''} onChange={(event) => onChange(Number(event.target.value) || 0)} className="h-8 w-24 rounded-lg border border-[#263f44]/15 bg-white px-2 text-right text-sm font-semibold outline-none focus:border-[#438b82]" /></label> }
+function ReceiptDialog({ result, onClose }: { result: BookingResult; onClose: () => void }) { const receipt = result.receipt; return <div className="fixed inset-0 z-50 grid place-items-center bg-[#102b33]/55 p-4 backdrop-blur-sm"><div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-[24px] bg-[#fffdf8] p-5 shadow-2xl"><div className="flex justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#4d8982]">Order booked</p><h2 className="mt-1 font-serif text-2xl text-[#17353c]">{receipt.orderNumber}</h2></div><button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg hover:bg-[#f0eee9]" aria-label="Close receipt"><X className="h-4 w-4" /></button></div><div className="mt-5 rounded-2xl border border-dashed border-[#8daaa0] bg-white p-4"><div className="flex justify-between text-sm"><span>{receipt.customer.name}</span><span>{receipt.customer.phone}</span></div><p className="mt-1 text-xs text-[#718087]">Invoice {receipt.invoiceNumber} · Delivery {receipt.expectedDeliveryDate}</p><div className="mt-4 space-y-2 border-y border-[#263f44]/10 py-3">{receipt.items.map((item) => <div key={`${item.garmentName}:${item.serviceName}`} className="flex justify-between text-sm"><span>{item.garmentName} × {item.qty}</span><span>{formatINR(item.amount)}</span></div>)}</div><div className="mt-3 flex justify-between font-serif text-xl"><span>Total</span><span>{formatINR(receipt.grandTotal)}</span></div><p className="mt-2 text-xs text-[#718087]">{receipt.paymentStatus} · {receipt.paymentMode}</p></div><div className="mt-5"><p className="text-xs font-bold uppercase tracking-[.15em] text-[#648077]">Garment tags ({result.tags.length})</p><div className="mt-2 grid grid-cols-2 gap-2">{result.tags.map((tag) => <div key={tag.tagNumber} className="rounded-xl border border-[#263f44]/10 bg-white p-2.5 text-xs"><p className="font-bold text-[#225861]">{tag.tagNumber}</p><p className="mt-1 font-medium">{tag.garment}</p><p className="text-[#718087]">{tag.service}</p></div>)}</div></div><button onClick={() => window.print()} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#123039] py-3 text-sm font-bold text-white"><Printer className="h-4 w-4" /> Print receipt & tags</button></div></div> }
+function defaultDeliveryDate() { const date = new Date(); date.setDate(date.getDate() + 2); return date.toISOString().slice(0, 10) }

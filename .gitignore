@@ -10,7 +10,7 @@ desktop/dist/
 
 # runtime data (per-tenant JSON snapshots)
 server/data/
-desktop/*.json
+desktop/*.local.json
 epic.json
 
 # logs

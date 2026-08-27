@@ -12,6 +12,10 @@ export function registerSeedAutomations(tenant: string) {
   subscribe('sales_invoice.submitted.v1', async (e) => {
     const p = e.payload as any;
     if (p.tenant && p.tenant !== tenant) return;
+    if (p.suppress_notifications) {
+      audit(tenant, 'automation', 'wa:skip-suppressed', { row_id: p.id });
+      return;
+    }
     const party = store.getRow(tenant, p.customer);
     const phone = party?.data?.phone;
     if (!phone) {

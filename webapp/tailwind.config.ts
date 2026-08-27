@@ -6,7 +6,8 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Inter", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],
+        sans: ["Aptos", "Trebuchet MS", "Segoe UI", "sans-serif"],
+        serif: ["Palatino Linotype", "Book Antiqua", "Georgia", "serif"],
         mono: ["Fira Code", "monospace"],
       },
       colors: {

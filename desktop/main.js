@@ -205,9 +205,12 @@ ipcMain.handle('epic:save-file', async (_e, { content = '', suggestedName = 'exp
   return { ok: true, path: filePath };
 });
 
-// Send the loaded UI to a specific page (used by the application menu).
+// Send the loaded Laundry Desk to a specific React hash route. Legacy static ERP pages retain
+// their original URLs so the existing generic surface is still reachable when needed.
 function navigate(route) {
-  if (mainWin) mainWin.loadURL(`http://${HOST}:${PORT}${route}`);
+  if (!mainWin) return;
+  if (route.startsWith('/ui/')) mainWin.loadURL(`http://${HOST}:${PORT}${route}`);
+  else mainWin.loadURL(`http://${HOST}:${PORT}/ui/app/#${route}`);
 }
 
 // India-first application menu — mirrors the modules an Indian SME runs day to day.
@@ -219,8 +222,8 @@ function buildMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'New Sales Invoice', accelerator: 'CmdOrCtrl+N', click: go('/ui/invoices.html') },
-        { label: 'New POS Bill', accelerator: 'CmdOrCtrl+B', click: go('/ui/pos.html') },
+        { label: 'New Laundry Order', accelerator: 'CmdOrCtrl+N', click: go('/laundry/new-order') },
+        { label: 'Store Orders', accelerator: 'CmdOrCtrl+B', click: go('/laundry/orders') },
         { type: 'separator' },
         { label: 'Backup Data…', accelerator: 'CmdOrCtrl+Shift+B', click: () => doBackupDialog().catch((e) => dialog.showErrorBox('Backup failed', String(e.message || e))) },
         { label: 'Restore Data…', click: () => doRestoreDialog().catch((e) => dialog.showErrorBox('Restore failed', String(e.message || e))) },
@@ -233,13 +236,12 @@ function buildMenu() {
     },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     {
-      label: 'Sales & CRM',
+      label: 'Laundry Desk',
       submenu: [
-        { label: 'CRM Command Center', accelerator: 'CmdOrCtrl+1', click: go('/ui/crm.html') },
-        { label: 'Invoices (GST)', click: go('/ui/invoices.html') },
-        { label: 'Advanced Selling (Quotation/SO/DN)', click: go('/ui/selling.html') },
-        { label: 'POS Counter', click: go('/ui/pos.html') },
-        { label: 'Customer Portal', click: go('/ui/portal.html') },
+        { label: 'Dashboard', accelerator: 'CmdOrCtrl+1', click: go('/laundry/dashboard') },
+        { label: 'Order & Billing', click: go('/laundry/new-order') },
+        { label: 'Store Orders', click: go('/laundry/orders') },
+        { label: 'Garments & Prices', click: go('/laundry/catalogue') },
       ],
     },
     {
@@ -267,7 +269,7 @@ function buildMenu() {
     {
       label: 'View',
       submenu: [
-        { label: 'Dashboard (Home)', accelerator: 'CmdOrCtrl+0', click: go('/ui/') },
+        { label: 'Laundry Dashboard', accelerator: 'CmdOrCtrl+0', click: go('/laundry/dashboard') },
         { label: 'Epic AI Insights', click: go('/ui/ai.html') },
         { label: 'Operations Center', click: go('/ui/ops.html') },
         { type: 'separator' },
@@ -307,14 +309,14 @@ ipcMain.on('epic:export-pdf-menu', async () => {
 function createWindow() {
   mainWin = new BrowserWindow({
     width: 1366, height: 860, minWidth: 960, minHeight: 640,
-    title: 'Epic BOS', backgroundColor: '#0f1117', show: false,
+    title: 'Epic Laundry', backgroundColor: '#123039', show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, nodeIntegration: false, sandbox: true,
     },
   });
 
-  mainWin.loadURL(`http://${HOST}:${PORT}/ui/`);
+  mainWin.loadURL(`http://${HOST}:${PORT}/ui/app/#/laundry/dashboard`);
 
   // External links (WhatsApp, Razorpay, GSP portals) open in the OS browser, not a new Electron window.
   mainWin.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });

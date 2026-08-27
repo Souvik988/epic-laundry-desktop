@@ -45,6 +45,10 @@ import {
   listNotifications, markNotificationRead, markAllRead, syncAlertsToNotifications,
 } from './modules/crm/engagement.js';
 import { dashboardSummary } from './modules/analytics/dashboard.js';
+import {
+  bookLaundryOrder, getLaundryOrder, laundryCatalogue, laundryDashboard,
+  listLaundryOrders, quoteLaundryOrder, searchLaundryCustomers, transitionLaundryOrder,
+} from './modules/laundry/domain.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -69,6 +73,36 @@ export function registerApi(app: FastifyInstance) {
   const guard = async (req: any, rep: any) => {
     if (!authOk(req)) return rep.code(401).send({ error: 'unauthorized' });
   };
+
+  // ---- Laundry desk: dedicated domain API, kept separate from generic ERP screens ----
+  app.get('/api/laundry/catalogue', { preHandler: guard }, async () => laundryCatalogue(TENANT));
+  app.get('/api/laundry/customers', { preHandler: guard }, async (req: any) =>
+    searchLaundryCustomers(TENANT, String((req.query as any)?.search || '')),
+  );
+  app.get('/api/laundry/dashboard', { preHandler: guard }, async (req: any) =>
+    laundryDashboard(TENANT, String((req.query as any)?.asOf || new Date().toISOString().slice(0, 10))),
+  );
+  app.post('/api/laundry/quote', { preHandler: guard }, async (req: any, rep: any) => {
+    try {
+      const body = req.body as any;
+      return quoteLaundryOrder(TENANT, body, body?.customerId || '');
+    } catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/orders', { preHandler: guard }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(bookLaundryOrder(TENANT, USER, req.body as any)); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/orders', { preHandler: guard }, async (req: any) => listLaundryOrders(TENANT, req.query as any));
+  app.get('/api/laundry/orders/:id', { preHandler: guard }, async (req: any, rep: any) => {
+    try { return getLaundryOrder(TENANT, req.params.id); }
+    catch (error: any) { return rep.code(404).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/orders/:id/transition', { preHandler: guard }, async (req: any, rep: any) => {
+    try {
+      const body = req.body as any;
+      return transitionLaundryOrder(TENANT, USER, req.params.id, body?.state, body?.note);
+    } catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
 
   // ---- generic entity CRUD (the Schema Registry in action) ----
   app.get('/api/:entity', { preHandler: guard }, async (req: any) => {
