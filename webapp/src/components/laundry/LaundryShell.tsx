@@ -1,11 +1,13 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { Bell, BookOpenCheck, ClipboardList, LayoutDashboard, Plus, Shirt, Sparkles } from 'lucide-react'
+import { Bell, BookOpenCheck, ClipboardList, LayoutDashboard, Plus, ReceiptText, Shirt, Sparkles, WalletCards } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const navigation = [
   { to: '/laundry/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/laundry/new-order', label: 'Order booking', icon: Plus },
   { to: '/laundry/orders', label: 'Store orders', icon: ClipboardList },
+  { to: '/laundry/expenses', label: 'Store expense', icon: WalletCards },
+  { to: '/laundry/reports', label: 'Reports', icon: ReceiptText },
   { to: '/laundry/catalogue', label: 'Garments & prices', icon: Shirt },
 ]
 

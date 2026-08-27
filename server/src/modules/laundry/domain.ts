@@ -44,6 +44,17 @@ type Quote = {
   grandTotal: number;
 };
 
+type ExpenseInput = {
+  expenseName: string;
+  expenseDate: string;
+  amount: number;
+  paymentReceiver?: string;
+  invoiceNumber?: string;
+  isTaxPaid?: boolean;
+  paymentMode?: 'Cash' | 'UPI' | 'Card' | 'Bank';
+  notes?: string;
+};
+
 const TRANSITIONS: Record<LaundryState, LaundryState[]> = {
   Booked: ['Picked Up', 'In Process', 'Cancelled'],
   'Picked Up': ['In Process', 'Cancelled'],
@@ -306,6 +317,81 @@ export function laundryDashboard(tenant: string, asOf = today()) {
       { id: 'requests', label: 'Order requests', count: 0, tone: 'slate' },
     ],
     recent: all.slice(0, 8),
+  };
+}
+
+function accountFor(tenant: string, actor: string, name: string, accountType: string) {
+  const existing = store.rowsOf(tenant, 'account').find((row) => row.data.name === name);
+  return existing || createRow(tenant, actor, 'account', { name, account_type: accountType });
+}
+
+function paymentAccountName(mode: string) {
+  if (mode === 'Cash') return 'Cash (Assets)';
+  if (mode === 'UPI') return 'Bank/UPI (Assets)';
+  if (mode === 'Card') return 'Bank/Card (Assets)';
+  return 'Bank (Assets)';
+}
+
+export function createLaundryExpense(tenant: string, actor: string, input: ExpenseInput) {
+  const amount = round(Number(input.amount));
+  if (!input.expenseName?.trim()) throw new Error('expense name is required');
+  if (!input.expenseDate || Number.isNaN(Date.parse(input.expenseDate))) throw new Error('expense date is required');
+  if (amount <= 0) throw new Error('expense amount must be greater than zero');
+  const paymentMode = input.paymentMode || 'Cash';
+  const expenseAccount = accountFor(tenant, actor, 'Laundry Operating Expense (Expense)', 'Expense');
+  const paidFrom = accountFor(tenant, actor, paymentAccountName(paymentMode), 'Asset');
+  const journal = createRow(tenant, actor, 'journal_entry', {
+    posting_date: input.expenseDate,
+    remark: `Laundry expense: ${input.expenseName.trim()}`,
+    entries: [
+      { account: expenseAccount.id, debit: amount, credit: 0 },
+      { account: paidFrom.id, debit: 0, credit: amount },
+    ],
+  });
+  submitRow(tenant, actor, 'journal_entry', journal.id);
+  const expense = createRow(tenant, actor, 'laundry_expense', {
+    expense_name: input.expenseName.trim(), expense_date: input.expenseDate, amount,
+    payment_receiver: input.paymentReceiver?.trim(), invoice_number: input.invoiceNumber?.trim(),
+    is_tax_paid: Boolean(input.isTaxPaid), payment_mode: paymentMode, journal_entry: journal.id, notes: input.notes?.trim(),
+  });
+  expense.status = 'Paid';
+  expense.updated_at = new Date().toISOString();
+  store.updateRow(expense);
+  audit(tenant, actor, 'laundry:expense-recorded', { entity: 'laundry_expense', row_id: expense.id, after: { amount, journal: journal.id } });
+  return presentExpense(expense);
+}
+
+export function presentExpense(expense: EntityRow) {
+  return {
+    id: expense.id, reference: expense.data.name || expense.id, expenseName: expense.data.expense_name,
+    expenseDate: expense.data.expense_date, amount: Number(expense.data.amount || 0),
+    paymentReceiver: expense.data.payment_receiver || '', invoiceNumber: expense.data.invoice_number || '',
+    isTaxPaid: Boolean(expense.data.is_tax_paid), paymentMode: expense.data.payment_mode || 'Cash',
+    journalEntry: expense.data.journal_entry, notes: expense.data.notes || '', createdAt: expense.created_at,
+  };
+}
+
+export function listLaundryExpenses(tenant: string, query: { search?: string; from?: string; to?: string } = {}) {
+  const needle = String(query.search || '').trim().toLowerCase();
+  return store.rowsOf(tenant, 'laundry_expense')
+    .filter((expense) => !query.from || expense.data.expense_date >= query.from)
+    .filter((expense) => !query.to || expense.data.expense_date <= query.to)
+    .map(presentExpense)
+    .filter((expense) => !needle || `${expense.expenseName} ${expense.paymentReceiver} ${expense.invoiceNumber}`.toLowerCase().includes(needle))
+    .sort((a, b) => `${b.expenseDate}:${b.createdAt}`.localeCompare(`${a.expenseDate}:${a.createdAt}`));
+}
+
+export function laundryReports(tenant: string, from?: string, to?: string) {
+  const orders = listLaundryOrders(tenant, { from, to });
+  const expenses = listLaundryExpenses(tenant, { from, to });
+  const orderValue = round(orders.filter((order) => order.state !== 'Cancelled').reduce((sum, order) => sum + order.grandTotal, 0));
+  const collected = round(orders.filter((order) => order.paymentStatus === 'Paid').reduce((sum, order) => sum + order.grandTotal, 0));
+  const expenseTotal = round(expenses.reduce((sum, expense) => sum + expense.amount, 0));
+  return {
+    range: { from: from || null, to: to || null },
+    summary: { orderValue, collected, outstanding: round(orderValue - collected), expenses: expenseTotal, operatingCash: round(collected - expenseTotal), orders: orders.length, customers: new Set(orders.map((order) => order.customer.id || order.customer.phone)).size },
+    stateBreakdown: LAUNDRY_STATES.map((state) => ({ state, count: orders.filter((order) => order.state === state).length, amount: round(orders.filter((order) => order.state === state).reduce((sum, order) => sum + order.grandTotal, 0)) })),
+    paymentBreakdown: ['Pay Later', 'Cash', 'UPI', 'Card'].map((paymentMode) => ({ paymentMode, count: orders.filter((order) => order.paymentMode === paymentMode).length, amount: round(orders.filter((order) => order.paymentMode === paymentMode).reduce((sum, order) => sum + order.grandTotal, 0)) })),
   };
 }
 

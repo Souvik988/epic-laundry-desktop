@@ -46,8 +46,8 @@ import {
 } from './modules/crm/engagement.js';
 import { dashboardSummary } from './modules/analytics/dashboard.js';
 import {
-  bookLaundryOrder, getLaundryOrder, laundryCatalogue, laundryDashboard,
-  listLaundryOrders, quoteLaundryOrder, searchLaundryCustomers, transitionLaundryOrder,
+  bookLaundryOrder, createLaundryExpense, getLaundryOrder, laundryCatalogue, laundryDashboard,
+  laundryReports, listLaundryExpenses, listLaundryOrders, quoteLaundryOrder, searchLaundryCustomers, transitionLaundryOrder,
 } from './modules/laundry/domain.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
@@ -102,6 +102,15 @@ export function registerApi(app: FastifyInstance) {
       const body = req.body as any;
       return transitionLaundryOrder(TENANT, USER, req.params.id, body?.state, body?.note);
     } catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/expenses', { preHandler: guard }, async (req: any) => listLaundryExpenses(TENANT, req.query as any));
+  app.post('/api/laundry/expenses', { preHandler: guard }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(createLaundryExpense(TENANT, USER, req.body as any)); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/reports', { preHandler: guard }, async (req: any) => {
+    const query = req.query as any;
+    return laundryReports(TENANT, query?.from, query?.to);
   });
 
   // ---- generic entity CRUD (the Schema Registry in action) ----

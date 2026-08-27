@@ -9,7 +9,7 @@ process.env.EPIC_DATA_FILE = join(tempDir, 'epic.json');
 try {
   const { store } = await import('./kernel/store.js');
   const {
-    bookLaundryOrder, laundryCatalogue, quoteLaundryOrder, seedLaundryDefaults, transitionLaundryOrder,
+    bookLaundryOrder, createLaundryExpense, laundryCatalogue, laundryReports, quoteLaundryOrder, seedLaundryDefaults, transitionLaundryOrder,
   } = await import('./modules/laundry/domain.js');
 
   const tenant = 'TEST';
@@ -45,6 +45,13 @@ try {
   const delivered = transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'Delivered');
   assert.equal(delivered.state, 'Delivered', 'valid lifecycle transitions are enforced and persisted');
   assert.throws(() => transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'Booked'), /cannot move/, 'terminal orders cannot return to booking');
+
+  const expense = createLaundryExpense(tenant, 'test@epic.local', {
+    expenseName: 'Steam press repair', expenseDate: '2026-08-29', amount: 1250, paymentReceiver: 'Repair vendor', paymentMode: 'UPI', isTaxPaid: true,
+  });
+  assert.equal(expense.amount, 1250, 'store expenses persist with their payment metadata');
+  assert.equal(store.rowsOf(tenant, 'journal_entry').length, 1, 'an expense posts a balanced journal entry');
+  assert.equal(laundryReports(tenant).summary.expenses, 1250, 'reports include the posted store expense');
 
   console.log('PASS  laundry vertical slice self-test complete');
 } finally {
