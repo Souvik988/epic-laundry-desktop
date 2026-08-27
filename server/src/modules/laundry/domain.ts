@@ -446,11 +446,13 @@ export function importLaundryPrices(tenant: string, actor: string, rows: ImportP
 
 export function laundryDashboard(tenant: string, asOf = today()) {
   const all = listLaundryOrders(tenant);
+  const expenses = listLaundryExpenses(tenant);
   const todayOrders = all.filter((order) => order.orderDate === asOf);
   const active = all.filter((order) => !['Delivered', 'Cancelled'].includes(String(order.state)));
   const awaitingPickup = all.filter((order) => order.fulfillmentMode === 'Pickup Order' && order.state === 'Booked' && !order.pickupRider);
   const awaitingDelivery = all.filter((order) => order.fulfillmentMode !== 'Pickup Order' && ['Ready', 'Out for Delivery'].includes(order.state) && !order.deliveryRider);
   const stateCount = (state: LaundryState) => all.filter((order) => order.state === state).length;
+  const trendFrom = shiftDate(asOf, -6);
   return {
     asOf,
     kpis: {
@@ -470,6 +472,10 @@ export function laundryDashboard(tenant: string, asOf = today()) {
       { id: 'express', label: 'Express delivery', count: active.filter((order) => order.fulfillmentMode === 'Express Delivery').length, tone: 'rose' },
       { id: 'requests', label: 'Order requests', count: 0, tone: 'slate' },
     ],
+    trend: dailySeries(all, expenses, trendFrom, asOf),
+    fulfillmentBreakdown: fulfillmentSeries(all),
+    topGarments: topItemSeries(all, 'garmentName'),
+    topServices: topItemSeries(all, 'serviceName'),
     recent: all.slice(0, 8),
   };
 }
@@ -538,6 +544,8 @@ export function listLaundryExpenses(tenant: string, query: { search?: string; fr
 export function laundryReports(tenant: string, from?: string, to?: string) {
   const orders = listLaundryOrders(tenant, { from, to });
   const expenses = listLaundryExpenses(tenant, { from, to });
+  const reportTo = to || orders[0]?.orderDate || today();
+  const reportFrom = from || shiftDate(reportTo, -6);
   const orderValue = round(orders.filter((order) => order.state !== 'Cancelled').reduce((sum, order) => sum + order.grandTotal, 0));
   const collected = round(orders.filter((order) => order.paymentStatus === 'Paid').reduce((sum, order) => sum + order.grandTotal, 0));
   const expenseTotal = round(expenses.reduce((sum, expense) => sum + expense.amount, 0));
@@ -546,7 +554,70 @@ export function laundryReports(tenant: string, from?: string, to?: string) {
     summary: { orderValue, collected, outstanding: round(orderValue - collected), expenses: expenseTotal, operatingCash: round(collected - expenseTotal), orders: orders.length, customers: new Set(orders.map((order) => order.customer.id || order.customer.phone)).size },
     stateBreakdown: LAUNDRY_STATES.map((state) => ({ state, count: orders.filter((order) => order.state === state).length, amount: round(orders.filter((order) => order.state === state).reduce((sum, order) => sum + order.grandTotal, 0)) })),
     paymentBreakdown: ['Pay Later', 'Cash', 'UPI', 'Card'].map((paymentMode) => ({ paymentMode, count: orders.filter((order) => order.paymentMode === paymentMode).length, amount: round(orders.filter((order) => order.paymentMode === paymentMode).reduce((sum, order) => sum + order.grandTotal, 0)) })),
+    trend: dailySeries(orders, expenses, reportFrom, reportTo),
+    fulfillmentBreakdown: fulfillmentSeries(orders),
+    topGarments: topItemSeries(orders, 'garmentName'),
+    topServices: topItemSeries(orders, 'serviceName'),
   };
+}
+
+type TrendPoint = { date: string; orders: number; orderValue: number; collected: number; expenses: number };
+type RankedItem = { name: string; quantity: number; amount: number };
+
+function shiftDate(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function dateList(from: string, to: string) {
+  const dates: string[] = [];
+  let cursor = from;
+  for (let i = 0; i < 366 && cursor <= to; i += 1) {
+    dates.push(cursor);
+    cursor = shiftDate(cursor, 1);
+  }
+  return dates;
+}
+
+function dailySeries(orders: ReturnType<typeof listLaundryOrders>, expenses: ReturnType<typeof listLaundryExpenses>, from: string, to: string): TrendPoint[] {
+  const byDate = new Map<string, TrendPoint>(dateList(from, to).map((date) => [date, { date, orders: 0, orderValue: 0, collected: 0, expenses: 0 }]));
+  orders.forEach((order) => {
+    const point = byDate.get(order.orderDate);
+    if (!point) return;
+    point.orders += 1;
+    if (order.state !== 'Cancelled') point.orderValue = round(point.orderValue + order.grandTotal);
+    if (order.paymentStatus === 'Paid') point.collected = round(point.collected + order.grandTotal);
+  });
+  expenses.forEach((expense) => {
+    const point = byDate.get(expense.expenseDate);
+    if (point) point.expenses = round(point.expenses + expense.amount);
+  });
+  return [...byDate.values()];
+}
+
+function fulfillmentSeries(orders: ReturnType<typeof listLaundryOrders>) {
+  const byMode = new Map<string, { mode: string; count: number; amount: number }>();
+  orders.forEach((order) => {
+    const mode = order.fulfillmentMode || 'Pickup Order';
+    const point = byMode.get(mode) || { mode, count: 0, amount: 0 };
+    point.count += 1;
+    if (order.state !== 'Cancelled') point.amount = round(point.amount + order.grandTotal);
+    byMode.set(mode, point);
+  });
+  return [...byMode.values()].sort((a, b) => b.count - a.count || b.amount - a.amount);
+}
+
+function topItemSeries(orders: ReturnType<typeof listLaundryOrders>, key: 'garmentName' | 'serviceName'): RankedItem[] {
+  const byName = new Map<string, RankedItem>();
+  orders.filter((order) => order.state !== 'Cancelled').forEach((order) => order.items.forEach((item) => {
+    const name = String(item[key] || 'Unlabelled');
+    const point = byName.get(name) || { name, quantity: 0, amount: 0 };
+    point.quantity += Number(item.qty) || 0;
+    point.amount = round(point.amount + (Number(item.amount) || 0));
+    byName.set(name, point);
+  }));
+  return [...byName.values()].sort((a, b) => b.amount - a.amount || b.quantity - a.quantity).slice(0, 6);
 }
 
 export function receiptFor(tenant: string, order: EntityRow) {

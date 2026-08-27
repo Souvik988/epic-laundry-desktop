@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, Banknote, CalendarClock, CheckCircle2, CircleAlert, ClipboardList, Loader2, PackageCheck, Plus, Truck } from 'lucide-react'
+import { ArrowRight, Banknote, BarChart3, CalendarClock, CheckCircle2, CircleAlert, ClipboardList, Loader2, PackageCheck, Plus, Scissors, Shirt, Truck } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { apiGet } from '@/lib/api'
 import type { LaundryDashboard as DashboardData, LaundryState } from '@/lib/laundry'
@@ -74,6 +74,19 @@ export default function LaundryDashboard() {
           <div className="mt-6 rounded-2xl bg-[#eaf3ef] p-4 text-sm text-[#315d57]"><CircleAlert className="mr-2 inline h-4 w-4" /><span className="font-semibold">Tip:</span> Move ready orders to delivery before the next rider dispatch.</div>
         </div>
       </section>
+
+      <section className="grid gap-5 xl:grid-cols-[1.35fr_.8fr_.8fr]">
+        <div className="rounded-[22px] border border-[#263f44]/10 bg-white p-5 shadow-[0_8px_28px_rgba(37,48,43,.05)] md:p-6">
+          <SectionHeading eyebrow="Business overview" title="Revenue & collection" action={<BarChart3 className="h-5 w-5 text-[#55938a]" />} />
+          <div className="mt-6 flex h-36 items-end gap-2 border-b border-[#263f44]/10 sm:gap-3" role="img" aria-label="Seven day revenue and collection chart">
+            {data.trend.map((point) => { const max = Math.max(...data.trend.map((item) => item.orderValue), 1); return <div key={point.date} className="group flex h-full min-w-0 flex-1 items-end justify-center gap-1" title={`${point.date}: ${formatINR(point.orderValue)} order value, ${formatINR(point.collected)} collected`}><div className="w-2.5 rounded-t-md bg-[#8fc1b5] group-hover:bg-[#6aa99b] sm:w-4" style={{ height: `${Math.max(4, point.orderValue / max * 100)}%` }} /><div className="w-2.5 rounded-t-md bg-[#e6bc65] group-hover:bg-[#d9a94b] sm:w-4" style={{ height: `${Math.max(4, point.collected / max * 100)}%` }} /></div> })}
+          </div>
+          <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-[#7b8b8d]">{data.trend.map((point) => <span key={point.date}>{shortDate(point.date)}</span>)}</div>
+          <div className="mt-4 flex flex-wrap gap-4 text-xs font-semibold text-[#5d7073]"><span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-[#8fc1b5]" />Value</span><span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-[#e6bc65]" />Collected</span></div>
+        </div>
+        <RankPanel title="Top garments" icon={Shirt} rows={data.topGarments} />
+        <RankPanel title="Top services" icon={Scissors} rows={data.topServices} />
+      </section>
     </div>
   )
 }
@@ -84,5 +97,7 @@ function Kpi({ icon: Icon, label, value, note, accent }: { icon: typeof Banknote
 
 function SectionHeading({ eyebrow, title, action }: { eyebrow: string; title: string; action?: React.ReactNode }) { return <div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#4d8982]">{eyebrow}</p><h2 className="mt-1 font-serif text-2xl text-[#17353c]">{title}</h2></div>{action}</div> }
 function StatePill({ state }: { state: LaundryState }) { return <span className={cn('inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset', stateTone[state])}>{state}</span> }
+function RankPanel({ title, rows, icon: Icon }: { title: string; rows: Array<{ name: string; quantity: number; amount: number }>; icon: typeof Shirt }) { const max = Math.max(...rows.map((row) => row.amount), 1); return <div className="rounded-[22px] border border-[#263f44]/10 bg-[#fffdf8] p-5 shadow-[0_8px_28px_rgba(37,48,43,.05)] md:p-6"><div className="flex items-center gap-2"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#eaf3ef] text-[#3a7d78]"><Icon className="h-4 w-4" /></span><h2 className="font-serif text-xl text-[#17353c]">{title}</h2></div><div className="mt-5 space-y-4">{rows.length ? rows.slice(0, 4).map((row) => <div key={row.name}><div className="flex justify-between gap-2 text-xs"><span className="truncate font-semibold text-[#315d57]">{row.name}</span><span className="font-bold tabular-nums">{formatINR(row.amount)}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-[#e4ebe5]"><div className="h-full rounded-full bg-[#8fc1b5]" style={{ width: `${row.amount / max * 100}%` }} /></div><p className="mt-1 text-[11px] text-[#77878a]">{row.quantity} units</p></div>) : <p className="py-8 text-center text-xs text-[#718087]">No records yet.</p>}</div></div> }
 function prettyDate(value: string) { return new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(`${value}T00:00:00`)) }
+function shortDate(value: string) { return new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short' }).format(new Date(`${value}T00:00:00`)) }
 function Failure() { return <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-rose-800">The laundry dashboard could not be loaded. Confirm the local server is running, then refresh.</div> }

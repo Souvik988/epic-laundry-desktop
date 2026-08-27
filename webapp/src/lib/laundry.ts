@@ -45,6 +45,10 @@ export type LaundryDashboard = {
     upcomingDeliveries: number
   }
   attention: Array<{ id: string; label: string; count: number; tone: string }>
+  trend: Array<{ date: string; orders: number; orderValue: number; collected: number; expenses: number }>
+  fulfillmentBreakdown: Array<{ mode: string; count: number; amount: number }>
+  topGarments: Array<{ name: string; quantity: number; amount: number }>
+  topServices: Array<{ name: string; quantity: number; amount: number }>
   recent: LaundryOrder[]
 }
 

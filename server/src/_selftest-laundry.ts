@@ -56,7 +56,11 @@ try {
   });
   assert.equal(expense.amount, 1250, 'store expenses persist with their payment metadata');
   assert.equal(store.rowsOf(tenant, 'journal_entry').length, 1, 'an expense posts a balanced journal entry');
-  assert.equal(laundryReports(tenant).summary.expenses, 1250, 'reports include the posted store expense');
+  const report = laundryReports(tenant);
+  assert.equal(report.summary.expenses, 1250, 'reports include the posted store expense');
+  assert.equal(report.trend.length, 7, 'reports expose a seven-day trend by default');
+  assert.equal(report.fulfillmentBreakdown[0]?.mode, 'Home Delivery', 'reports group fulfilment modes');
+  assert.equal(report.topGarments[0]?.name, 'Shirt / T-shirt', 'reports rank processed garments');
 
   const customerImport = importLaundryCustomers(tenant, 'test@epic.local', [
     { name: 'Imported Customer', phone: '9810146062', email: 'imported@example.test', address: 'Import street' },
