@@ -21,6 +21,10 @@ export type LaundryOrder = {
   paymentMode: string
   paymentStatus: string
   source: string
+  pickupRider?: { id: string; name: string; phone: string }
+  deliveryRider?: { id: string; name: string; phone: string }
+  pickupSlot: string
+  deliverySlot: string
   items: Array<{ garmentName: string; serviceName: string; unit: string; qty: number; rate: number; amount: number }>
   notes: string
   photoPaths: string

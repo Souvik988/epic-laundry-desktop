@@ -46,8 +46,8 @@ import {
 } from './modules/crm/engagement.js';
 import { dashboardSummary } from './modules/analytics/dashboard.js';
 import {
-  bookLaundryOrder, createLaundryExpense, getLaundryOrder, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard,
-  laundryReports, listLaundryExpenses, listLaundryOrders, quoteLaundryOrder, searchLaundryCustomers, transitionLaundryOrder,
+  assignLaundryOrder, bookLaundryOrder, createLaundryExpense, createLaundryRider, getLaundryOrder, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard,
+  laundryDispatch, laundryReports, listLaundryExpenses, listLaundryOrders, listLaundryRiders, quoteLaundryOrder, searchLaundryCustomers, transitionLaundryOrder,
 } from './modules/laundry/domain.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
@@ -103,6 +103,16 @@ export function registerApi(app: FastifyInstance) {
       return transitionLaundryOrder(TENANT, USER, req.params.id, body?.state, body?.note);
     } catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
+  app.post('/api/laundry/orders/:id/assign', { preHandler: guard }, async (req: any, rep: any) => {
+    try { return assignLaundryOrder(TENANT, USER, req.params.id, req.body as any); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/riders', { preHandler: guard }, async () => listLaundryRiders(TENANT));
+  app.post('/api/laundry/riders', { preHandler: guard }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(createLaundryRider(TENANT, USER, req.body as any)); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/dispatch', { preHandler: guard }, async () => laundryDispatch(TENANT));
   app.get('/api/laundry/expenses', { preHandler: guard }, async (req: any) => listLaundryExpenses(TENANT, req.query as any));
   app.post('/api/laundry/expenses', { preHandler: guard }, async (req: any, rep: any) => {
     try { return rep.code(201).send(createLaundryExpense(TENANT, USER, req.body as any)); }

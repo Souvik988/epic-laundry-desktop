@@ -9,7 +9,7 @@ process.env.EPIC_DATA_FILE = join(tempDir, 'epic.json');
 try {
   const { store } = await import('./kernel/store.js');
   const {
-    bookLaundryOrder, createLaundryExpense, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryReports, quoteLaundryOrder, seedLaundryDefaults, transitionLaundryOrder,
+    assignLaundryOrder, bookLaundryOrder, createLaundryExpense, createLaundryRider, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDispatch, laundryReports, quoteLaundryOrder, seedLaundryDefaults, transitionLaundryOrder,
   } = await import('./modules/laundry/domain.js');
 
   const tenant = 'TEST';
@@ -41,6 +41,11 @@ try {
 
   transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'In Process');
   transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'Ready');
+  assert.throws(() => transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'Out for Delivery'), /assign a delivery rider/, 'delivery cannot be dispatched without a rider');
+  const rider = createLaundryRider(tenant, 'test@epic.local', { name: 'Mohan Rider', phone: '9000000002' });
+  const assigned = assignLaundryOrder(tenant, 'test@epic.local', result.order.id, { stage: 'delivery', riderId: rider.id, slot: '4:00 PM - 6:00 PM' });
+  assert.equal(assigned.deliveryRider?.name, 'Mohan Rider', 'delivery assignment persists on the order');
+  assert.equal(laundryDispatch(tenant).deliveries.length, 1, 'ready orders appear in the delivery dispatch queue');
   transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'Out for Delivery');
   const delivered = transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'Delivered');
   assert.equal(delivered.state, 'Delivered', 'valid lifecycle transitions are enforced and persisted');

@@ -75,6 +75,8 @@ type ImportPriceInput = {
 
 type ImportIssue = { row: number; message: string };
 type ImportResult = { created: number; updated: number; skipped: number; errors: ImportIssue[] };
+type RiderInput = { name: string; phone?: string };
+type AssignmentInput = { stage: 'pickup' | 'delivery'; riderId?: string; slot?: string };
 
 const TRANSITIONS: Record<LaundryState, LaundryState[]> = {
   Booked: ['Picked Up', 'In Process', 'Cancelled'],
@@ -233,6 +235,8 @@ export function transitionLaundryOrder(tenant: string, actor: string, id: string
   if (!order || order.entity !== 'laundry_order') throw new Error('laundry order not found');
   const from = order.data.state as LaundryState;
   if (!TRANSITIONS[from]?.includes(state)) throw new Error(`cannot move an order from ${from} to ${state}`);
+  if (state === 'Picked Up' && order.data.fulfillment_mode === 'Pickup Order' && !order.data.pickup_rider) throw new Error('assign a pickup rider before marking this order picked up');
+  if (state === 'Out for Delivery' && order.data.fulfillment_mode !== 'Pickup Order' && !order.data.delivery_rider) throw new Error('assign a delivery rider before dispatching this order');
   order.data.state = state;
   order.data.last_transition_note = note?.trim() || undefined;
   order.data.last_transition_at = new Date().toISOString();
@@ -246,6 +250,8 @@ export function transitionLaundryOrder(tenant: string, actor: string, id: string
 
 export function presentOrder(tenant: string, order: EntityRow) {
   const customer = store.getRow(tenant, order.data.customer);
+  const pickupRider = store.getRow(tenant, order.data.pickup_rider);
+  const deliveryRider = store.getRow(tenant, order.data.delivery_rider);
   const items = Array.isArray(order.data.items) ? order.data.items : [];
   return {
     id: order.id,
@@ -261,6 +267,10 @@ export function presentOrder(tenant: string, order: EntityRow) {
     paymentMode: order.data.payment_mode,
     paymentStatus: order.data.payment_status,
     source: order.data.source,
+    pickupRider: pickupRider ? { id: pickupRider.id, name: pickupRider.data.name, phone: pickupRider.data.phone || '' } : undefined,
+    deliveryRider: deliveryRider ? { id: deliveryRider.id, name: deliveryRider.data.name, phone: deliveryRider.data.phone || '' } : undefined,
+    pickupSlot: order.data.pickup_slot || '',
+    deliverySlot: order.data.delivery_slot || '',
     items,
     notes: order.data.notes || '',
     photoPaths: order.data.photo_paths || '',
@@ -311,6 +321,47 @@ export function searchLaundryCustomers(tenant: string, search = '') {
     .filter((row) => !needle || `${row.data.name || ''} ${row.data.phone || ''}`.toLowerCase().includes(needle))
     .slice(0, 12)
     .map((row) => ({ id: row.id, name: row.data.name, phone: row.data.phone || '', email: row.data.email || '', address: row.data.address || '' }));
+}
+
+export function listLaundryRiders(tenant: string) {
+  return activeRows(tenant, 'laundry_rider').map((rider) => ({ id: rider.id, name: rider.data.name, phone: rider.data.phone || '' })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function createLaundryRider(tenant: string, actor: string, input: RiderInput) {
+  const name = input.name?.trim();
+  if (!name) throw new Error('rider name is required');
+  const phone = normPhone(input.phone);
+  const existing = store.rowsOf(tenant, 'laundry_rider').find((rider) => rider.data.name?.trim().toLowerCase() === name.toLowerCase() || (phone && normPhone(rider.data.phone) === phone));
+  if (existing) throw new Error('a rider with this name or phone already exists');
+  const rider = createRow(tenant, actor, 'laundry_rider', { name, phone, active: true });
+  audit(tenant, actor, 'laundry:rider-created', { entity: 'laundry_rider', row_id: rider.id, after: { name, phone } });
+  return { id: rider.id, name: rider.data.name, phone: rider.data.phone || '' };
+}
+
+export function assignLaundryOrder(tenant: string, actor: string, id: string, input: AssignmentInput) {
+  const order = store.getRow(tenant, id);
+  if (!order || order.entity !== 'laundry_order') throw new Error('laundry order not found');
+  if (input.stage !== 'pickup' && input.stage !== 'delivery') throw new Error('assignment stage must be pickup or delivery');
+  const rider = input.riderId ? store.getRow(tenant, input.riderId) : undefined;
+  if (input.riderId && (!rider || rider.entity !== 'laundry_rider' || rider.data.active === false)) throw new Error('active rider not found');
+  const riderField = input.stage === 'pickup' ? 'pickup_rider' : 'delivery_rider';
+  const slotField = input.stage === 'pickup' ? 'pickup_slot' : 'delivery_slot';
+  const before = { rider: order.data[riderField], slot: order.data[slotField] };
+  order.data[riderField] = rider?.id;
+  order.data[slotField] = input.slot?.trim() || undefined;
+  order.updated_at = new Date().toISOString();
+  store.updateRow(order);
+  audit(tenant, actor, 'laundry:rider-assigned', { entity: 'laundry_order', row_id: id, before, after: { stage: input.stage, rider: rider?.id, slot: order.data[slotField] } });
+  return presentOrder(tenant, order);
+}
+
+export function laundryDispatch(tenant: string) {
+  const orders = listLaundryOrders(tenant);
+  return {
+    riders: listLaundryRiders(tenant),
+    pickups: orders.filter((order) => order.fulfillmentMode === 'Pickup Order' && order.state === 'Booked'),
+    deliveries: orders.filter((order) => order.fulfillmentMode !== 'Pickup Order' && ['Ready', 'Out for Delivery'].includes(order.state)),
+  };
 }
 
 function importResult(): ImportResult { return { created: 0, updated: 0, skipped: 0, errors: [] }; }
@@ -397,6 +448,8 @@ export function laundryDashboard(tenant: string, asOf = today()) {
   const all = listLaundryOrders(tenant);
   const todayOrders = all.filter((order) => order.orderDate === asOf);
   const active = all.filter((order) => !['Delivered', 'Cancelled'].includes(String(order.state)));
+  const awaitingPickup = all.filter((order) => order.fulfillmentMode === 'Pickup Order' && order.state === 'Booked' && !order.pickupRider);
+  const awaitingDelivery = all.filter((order) => order.fulfillmentMode !== 'Pickup Order' && ['Ready', 'Out for Delivery'].includes(order.state) && !order.deliveryRider);
   const stateCount = (state: LaundryState) => all.filter((order) => order.state === state).length;
   return {
     asOf,
@@ -411,9 +464,9 @@ export function laundryDashboard(tenant: string, asOf = today()) {
       upcomingDeliveries: active.filter((order) => order.expectedDeliveryDate <= asOf).length,
     },
     attention: [
-      { id: 'pickup', label: 'Pending / unassigned pickup', count: all.filter((order) => order.fulfillmentMode === 'Pickup Order' && order.state === 'Booked').length, tone: 'amber' },
+      { id: 'pickup', label: 'Pending / unassigned pickup', count: awaitingPickup.length, tone: 'amber' },
       { id: 'upcoming', label: 'Upcoming delivery', count: active.filter((order) => order.expectedDeliveryDate <= asOf).length, tone: 'blue' },
-      { id: 'unassigned', label: 'Unassigned delivery', count: 0, tone: 'slate' },
+      { id: 'unassigned', label: 'Unassigned delivery', count: awaitingDelivery.length, tone: 'slate' },
       { id: 'express', label: 'Express delivery', count: active.filter((order) => order.fulfillmentMode === 'Express Delivery').length, tone: 'rose' },
       { id: 'requests', label: 'Order requests', count: 0, tone: 'slate' },
     ],
