@@ -71,7 +71,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 function show(m,btn){document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');['rbac','pay','mkt','rpa'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==m));}
 async function saveUser(){const r=await api('/user',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':KEY},body:JSON.stringify({data:{username:uname.value,role:urole.value,active:true}})});if(r.error){alert(r.error);return;}await load();}

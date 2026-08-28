@@ -47,12 +47,12 @@ async function main() {
   assert(alerts.gst.length === 2, 'GST due dates (GSTR-1 + GSTR-3B)');
   assert(alerts.reorder.length >= 1, 'low-stock surfaced in alerts');
 
-  // --- backup / restore (full-tenant snapshot) ---
+  // --- backup / restore (store-scoped snapshot) ---
   const before = store.rowsOf(T, 'party').length;
-  const snap = store.snapshot();
+  const snap = store.snapshotFor(T, 'STORE-DEFAULT');
   createRow(T, 'test', 'party', { name: 'throwaway' });
   assert(store.rowsOf(T, 'party').length === before + 1, 'row added after snapshot');
-  store.replaceAll(snap);
+  store.replaceScoped(T, 'STORE-DEFAULT', snap);
   assert(store.rowsOf(T, 'party').length === before, 'restore rolled back the extra row');
 
   console.log(fails === 0 ? '\nALL PASS' : `\n${fails} FAIL`);

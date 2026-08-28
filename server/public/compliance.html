@@ -53,7 +53,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 function show(m,btn){document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');['sum','tcs','aud'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==m));}
 async function saveTcs(){const r=await api('/tcs_entry',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':KEY},body:JSON.stringify({data:{party:tparty.value,posting_date:tdate.value,amount:Number(tamt.value||0)}})});if(r.error){alert(r.error);return;}await api('/tcs_entry/'+r.id+'/submit',{method:'POST',headers:{'x-api-key':KEY}});alert('TCS '+r.data.name);load();}

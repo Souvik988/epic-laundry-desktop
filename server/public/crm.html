@@ -148,7 +148,7 @@
 </div>
 
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY,'Content-Type':'application/json'},...o}).then(r=>r.json());
 const inr=n=>'₹'+Math.round(Number(n)||0).toLocaleString('en-IN');
 const STAGES=['Qualification','Needs Analysis','Proposal','Negotiation','Won','Lost'];

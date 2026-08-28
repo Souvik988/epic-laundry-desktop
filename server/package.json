@@ -9,16 +9,27 @@
     "start": "tsx src/index.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test:laundry": "tsx src/_selftest-laundry.ts"
+    "test:laundry": "tsx src/_selftest-laundry.ts",
+    "test:auth": "tsx src/_selftest-auth.ts",
+    "test:store-migration": "tsx src/_selftest-store-migration.ts",
+    "test:customer": "tsx src/_selftest-customer.ts",
+    "test:package": "tsx src/_selftest-package.ts",
+    "test:catalogue": "tsx src/_selftest-catalogue.ts",
+    "test:payment": "tsx src/_selftest-payment.ts",
+    "test:ops": "tsx src/_selftest18.ts",
+    "test:restart": "npm run build && tsx src/_selftest-restart.ts",
+    "test:e2e": "tsx src/_selftest-e2e.ts"
   },
   "dependencies": {
-    "fastify": "^4.28.1",
-    "@fastify/cors": "^9.0.1",
-    "@fastify/static": "^6.12.0"
+    "@fastify/cors": "^10.0.2",
+    "@fastify/static": "^10.1.3",
+    "@types/better-sqlite3": "^7.6.12",
+    "better-sqlite3": "^11.7.0",
+    "fastify": "^5.12.1"
   },
   "devDependencies": {
+    "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3",
-    "@types/node": "^22.10.0"
+    "typescript": "^5.6.3"
   }
 }

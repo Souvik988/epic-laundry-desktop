@@ -1,0 +1,65 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const tempDir = mkdtempSync(join(tmpdir(), 'epic-e2e-test-'));
+process.env.EPIC_DATA_FILE = join(tempDir, 'legacy.json');
+process.env.EPIC_DB_FILE = join(tempDir, 'epic.sqlite');
+process.env.EPIC_LEGACY_JSON_FILE = join(tempDir, 'legacy.json');
+
+let closeStore: (() => void) | undefined;
+try {
+  const Fastify = (await import('fastify')).default;
+  const { store } = await import('./kernel/store.js');
+  const { registerApi } = await import('./api.js');
+  const { seedLaundryDefaults } = await import('./modules/laundry/domain.js');
+  closeStore = () => store.close();
+  const app = Fastify(); registerApi(app);
+  store.withStoreScope('E2E', 'STORE-DEFAULT', () => seedLaundryDefaults('E2E'));
+  const boot = await app.inject({ method: 'POST', url: '/api/auth/bootstrap', payload: { username: 'e2e-owner', password: 'StrongE2EPassword!26', tenant: 'E2E', storeId: 'STORE-DEFAULT' } });
+  assert.equal(boot.statusCode, 200, 'E2E owner bootstrap succeeds');
+  const cookie = String(boot.headers['set-cookie'] || '').split(';')[0];
+  const sessionHeaders = { cookie };
+  const catalogue = await app.inject({ method: 'GET', url: '/api/laundry/catalogue', headers: sessionHeaders });
+  assert.equal(catalogue.statusCode, 200, 'E2E catalogue loads through the authenticated API');
+  const printSettings = await app.inject({ method: 'GET', url: '/api/laundry/print-settings', headers: sessionHeaders });
+  assert.equal(printSettings.statusCode, 200, 'E2E print settings are available to operational staff permissions');
+  assert.equal(typeof printSettings.json().qrOnPrint, 'boolean', 'E2E print settings expose the QR toggle safely');
+  const cat = catalogue.json();
+  const body = { customer: { name: 'E2E Customer', phone: '9000000777', address: 'E2E Street' }, items: [{ garment: cat.garments[0].id, service: cat.services[0].id, qty: 2 }], expectedDeliveryDate: '2026-09-04', fulfillmentMode: 'Home Delivery', paymentMode: 'Pay Later' };
+  const headers = { ...sessionHeaders, 'idempotency-key': 'e2e-booking-001' };
+  const booked = await app.inject({ method: 'POST', url: '/api/laundry/orders', headers, payload: body });
+  const duplicate = await app.inject({ method: 'POST', url: '/api/laundry/orders', headers, payload: body });
+  assert.equal(booked.statusCode, 201, 'E2E booking succeeds');
+  assert.equal(duplicate.json().order.id, booked.json().order.id, 'E2E duplicate booking is idempotent');
+  const orderId = booked.json().order.id;
+  const collected = await app.inject({ method: 'POST', url: `/api/laundry/orders/${orderId}/payments`, headers: { ...sessionHeaders, 'idempotency-key': 'e2e-payment-001' }, payload: { amount: 10, mode: 'UPI', reference: 'E2E-UPI-001' } });
+  assert.equal(collected.statusCode, 201, 'E2E partial payment collection succeeds');
+  const progress = await app.inject({ method: 'POST', url: `/api/laundry/orders/${orderId}/fulfillment`, headers: sessionHeaders, payload: { itemIndex: 0, stage: 'Picked Up', quantity: 1 } });
+  assert.equal(progress.statusCode, 201, 'E2E partial fulfilment event succeeds');
+  const rider = await app.inject({ method: 'POST', url: '/api/laundry/riders', headers: sessionHeaders, payload: { name: 'E2E Rider', phone: '9000000780' } });
+  assert.equal(rider.statusCode, 201, 'E2E rider creation succeeds');
+  const settlementHeaders = { ...sessionHeaders, 'idempotency-key': 'e2e-settlement-001' };
+  const settlement = await app.inject({ method: 'POST', url: '/api/laundry/rider-settlements', headers: settlementHeaders, payload: { rider: rider.json().id, amount: 10, method: 'Cash' } });
+  const duplicateSettlement = await app.inject({ method: 'POST', url: '/api/laundry/rider-settlements', headers: settlementHeaders, payload: { rider: rider.json().id, amount: 10, method: 'Cash' } });
+  assert.equal(settlement.statusCode, 201, 'E2E rider settlement succeeds');
+  assert.equal(duplicateSettlement.json().id, settlement.json().id, 'E2E duplicate rider settlement is idempotent');
+  const stats = await app.inject({ method: 'GET', url: '/api/laundry/statistics?period=week', headers: sessionHeaders });
+  assert.equal(stats.statusCode, 200, 'E2E statistics overview loads');
+  assert.equal(stats.json().collection.daily.length, 7, 'E2E statistics returns a seven-day collection series');
+  const report = await app.inject({ method: 'GET', url: '/api/laundry/reports/collection', headers: sessionHeaders });
+  assert.equal(report.statusCode, 200, 'E2E collection report loads');
+  assert.equal(report.json().kind, 'collection', 'E2E report response identifies its requested view');
+  const cancellable = await app.inject({ method: 'POST', url: '/api/laundry/orders', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-booking-002' }, payload: { ...body, customer: { name: 'E2E Cancellation', phone: '9000000778' }, paymentMode: 'Cash' } });
+  const cancelled = await app.inject({ method: 'POST', url: `/api/laundry/orders/${cancellable.json().order.id}/cancel`, headers: sessionHeaders, payload: { reason: 'E2E customer cancellation' } });
+  assert.equal(cancelled.statusCode, 200, 'E2E reasoned cancellation succeeds');
+  const backup = await app.inject({ method: 'GET', url: '/api/ops/backup', headers: sessionHeaders });
+  assert.equal(backup.statusCode, 200, 'E2E owner backup succeeds');
+  assert.ok(backup.json().rows.length > 0, 'E2E backup contains operational rows');
+  await app.close();
+  console.log('PASS  authenticated laundry API E2E workflow self-test complete');
+} finally {
+  closeStore?.();
+  rmSync(tempDir, { recursive: true, force: true });
+}

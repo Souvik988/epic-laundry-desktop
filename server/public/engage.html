@@ -128,7 +128,7 @@
   </section>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY,'Content-Type':'application/json'},...o}).then(r=>r.json());
 const money=n=>'₹'+(Math.round((Number(n)||0)*100)/100).toLocaleString('en-IN');
 let CUST=[],INV=[],PAY=[],SEL=null,TMPL=[];

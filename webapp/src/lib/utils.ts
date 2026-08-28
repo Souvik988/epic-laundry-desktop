@@ -51,6 +51,12 @@ export function formatDateTime(date: string | Date): string {
   return dayjs(date).format("DD/MM/YYYY, h:mm A")
 }
 
+/** HTML date-input key in the operator's local calendar (never UTC-shifted). */
+export function localDateKey(date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, "0")
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
 /** Relative time: "2 min ago", "3 hours ago" */
 export function formatRelativeTime(date: string | Date): string {
   return dayjs(date).fromNow()

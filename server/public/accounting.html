@@ -65,7 +65,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 const post=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':KEY},body:JSON.stringify(b)});
 const f=n=>(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});

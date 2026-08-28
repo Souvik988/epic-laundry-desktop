@@ -1,10 +1,14 @@
 export type LaundryState = 'Booked' | 'Picked Up' | 'In Process' | 'Ready' | 'Out for Delivery' | 'Delivered' | 'Cancelled'
 
 export type LaundryCatalogue = {
-  categories: Array<{ id: string; name: string; color?: string }>
-  services: Array<{ id: string; name: string; description?: string }>
+  categories: Array<{ id: string; name: string; color?: string; image?: string; sort_order?: number; active?: boolean }>
+  services: Array<{ id: string; name: string; description?: string; units?: string[]; active?: boolean }>
   garments: Array<{ id: string; name: string; code?: string; category: string; categoryName: string; unit: string; photo?: string }>
-  prices: Array<{ id: string; garment: string; service: string; garmentName: string; serviceName: string; rate: number }>
+  prices: Array<{ id: string; garment: string; service: string; customer?: string; garmentName: string; serviceName: string; rate: number; active?: boolean }>
+  chargeRules: Array<{ id: string; name: string; type: 'Flat' | 'Percentage'; amount: number; description?: string; active?: boolean }>
+  discountRules: Array<{ id: string; name: string; type: 'Flat' | 'Percentage'; amount: number; description?: string; active?: boolean }>
+  taxRules: Array<{ id: string; name: string; rate: number; active?: boolean }>
+  serviceUnits: string[]
 }
 
 export type LaundryOrder = {
@@ -15,8 +19,14 @@ export type LaundryOrder = {
   orderDate: string
   expectedDeliveryDate: string
   fulfillmentMode: string
+  deliveryAddress?: string
   state: LaundryState
   itemCount: number
+  subtotal: number
+  charges: number
+  discounts: number
+  taxRate: number
+  taxAmount: number
   grandTotal: number
   paymentMode: string
   paymentStatus: string
@@ -25,7 +35,7 @@ export type LaundryOrder = {
   deliveryRider?: { id: string; name: string; phone: string }
   pickupSlot: string
   deliverySlot: string
-  items: Array<{ garmentName: string; serviceName: string; unit: string; qty: number; rate: number; amount: number }>
+  items: Array<{ garment?: string; service?: string; garmentName: string; serviceName: string; unit: string; qty: number; rate: number; amount: number; fulfilment?: { ordered: number; received: number; delivered: number; pending: number; pickedUp: number; inProcess: number; ready: number } }>
   notes: string
   photoPaths: string
   createdAt: string
@@ -62,6 +72,20 @@ export type LaundryQuote = {
   taxAmount: number
   grandTotal: number
 }
+
+export type LaundryPaymentSummary = {
+  orderId: string
+  invoiceId: string
+  invoiceNumber: string
+  total: number
+  paid: number
+  outstanding: number
+  status: 'Paid' | 'Part Paid' | 'Unpaid'
+  payments: Array<{ id: string; amount: number; mode: string; reference: string; providerStatus: string; postingDate: string; remarks: string }>
+  provider: { mode: string; onlineConfirmation: boolean; note: string }
+}
+
+export type LaundryFulfillmentEvent = { id: string; itemIndex: number; stage: 'Picked Up' | 'In Process' | 'Ready' | 'Delivered'; quantity: number; unit: string; note: string; eventDate: string; createdAt: string; actor: string }
 
 export const nextLaundryState: Partial<Record<LaundryState, LaundryState>> = {
   Booked: 'In Process',

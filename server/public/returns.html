@@ -51,7 +51,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 let ITEMS=[],MODE='cn';
 function show(m,btn){MODE=m;document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');document.getElementById('cn').classList.toggle('hide',m!=='cn');document.getElementById('dn').classList.toggle('hide',m!=='dn');document.getElementById('items').innerHTML='';addRow();}

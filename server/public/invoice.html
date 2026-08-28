@@ -3,7 +3,7 @@
 <body style="margin:0">
 <script>
 const id=new URLSearchParams(location.search).get('id');
-fetch('/api/gst/print/'+id,{headers:{'x-api-key':'dev-key-change-me'}})
+fetch('/api/gst/print/'+id)
   .then(r=>r.text()).then(h=>{document.open();document.write(h);document.close();});
 </script>
 </body></html>

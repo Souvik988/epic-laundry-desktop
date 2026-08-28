@@ -41,7 +41,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 function money(n){return '₹'+(Math.round(n*100)/100).toLocaleString('en-IN');}
 async function load(){

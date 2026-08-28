@@ -80,7 +80,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 const today=()=>new Date().toISOString().slice(0,10);
 let PARTIES=[],REC=[],PAY=[];

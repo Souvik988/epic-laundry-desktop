@@ -103,3 +103,39 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+/* Keep browser fallback printing focused on the active laundry receipt/tag dialog.
+   The native Electron print bridge already receives a self-contained document;
+   this protects the booking dialog's direct window.print() fallback from printing
+   the surrounding application shell. */
+@media print {
+  body > * { visibility: hidden !important; }
+  .fixed.inset-0 {
+    visibility: visible !important;
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  .fixed.inset-0 > div {
+    visibility: visible !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .fixed.inset-0::before {
+    content: "Lndry";
+    display: block;
+    margin: 0 0 10px;
+    color: #664cf0;
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: .08em;
+  }
+  .fixed.inset-0 button { display: none !important; }
+}

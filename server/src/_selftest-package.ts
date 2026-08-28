@@ -1,0 +1,62 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const tempDir = mkdtempSync(join(tmpdir(), 'epic-package-test-'));
+process.env.EPIC_DATA_FILE = join(tempDir, 'epic.json');
+let closeStore: (() => void) | undefined;
+try {
+  const Fastify = (await import('fastify')).default;
+  const { store } = await import('./kernel/store.js');
+  const { bootstrapOwner, createOperationalUser, signIn } = await import('./modules/auth/auth.js');
+  const { laundryCatalogue, seedLaundryDefaults } = await import('./modules/laundry/domain.js');
+  const { registerApi } = await import('./api.js');
+  closeStore = () => store.close();
+  bootstrapOwner({ username: 'package-owner', password: 'PackageOwnerPassword!26', tenant: 'PACKAGE', storeId: 'STORE-P' });
+  const session = signIn('package-owner', 'PackageOwnerPassword!26');
+  const headers = { cookie: `epic_session=${session.token}`, 'idempotency-key': 'package-default' };
+  store.withStoreScope('PACKAGE', 'STORE-P', () => seedLaundryDefaults('PACKAGE'));
+  const app = Fastify(); registerApi(app);
+  const createdCustomer = await app.inject({ method: 'POST', url: '/api/laundry/customers', headers: { ...headers, 'idempotency-key': 'package-customer' }, payload: { name: 'Package Customer', phone: '9000040003' } });
+  assert.equal(createdCustomer.statusCode, 201, 'package test customer creates');
+  const customer = createdCustomer.json().id;
+  const catalogue = store.withStoreScope('PACKAGE', 'STORE-P', () => laundryCatalogue('PACKAGE'));
+  const garment = catalogue.garments.find((entry: any) => entry.name === 'Shirt / T-shirt')!;
+  const service = catalogue.services.find((entry: any) => entry.name === 'Steam Iron')!;
+  const created = await app.inject({ method: 'POST', url: '/api/laundry/packages', headers: { ...headers, 'idempotency-key': 'package-create-001' }, payload: { name: 'Five Shirt Care', description: 'Five ironed shirts', price: 250, validityDays: 30, services: [{ garment: garment.id, service: service.id, allowance: 5 }] } });
+  assert.equal(created.statusCode, 201, `package definition creates: ${created.body}`);
+  const packageId = created.json().id;
+  const listed = await app.inject({ method: 'GET', url: '/api/laundry/packages', headers });
+  assert.equal(listed.json().some((entry: any) => entry.id === packageId && entry.services[0].allowance === 5), true, 'package catalogue includes service allowance');
+  const purchase = await app.inject({ method: 'POST', url: `/api/laundry/customers/${customer}/packages`, headers: { ...headers, 'idempotency-key': 'package-purchase-001' }, payload: { servicePackage: packageId, paymentMode: 'Cash', reason: 'Counter package sale' } });
+  assert.equal(purchase.statusCode, 201, `package purchases: ${purchase.body}`);
+  const assigned = purchase.json().id;
+  const purchaseRetry = await app.inject({ method: 'POST', url: `/api/laundry/customers/${customer}/packages`, headers: { ...headers, 'idempotency-key': 'package-purchase-001' }, payload: { servicePackage: packageId, paymentMode: 'Cash', reason: 'Counter package sale' } });
+  assert.equal(purchaseRetry.statusCode, 201, 'package purchase retry is idempotent');
+  createOperationalUser(session.context, { username: 'package-counter', password: 'PackageCounterPassword!26', roles: ['counter_staff'] });
+  const counter = signIn('package-counter', 'PackageCounterPassword!26');
+  const counterHeaders = { cookie: `epic_session=${counter.token}`, 'idempotency-key': 'package-counter-001' };
+  const counterCatalogue = await app.inject({ method: 'GET', url: '/api/laundry/catalogue', headers: counterHeaders });
+  assert.equal(counterCatalogue.statusCode, 200, 'counter can resolve package garment and service labels');
+  const counterPackages = await app.inject({ method: 'GET', url: '/api/laundry/packages', headers: counterHeaders });
+  assert.equal(counterPackages.statusCode, 200, 'counter can read active care packages');
+  const counterRedemption = await app.inject({ method: 'POST', url: `/api/laundry/customer-packages/${assigned}/redemptions`, headers: counterHeaders, payload: { garment: garment.id, service: service.id, quantity: 1, reason: 'Counter package use' } });
+  assert.equal(counterRedemption.statusCode, 201, 'counter can redeem an assigned package');
+  const redeemed = await app.inject({ method: 'POST', url: `/api/laundry/customer-packages/${assigned}/redemptions`, headers: { ...headers, 'idempotency-key': 'package-redeem-001' }, payload: { garment: garment.id, service: service.id, quantity: 3, reason: 'First package use' } });
+  assert.equal(redeemed.statusCode, 201, 'partial package redemption succeeds');
+  const excess = await app.inject({ method: 'POST', url: `/api/laundry/customer-packages/${assigned}/redemptions`, headers: { ...headers, 'idempotency-key': 'package-redeem-excess' }, payload: { garment: garment.id, service: service.id, quantity: 2, reason: 'Must not exceed' } });
+  assert.equal(excess.statusCode, 400, 'package redemption cannot exceed allowance');
+  const finalUse = await app.inject({ method: 'POST', url: `/api/laundry/customer-packages/${assigned}/redemptions`, headers: { ...headers, 'idempotency-key': 'package-redeem-002' }, payload: { garment: garment.id, service: service.id, quantity: 1, reason: 'Final package use' } });
+  assert.equal(finalUse.statusCode, 201, 'remaining package allowance redeems');
+  assert.equal(finalUse.json().status, 'Exhausted', 'package becomes exhausted when every allowance is used');
+  const customerPackages = await app.inject({ method: 'GET', url: `/api/laundry/customers/${customer}/packages`, headers });
+  assert.equal(customerPackages.json().length, 1, 'idempotent purchase did not assign duplicate package');
+  const profile = await app.inject({ method: 'GET', url: `/api/laundry/customers/${customer}`, headers });
+  assert.equal(profile.json().ledger.filter((entry: any) => entry.referenceId === assigned).length, 2, 'package sale posts one debit and one paid credit ledger entry');
+  await app.close();
+  console.log('PASS  package lifecycle, allowance cap and idempotency self-test complete');
+} finally {
+  closeStore?.();
+  try { rmSync(tempDir, { recursive: true, force: true }); } catch (error) { console.error('package test cleanup failed:', (error as Error).message); }
+}

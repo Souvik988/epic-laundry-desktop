@@ -379,6 +379,18 @@ const PAY_MODE_ACCOUNT: Record<string, string> = {
   Card: 'Bank/Card (Assets)',
 };
 
+function refreshSalesInvoicePaymentStatus(tenant: string, invoiceId: string, excludedPaymentId?: string) {
+  const invoice = store.getRow(tenant, invoiceId);
+  if (!invoice || invoice.entity !== 'sales_invoice' || invoice.status === 'Cancelled') return;
+  const total = Math.max(0, Math.round((Number(invoice.data.grand_total) || 0) * 100) / 100);
+  const paid = Math.round(store.rowsOf(tenant, 'payment_entry')
+    .filter((payment) => payment.status === 'Submitted' && payment.id !== excludedPaymentId && payment.data.payment_type === 'Receive' && payment.data.against_sales === invoiceId)
+    .reduce((sum, payment) => sum + (Number(payment.data.amount) || 0), 0) * 100) / 100;
+  invoice.data.payment_status = paid >= total && total > 0 ? 'Paid' : paid > 0 ? 'Part Paid' : 'Unpaid';
+  invoice.updated_at = new Date().toISOString();
+  store.updateRow(invoice);
+}
+
 registerPosting('payment_posting', (tenant, row, sign) => {
   const type = String(row.data.payment_type || 'Receive');
   const mode = String(row.data.mode || 'Cash');
@@ -396,16 +408,9 @@ registerPosting('payment_posting', (tenant, row, sign) => {
     entries.push(gl(tenant, row, acct, 0, amount * sign));
   }
 
-  // Mark the referenced invoice as Paid when fully settled (submit only).
-  if (sign === 1) {
-    if (type === 'Receive' && row.data.against_sales) {
-      const inv = store.getRow(tenant, row.data.against_sales);
-      if (inv && inv.data.status !== 'Cancelled') { inv.data.status = 'Paid'; store.updateRow(inv); }
-    } else if (type === 'Pay' && row.data.against_purchase) {
-      const inv = store.getRow(tenant, row.data.against_purchase);
-      if (inv && inv.data.status !== 'Cancelled') { inv.data.status = 'Paid'; store.updateRow(inv); }
-    }
-  }
+  // Payment status is derived from all valid allocations, including reversals;
+  // never overload the invoice lifecycle status with a partial payment.
+  if (type === 'Receive' && row.data.against_sales) refreshSalesInvoicePaymentStatus(tenant, String(row.data.against_sales), sign === -1 ? row.id : undefined);
   return entries;
 });
 

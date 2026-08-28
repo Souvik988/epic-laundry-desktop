@@ -68,7 +68,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const QKEY='epic_pos_queue_v1';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json()).catch(()=>null);
 let ITEMS=[],WH=[],CUST=[],CART={},lastId=null,forcedOffline=false,QUEUE=[];

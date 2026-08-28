@@ -41,7 +41,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 let ITEMS=[],WH=[],SUP=[];
 function rowHtml(){return `<div style="display:flex;gap:8px;margin-top:8px"><select class="it"></select><input class="q" type="number" placeholder="qty"/><input class="r" type="number" placeholder="rate"/></div>`;}

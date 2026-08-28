@@ -56,7 +56,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 function show(m,btn){document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');['reg','dep'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==m));}
 async function saveAsset(){const r=await api('/asset',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':KEY},body:JSON.stringify({data:{name:aname.value,asset_category:acat.value,purchase_date:adate.value,purchase_value:Number(acost.value||0),salvage_value:Number(asalv.value||0),useful_life:Number(alife.value||1),depreciation_method:amethod.value,status:astatus.value}})});if(r.error){alert(r.error);return;}alert('Asset '+r.data.name);loadGrids();}

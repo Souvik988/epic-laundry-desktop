@@ -65,7 +65,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 let CUST=[],EMP=[],PRJ=[];
 function show(m,btn){document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');['prj','ts','bill'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==m));}

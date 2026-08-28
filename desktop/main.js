@@ -14,6 +14,7 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const http = require('node:http');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 
 const isDev = !app.isPackaged;
 const PORT = Number(process.env.EPIC_PORT || 3001);
@@ -26,6 +27,8 @@ const serverDir = isDev
 
 // Persist data in the OS user-data dir (outside the read-only asar), not next to the binary.
 const dataFile = path.join(app.getPath('userData'), 'epic.json');
+const databaseFile = path.join(app.getPath('userData'), 'epic.sqlite');
+const internalApiKey = crypto.randomBytes(32).toString('base64url');
 
 let serverProc = null;
 let mainWin = null;
@@ -37,6 +40,9 @@ function startServer() {
     PORT: String(PORT),
     HOST,
     EPIC_DATA_FILE: dataFile,
+    EPIC_DB_FILE: databaseFile,
+    EPIC_LEGACY_JSON_FILE: dataFile,
+    EPIC_INTERNAL_API_KEY: internalApiKey,
     // In dev we want the same sandbox GSP + any user .env values to pass through.
     GSP_PROVIDER: process.env.GSP_PROVIDER || 'sandbox',
     EPIC_SUPPLIER_STATE: process.env.EPIC_SUPPLIER_STATE || '29',
@@ -74,8 +80,6 @@ function waitForHealth(retries = 60, delay = 500) {
   });
 }
 
-// The bundled server's API key (guarded routes). Overridable via env for hardened deployments.
-const API_KEY = process.env.EPIC_API_KEY || 'dev-key-change-me';
 const backupsDir = path.join(app.getPath('userData'), 'backups');
 
 // Minimal promise-based HTTP against the local bundled server (127.0.0.1 only).
@@ -85,7 +89,7 @@ function apiRequest(method, apiPath, body) {
     const req = http.request({
       host: HOST, port: PORT, path: apiPath, method,
       headers: {
-        'x-api-key': API_KEY,
+        'x-epic-internal-key': internalApiKey,
         ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {}),
       },
       timeout: 15000,
@@ -106,7 +110,7 @@ function apiRequest(method, apiPath, body) {
 }
 
 function nativeNotify(title, body) {
-  try { if (Notification.isSupported()) new Notification({ title: title || 'Epic BOS', body: body || '' }).show(); }
+  try { if (Notification.isSupported()) new Notification({ title: title || 'Epic Laundry', body: body || '' }).show(); }
   catch { /* notifications are best-effort */ }
 }
 
@@ -123,11 +127,11 @@ async function writeBackupTo(filePath) {
 }
 
 async function doBackupDialog() {
-  const suggested = path.join(app.getPath('documents'), `EpicBOS-backup-${tsStamp()}.json`);
+  const suggested = path.join(app.getPath('documents'), `EpicLaundry-backup-${tsStamp()}.json`);
   const { canceled, filePath } = await dialog.showSaveDialog(mainWin, {
-    title: 'Backup Epic BOS data',
+    title: 'Backup Epic Laundry data',
     defaultPath: suggested,
-    filters: [{ name: 'Epic BOS Backup', extensions: ['json'] }],
+    filters: [{ name: 'Epic Laundry Backup', extensions: ['json'] }],
   });
   if (canceled || !filePath) return { ok: false, canceled: true };
   await writeBackupTo(filePath);
@@ -137,9 +141,9 @@ async function doBackupDialog() {
 
 async function doRestoreDialog() {
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWin, {
-    title: 'Restore Epic BOS data from backup',
+    title: 'Restore Epic Laundry data from backup',
     properties: ['openFile'],
-    filters: [{ name: 'Epic BOS Backup', extensions: ['json'] }],
+    filters: [{ name: 'Epic Laundry Backup', extensions: ['json'] }],
   });
   if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true };
   const { response } = await dialog.showMessageBox(mainWin, {
@@ -180,7 +184,7 @@ ipcMain.on('epic:notify', (_e, { title, body } = {}) => nativeNotify(title, body
 
 ipcMain.handle('epic:export-pdf', async (_e, suggestedName) => {
   if (!mainWin) return { ok: false };
-  const suggested = path.join(app.getPath('documents'), `${(suggestedName || 'EpicBOS').replace(/[^\w.-]/g, '_')}.pdf`);
+  const suggested = path.join(app.getPath('documents'), `${(suggestedName || 'EpicLaundry').replace(/[^\w.-]/g, '_')}.pdf`);
   const { canceled, filePath } = await dialog.showSaveDialog(mainWin, {
     title: 'Export current view to PDF',
     defaultPath: suggested,
@@ -203,6 +207,29 @@ ipcMain.handle('epic:save-file', async (_e, { content = '', suggestedName = 'exp
   if (canceled || !filePath) return { ok: false, canceled: true };
   fs.writeFileSync(filePath, content, 'utf8');
   return { ok: true, path: filePath };
+});
+
+// Print an isolated HTML document from the renderer through the native system dialog.
+// This avoids relying on window.open(), which is intentionally denied by the external-link policy.
+ipcMain.handle('epic:print-html', async (_e, html) => {
+  if (typeof html !== 'string' || html.length > 2_000_000) throw new Error('Print document is invalid or too large');
+  const printWin = new BrowserWindow({
+    parent: mainWin || undefined,
+    show: false,
+    width: 800,
+    height: 900,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  try {
+    await printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    const result = await new Promise((resolve) => {
+      printWin.webContents.print({ silent: false, printBackground: true }, (success, failureReason) => resolve({ success, failureReason }));
+    });
+    if (!result.success) return { ok: false, canceled: result.failureReason === 'cancelled' };
+    return { ok: true };
+  } finally {
+    if (!printWin.isDestroyed()) printWin.close();
+  }
 });
 
 // Send the loaded Laundry Desk to a specific React hash route. Legacy static ERP pages retain
@@ -282,7 +309,7 @@ function buildMenu() {
     {
       role: 'help',
       submenu: [
-        { label: 'Epic BOS on the Web', click: () => shell.openExternal('https://updates.epicbos.app/') },
+        { label: 'Epic Laundry on the Web', click: () => shell.openExternal('https://updates.epicbos.app/') },
         { label: `Version ${app.getVersion()}`, enabled: false },
       ],
     },
@@ -293,7 +320,7 @@ function buildMenu() {
 // Menu -> PDF export (needs a save dialog; reuse the IPC handler path).
 ipcMain.on('epic:export-pdf-menu', async () => {
   try {
-    const title = mainWin ? mainWin.webContents.getTitle().replace(/[^\w.-]/g, '_') : 'EpicBOS';
+    const title = mainWin ? mainWin.webContents.getTitle().replace(/[^\w.-]/g, '_') : 'EpicLaundry';
     const { canceled, filePath } = await dialog.showSaveDialog(mainWin, {
       title: 'Export current view to PDF',
       defaultPath: path.join(app.getPath('documents'), `${title}.pdf`),
@@ -336,12 +363,12 @@ function createWindow() {
 function createTray() {
   // System tray with Show / Quit. (Icon is optional; without one Electron uses a default.)
   const ctx = Menu.buildFromTemplate([
-    { label: 'Show Epic BOS', click: () => { mainWin.show(); mainWin.focus(); } },
+    { label: 'Show Epic Laundry', click: () => { mainWin.show(); mainWin.focus(); } },
     { label: 'Quit', click: () => quitApp() },
   ]);
   try {
     tray = new Tray(path.join(__dirname, 'icon.png'));
-    tray.setToolTip('Epic BOS');
+    tray.setToolTip('Epic Laundry');
     tray.setContextMenu(ctx);
     tray.on('click', () => { mainWin.show(); mainWin.focus(); });
   } catch {
@@ -374,21 +401,21 @@ app.whenReady().then(async () => {
   try {
     await waitForHealth();
   } catch (e) {
-    dialog.showErrorBox('Epic BOS failed to start', String(e && e.message || e));
+    dialog.showErrorBox('Epic Laundry failed to start', String(e && e.message || e));
     quitApp();
     return;
   }
   createWindow();
   buildMenu();
   createTray();
-  nativeNotify('Epic BOS is ready', 'Your offline business OS is running locally.');
+  nativeNotify('Epic Laundry is ready', 'Your offline laundry desk is running locally.');
 
   // Self-update: notify + auto-install on next launch (prod builds only).
   if (autoUpdater && app.isPackaged) {
     autoUpdater.autoInstallOnQuit = true;
     autoUpdater.on('update-available', () => { if (process.env.EPIC_DEBUG) console.log('[updater] update available'); });
     autoUpdater.on('update-downloaded', async () => {
-      const { response } = await dialog.showMessageBox(mainWin, { type: 'info', title: 'Update ready', message: 'A new Epic BOS version is installed. Restart now?', buttons: ['Restart', 'Later'] });
+      const { response } = await dialog.showMessageBox(mainWin, { type: 'info', title: 'Update ready', message: 'A new Epic Laundry version is installed. Restart now?', buttons: ['Restart', 'Later'] });
       if (response === 0) autoUpdater.quitAndInstall();
     });
     autoUpdater.checkForUpdatesAndNotify().catch(() => {});

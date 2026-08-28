@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Epic Laundry">
+  <rect width="64" height="64" rx="16" fill="#123039"/>
+  <path fill="#e6bc65" d="M17 15h30v8H26v5h18v8H26v5h21v8H17z"/>
+  <circle cx="47" cy="47" r="6" fill="#8bc8bd"/>
+</svg>

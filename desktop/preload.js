@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('epic', {
   restore: () => ipcRenderer.invoke('epic:restore'),
   // Print the current view to a PDF via the OS "Save As" dialog. Returns { ok, path }.
   exportPdf: (suggestedName) => ipcRenderer.invoke('epic:export-pdf', suggestedName),
+  // Print an isolated, escaped HTML document through the native system dialog.
+  printHtml: (html) => ipcRenderer.invoke('epic:print-html', html),
   // Save arbitrary text/CSV content to disk via the OS "Save As" dialog.
   saveFile: (opts) => ipcRenderer.invoke('epic:save-file', opts),
   // Fire an OS-level (native) notification.

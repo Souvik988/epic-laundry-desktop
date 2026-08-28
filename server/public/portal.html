@@ -29,7 +29,7 @@
   <div id="out"></div>
 </div>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 (async()=>{const p=new URLSearchParams(location.search).get('c');if(p){cid.value=p;await load();}})();
 async function load(){

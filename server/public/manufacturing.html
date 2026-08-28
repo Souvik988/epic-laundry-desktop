@@ -102,7 +102,7 @@
   </div>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 let ITEMS=[],WH=[],BOM=[],WO=[],PARTY=[],WS=[];
 function show(m,btn){document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');['bom','wo','mfg','cost','plan','setup'].forEach(id=>document.getElementById(id).classList.toggle('hide',id!==m));if(m==='setup')loadWs();if(m==='plan')mrpRun();}

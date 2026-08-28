@@ -17,7 +17,7 @@
 */
 (function (global) {
   const NS = 'http://www.w3.org/2000/svg';
-  const KEY = 'dev-key-change-me';
+  const KEY = '';
   const PALETTE = ['#6d8bff','#3ecf8e','#ffb454','#ff6b6b','#a06bff','#22d3ee','#f472b6','#94a3b8'];
 
   // ---- data + format helpers ----

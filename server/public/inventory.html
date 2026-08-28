@@ -94,7 +94,7 @@
   </div></section>
 </main>
 <script>
-const KEY='dev-key-change-me';
+const KEY='';
 const api=(p,o={})=>fetch('/api'+p,{headers:{'x-api-key':KEY},...o}).then(r=>r.json());
 let ITEMS=[], WH=[], RECEIPTS=[];
 function rowHtml(){return `<div class="row" style="margin-top:8px"><select class="it"></select><input class="q" type="number" placeholder="qty"/><input class="r" type="number" placeholder="rate"/><input class="ser" placeholder="serials (space sep)"/><input class="bat" placeholder="batch"/></div>`;}
