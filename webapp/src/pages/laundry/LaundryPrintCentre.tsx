@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Loader2, Printer, Search, Tag } from 'lucide-react'
 import { useState } from 'react'
 import QRCode from 'qrcode'
-import { apiGet } from '@/lib/api'
+import { apiGet, apiPost } from '@/lib/api'
 import type { LaundryOrder } from '@/lib/laundry'
 import { formatINR } from '@/lib/utils'
 import { lndryBrand } from '@/assets/generated/manifest'
@@ -38,7 +38,11 @@ async function printDocument(kind: 'receipt' | 'tags', order: Detail, printSetti
     ? `${header}<h1>Receipt</h1><p>${escape(order.invoiceNumber || order.orderNumber)} · ${escape(order.customer.name)} · ${escape(order.customer.phone)}</p><hr>${order.receipt.items.map((item) => `<p>${escape(item.garmentName)} × ${item.qty} — ${formatINR(item.amount)}</p>`).join('')}<hr><h2>Total: ${formatINR(order.receipt.grandTotal)}</h2><p>${escape(order.paymentStatus)} · ${escape(order.paymentMode)}</p>`
     : `${header}<h1>Garment tags</h1><p>${escape(order.orderNumber)} · ${escape(order.customer.name)} · Due ${escape(order.expectedDeliveryDate)}</p><div class="tags">${order.tags.map((tag) => `<article class="tag"><div class="tag-top"><strong>${escape(tag.tagNumber)}</strong><span>${escape(String(tag.sequence))} / ${escape(String(tag.total))}</span></div><strong>${escape(tag.garment)}</strong><small>${escape(tag.service)}</small><small>Customer: ${escape(tag.customer)}</small><small>Order date: ${escape(tag.orderDate)}</small><small>Due: ${escape(tag.expectedDeliveryDate)}</small></article>`).join('')}</div>`
   const html = `<!doctype html><html><head><title>${kind === 'receipt' ? 'Receipt' : 'Garment tags'} · Epic Laundry</title><style>body{font-family:Arial,sans-serif;color:#17353c;max-width:720px;margin:36px auto;padding:0 24px}header{display:flex;align-items:center;gap:12px;border-bottom:2px solid #664cf0;padding-bottom:12px}header strong{display:block;font-size:24px}header small{display:block;color:#718087;margin-top:3px}.brand-mark{width:42px;height:42px;object-fit:contain}.brand-fallback{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#664cf0;color:white;font-weight:700}h1{font-size:24px}.tags{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.tag{border:1px dashed #78998f;border-radius:10px;padding:14px;min-height:110px;display:flex;flex-direction:column;gap:4px}.tag-top{display:flex;justify-content:space-between;gap:8px;color:#664cf0;font-size:12px}.tag small{color:#617178}@media print{button{display:none}}</style></head><body>${body}</body></html>`
-  if (window.epic?.printHtml) { await window.epic.printHtml(html); return }
+  if (window.epic?.printHtml) {
+    const result = await window.epic.printHtml(html)
+    try { await apiPost('/ops/hardware-receipts', { kind: kind === 'receipt' ? 'receipt-printer' : 'tag-printer', operation: 'print', status: result.ok ? 'Completed' : 'Cancelled', device: 'electron-system-dialog', sourceEntity: 'laundry_order', sourceId: order.id, evidence: result.ok ? 'Electron print callback reported success' : 'Operator cancelled the native print dialog' }) } catch (error) { console.warn('Print receipt could not be recorded', error) }
+    return
+  }
   const win = window.open('', '_blank', 'width=800,height=900'); if (!win) return
   try { win.opener = null } catch { /* browser may make opener read-only */ }
   win.document.write(`${html}<script>window.onload=()=>window.print()<\/script>`); win.document.close()

@@ -38,6 +38,8 @@ try {
   assert.deepEqual({ status: paid.json().status, paid: paid.json().paid, outstanding: paid.json().outstanding, count: paid.json().payments.length }, { status: 'Paid', paid: 16, outstanding: 0, count: 2 }, 'multiple payment allocations reconcile to a paid invoice');
   const tooMuch = await app.inject({ method: 'POST', url: `/api/laundry/orders/${orderId}/payments`, headers: { cookie: `epic_session=${session.token}`, 'idempotency-key': 'payment-too-much' }, payload: { amount: 1, mode: 'Cash' } });
   assert.equal(tooMuch.statusCode, 400, 'over-collection is rejected');
+  const zero = await app.inject({ method: 'POST', url: `/api/laundry/orders/${orderId}/payments`, headers: { cookie: `epic_session=${session.token}`, 'idempotency-key': 'payment-zero' }, payload: { amount: 0, mode: 'Cash' } });
+  assert.equal(zero.statusCode, 400, 'zero-value payment is rejected');
   const fakeProvider = await app.inject({ method: 'POST', url: `/api/laundry/orders/${orderId}/payments`, headers: { cookie: `epic_session=${session.token}`, 'idempotency-key': 'payment-provider-confirmed' }, payload: { amount: 1, mode: 'Cash', providerStatus: 'Confirmed' } });
   assert.equal(fakeProvider.statusCode, 400, 'unconfigured online provider confirmation is rejected');
   const reversed = await app.inject({ method: 'POST', url: `/api/laundry/payments/${first.json().payment.id}/reverse`, headers: { cookie: `epic_session=${session.token}`, 'idempotency-key': 'payment-reversal-001' }, payload: { reason: 'Cash returned to customer' } });
@@ -45,6 +47,8 @@ try {
   assert.equal(store.withStoreScope(owner.tenant, owner.storeId, () => store.getRow(owner.tenant, first.json().payment.id)?.status), 'Cancelled', 'reversed payment is cancelled in the source ledger');
   assert.deepEqual({ status: reversed.json().status, paid: reversed.json().paid, outstanding: reversed.json().outstanding }, { status: 'Part Paid', paid: 10, outstanding: 6 }, 'reversal reopens only the reversed allocation and preserves history');
   assert.equal(store.withStoreScope(owner.tenant, owner.storeId, () => store.rowsOf(owner.tenant, 'laundry_customer_ledger').some((entry) => entry.data.entry_type === 'Refund' && entry.data.reference_id === first.json().payment.id)), true, 'payment reversal posts a customer ledger adjustment');
+  const canonical = store.withStoreScope(owner.tenant, owner.storeId, () => store.listFinancialEntries(owner.tenant));
+  assert.equal(canonical.filter((entry) => entry.sourceId === first.json().payment.id).map((entry) => entry.kind).sort().join(','), 'collection,refund', 'collection and reversal each have immutable canonical financial entries');
   await app.close();
   console.log('PASS  partial, multiple, idempotent and reversible laundry payments self-test complete');
 } finally {

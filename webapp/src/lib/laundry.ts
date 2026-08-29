@@ -20,7 +20,9 @@ export type LaundryOrder = {
   expectedDeliveryDate: string
   fulfillmentMode: string
   deliveryAddress?: string
+  serviceZone?: string
   state: LaundryState
+  version?: number
   itemCount: number
   subtotal: number
   charges: number

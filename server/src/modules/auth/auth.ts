@@ -10,6 +10,7 @@ export type AuthContext = {
   storeId: string;
   roles: OperationalRole[];
   sessionHash: string;
+  riderId?: string;
 };
 
 export type StaffProfileInput = {
@@ -18,6 +19,7 @@ export type StaffProfileInput = {
   email?: string;
   phone?: string;
   description?: string;
+  riderId?: string;
 };
 
 const SESSION_TTL_MS = Number(process.env.EPIC_SESSION_TTL_MS || 1000 * 60 * 60 * 12);
@@ -47,7 +49,17 @@ function profile(input: StaffProfileInput) {
   const clean = (value: unknown, max: number) => String(value || '').trim().slice(0, max);
   const email = clean(input.email, 254);
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('email address is invalid');
-  return { firstName: clean(input.firstName, 80), lastName: clean(input.lastName, 80), email, phone: clean(input.phone, 40), description: clean(input.description, 500) };
+  return { firstName: clean(input.firstName, 80), lastName: clean(input.lastName, 80), email, phone: clean(input.phone, 40), description: clean(input.description, 500), riderId: clean(input.riderId, 120) };
+}
+function validatedRiderId(tenant: string, storeId: string, value: unknown) {
+  const riderId = String(value || '').trim().slice(0, 120);
+  if (!riderId) return undefined;
+  // Rider records are branch-scoped. Validate against the identity's target
+  // branch rather than whichever AsyncLocalStorage scope the caller happens
+  // to be running in (owners may create staff for another branch).
+  const rider = store.withStoreScope(tenant, storeId, () => store.getRow(tenant, riderId));
+  if (!rider || rider.entity !== 'laundry_rider' || rider.data.active === false) throw new Error('linked rider must be an active rider in this store');
+  return riderId;
 }
 function ensureOwnerContinuity(identity: AuthIdentity, nextRoles: OperationalRole[], nextEnabled: boolean) {
   if (!identity.enabled || !identity.roles.includes('owner') || (nextEnabled && nextRoles.includes('owner'))) return;
@@ -112,7 +124,7 @@ export function createOperationalUser(actor: AuthContext, input: { username: str
   if (!validOperationalRoles(input.roles)) throw new Error('a valid operational role is required');
   const identity: AuthIdentity = {
     id: randomUUID(), tenant: actor.tenant, storeId: input.storeId?.trim() || actor.storeId, username,
-    passwordHash: passwordHash(input.password), roles: input.roles, enabled: true, ...profile(input), createdAt: new Date().toISOString(),
+    passwordHash: passwordHash(input.password), roles: input.roles, enabled: true, ...profile(input), riderId: validatedRiderId(actor.tenant, input.storeId?.trim() || actor.storeId, input.riderId), createdAt: new Date().toISOString(),
   };
   store.createIdentity(identity);
   return identity;
@@ -135,7 +147,7 @@ export function updateOperationalUser(actor: AuthContext, identityId: string, in
   if (!validOperationalRoles(roles)) throw new Error('a valid operational role is required');
   const enabled = typeof input.enabled === 'boolean' ? input.enabled : identity.enabled;
   ensureOwnerContinuity(identity, roles, enabled);
-  const next = { ...identity, ...profile(input), roles, enabled };
+  const next = { ...identity, ...profile(input), riderId: input.riderId === undefined ? identity.riderId : validatedRiderId(actor.tenant, actor.storeId, input.riderId), roles, enabled };
   store.updateIdentityProfile(identity.id, next);
   store.addStoreMembership({ identityId: identity.id, tenant: identity.tenant, storeId: identity.storeId, roles, createdAt: identity.createdAt });
   return next;
@@ -179,15 +191,15 @@ export function switchOperationalStore(actor: AuthContext, storeId: string) {
 }
 
 function toContext(identity: AuthIdentity, sessionHash: string, storeId = identity.storeId): AuthContext {
-  return { identityId: identity.id, actor: identity.username, tenant: identity.tenant, storeId, roles: identity.roles.filter((role): role is OperationalRole => validRoles.includes(role as OperationalRole)), sessionHash };
+  return { identityId: identity.id, actor: identity.username, tenant: identity.tenant, storeId, roles: identity.roles.filter((role): role is OperationalRole => validRoles.includes(role as OperationalRole)), sessionHash, riderId: identity.riderId };
 }
 
 export function can(context: AuthContext, permission: string) {
   if (context.roles.includes('owner')) return true;
   const permissions: Record<OperationalRole, string[]> = {
-    counter_staff: ['orders.read', 'orders.create', 'orders.edit', 'payments.collect', 'customers.read', 'customers.create', 'customers.edit', 'expenses.create', 'catalogue.read', 'packages.read', 'packages.sell', 'packages.redeem'],
-    processing_staff: ['orders.read', 'orders.transition', 'catalogue.read', 'packages.read', 'packages.redeem'],
-    rider: ['orders.read.assigned', 'orders.deliver.assigned'],
+    counter_staff: ['orders.read', 'orders.create', 'orders.edit', 'orders.hold', 'payments.collect', 'customers.read', 'customers.create', 'customers.edit', 'expenses.create', 'catalogue.read', 'packages.read', 'packages.sell', 'packages.redeem', 'garments.read', 'garments.scan', 'tags.reprint', 'cash.read', 'cash.open', 'cash.close', 'production.read', 'quality.read', 'quality.open', 'routes.read', 'routes.manage', 'hardware.read', 'hardware.receipt'],
+    processing_staff: ['orders.read', 'orders.transition', 'catalogue.read', 'packages.read', 'packages.redeem', 'garments.read', 'garments.scan', 'tags.reprint', 'production.read', 'production.assign', 'production.start', 'quality.read', 'quality.open', 'quality.resolve', 'routes.read', 'routes.manage', 'hardware.read', 'hardware.receipt'],
+    rider: ['orders.read.assigned', 'orders.deliver.assigned', 'routes.read.assigned', 'routes.manage.assigned'],
     owner: ['*'],
   };
   return context.roles.some((role) => permissions[role].includes(permission));

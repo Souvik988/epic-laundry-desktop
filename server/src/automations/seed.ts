@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { subscribe } from '../kernel/event-bus.js';
 import { store } from '../kernel/store.js';
 import { ShotlinXchatAdapter } from '../integrations/whatsapp/shotlinxchat.js';
@@ -28,11 +29,12 @@ export function registerSeedAutomations(tenant: string) {
       `Hello ${party.data.name},\nYour invoice *${p.name}* for ₹${p.grand_total} is ready.\n` +
       `View / pay: ${link}\nThank you!`;
     const res = await wa.sendText(phone, msg);
+    const recipientHash = createHash('sha256').update(String(phone), 'utf8').digest('hex');
     audit(tenant, 'automation', 'wa:invoice-notify', {
       row_id: p.id,
-      after: { to: phone, ok: res.ok, detail: res.detail },
+      after: { recipientHash, recipientLength: String(phone).length, ok: res.ok, detail: res.detail },
     });
-    console.log(`[automation] invoice ${p.name} -> WA ${phone}: ok=${res.ok} (${res.detail})`);
+    console.log(`[automation] invoice ${p.name} -> WA recipientHash=${recipientHash} recipientLength=${String(phone).length}: ok=${res.ok} (${res.detail})`);
   });
 
   console.log('[automations] seed registered: sales_invoice.submitted -> WA notify');

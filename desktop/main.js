@@ -5,7 +5,7 @@
 //
 // Dev  : server lives at ../server and runs via `tsx` (hot reload).
 // Prod : server is copied to resources/server (extraResources) and runs as compiled JS (node dist/index.js).
-const { app, BrowserWindow, Tray, Menu, shell, ipcMain, dialog, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, shell, ipcMain, dialog, Notification, safeStorage } = require('electron');
 
 // Auto-update (prod only). Wrapped so a missing update server never breaks launch.
 let autoUpdater = null;
@@ -15,34 +15,133 @@ const path = require('node:path');
 const http = require('node:http');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
+const { readWorkspace, selectWorkspace, workspacePaths, resetDemoWorkspace } = require('./workspace');
+const { createPreRestoreSnapshot } = require('./recovery-policy');
 
 const isDev = !app.isPackaged;
-const PORT = Number(process.env.EPIC_PORT || 3001);
 const HOST = '127.0.0.1'; // bind locally only — the app is the only consumer
+const startupSecret = crypto.randomBytes(32).toString('base64url');
+const startupNonce = crypto.randomBytes(24).toString('base64url');
+const externalHosts = new Set(['updates.epicbos.app', 'web.whatsapp.com', 'wa.me', 'checkout.razorpay.com', 'dashboard.razorpay.com']);
 
 // Where the server binary lives.
 const serverDir = isDev
   ? path.join(__dirname, '..', 'server')
   : path.join(process.resourcesPath, 'server');
 
-// Persist data in the OS user-data dir (outside the read-only asar), not next to the binary.
-const dataFile = path.join(app.getPath('userData'), 'epic.json');
-const databaseFile = path.join(app.getPath('userData'), 'epic.sqlite');
 const internalApiKey = crypto.randomBytes(32).toString('base64url');
 
 let serverProc = null;
 let mainWin = null;
 let tray = null;
+let activeWorkspace = null;
+let serverPort = null;
+let serverOutput = '';
+let resolveServerReady;
+let rejectServerReady;
+const serverReady = new Promise((resolve, reject) => { resolveServerReady = resolve; rejectServerReady = reject; });
+function waitForAuthenticatedServer(timeoutMs = 30000) {
+  return Promise.race([
+    serverReady,
+    new Promise((_resolve, reject) => setTimeout(() => reject(new Error('local server did not complete authenticated startup')), timeoutMs)),
+  ]);
+}
+
+function initializeWorkspace() {
+  const userDataDir = app.getPath('userData');
+  const selected = readWorkspace(userDataDir);
+  activeWorkspace = workspacePaths(userDataDir, selected.mode, selected.backupDirectory);
+  return activeWorkspace;
+}
+
+function getWorkspace() {
+  if (!activeWorkspace) return initializeWorkspace();
+  return activeWorkspace;
+}
+
+function getBackupsDir() { return getWorkspace().backupsDir; }
+function readRecoveryRehearsal() {
+  try {
+    const reportPath = path.join(getBackupsDir(), 'recovery-rehearsal.json');
+    if (!fs.existsSync(reportPath)) return null;
+    const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+    return report && report.ok === true ? report : null;
+  } catch { return null; }
+}
+function backupStatus() {
+  const directory = getBackupsDir();
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    let writable = true;
+    try { fs.accessSync(directory, fs.constants.W_OK); } catch { writable = false; }
+    const files = fs.readdirSync(directory).filter((file) => file.startsWith('autobackup-') && (file.endsWith('.epicbackup') || file.endsWith('.json'))).sort();
+    const latest = files.at(-1);
+    const latestStat = latest ? fs.statSync(path.join(directory, latest)) : null;
+    const latestIso = latestStat ? latestStat.mtime.toISOString() : null;
+    const ageHours = latestStat ? Math.max(0, (Date.now() - latestStat.mtimeMs) / 3_600_000) : null;
+    const stale = ageHours === null || ageHours > 36;
+    const reason = !writable ? 'backup destination is not writable' : !latest ? 'no automatic snapshot found' : stale ? 'latest automatic snapshot is stale' : 'ok';
+    const rehearsal = readRecoveryRehearsal();
+    const verifiedLatest = Boolean(rehearsal && latest && rehearsal.snapshot === latest);
+    return { configured: Boolean(getWorkspace().backupDirectory), path: directory, healthy: writable && !stale && verifiedLatest, writable, stale, ageHours, reason: verifiedLatest ? reason : (reason === 'ok' ? 'latest snapshot has not passed a recovery verification' : reason), encrypted: Boolean(latest && latest.endsWith('.epicbackup')), latest: latestIso, rehearsal };
+  } catch (error) { return { configured: Boolean(getWorkspace().backupDirectory), path: directory, healthy: false, writable: false, stale: true, ageHours: null, reason: error instanceof Error ? error.message : 'backup destination could not be inspected', encrypted: false, latest: null }; }
+}
+function getServerPort() {
+  if (!serverPort) throw new Error('local Epic server port is not available');
+  return serverPort;
+}
+function localAppUrl(pathname = '/ui/app/') { return `http://${HOST}:${getServerPort()}${pathname}`; }
+function isLocalAppUrl(raw) {
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'http:' && url.hostname === HOST && url.port === String(getServerPort()) && url.pathname.startsWith('/ui/');
+  } catch { return false; }
+}
+function openApprovedExternal(raw) {
+  const url = new URL(raw);
+  if (url.protocol !== 'https:' || !externalHosts.has(url.hostname)) throw new Error('blocked unapproved external destination');
+  return shell.openExternal(url.toString());
+}
+function configuredUpdateFeed() {
+  const raw = String(process.env.EPIC_UPDATE_FEED_URL || '').trim();
+  if (!raw) return null;
+  try { const url = new URL(raw); if (url.protocol !== 'https:' || !externalHosts.has(url.hostname)) return null; return url.toString(); } catch { return null; }
+}
+function assertTrustedIpc(event) {
+  if (!mainWin || event.sender !== mainWin.webContents || !isLocalAppUrl(event.sender.getURL())) throw new Error('blocked IPC from an untrusted renderer');
+}
+
+function processServerOutput(chunk) {
+  serverOutput += chunk.toString('utf8');
+  const lines = serverOutput.split(/\r?\n/);
+  serverOutput = lines.pop() || '';
+  for (const line of lines) {
+    if (process.env.EPIC_DEBUG) process.stdout.write(`[server] ${line}\n`);
+    if (!line.startsWith('EPIC_READY ')) continue;
+    try {
+      const ready = JSON.parse(line.slice('EPIC_READY '.length));
+      const expected = crypto.createHmac('sha256', startupSecret).update(`${startupNonce}:${ready.port}`).digest('hex');
+      if (!Number.isInteger(ready.port) || ready.port < 1024 || ready.port > 65535 || ready.nonce !== startupNonce || ready.proof !== expected) throw new Error('invalid backend startup proof');
+      if (serverPort && serverPort !== ready.port) throw new Error('backend emitted conflicting startup port');
+      serverPort = ready.port;
+      resolveServerReady({ port: serverPort });
+    } catch (error) { rejectServerReady(error); }
+  }
+}
 
 function startServer() {
+  const workspace = getWorkspace();
   const env = {
     ...process.env,
-    PORT: String(PORT),
+    PORT: '0',
     HOST,
-    EPIC_DATA_FILE: dataFile,
-    EPIC_DB_FILE: databaseFile,
-    EPIC_LEGACY_JSON_FILE: dataFile,
+    EPIC_DATA_FILE: workspace.legacyFile,
+    EPIC_DB_FILE: workspace.databaseFile,
+    EPIC_LEGACY_JSON_FILE: workspace.legacyFile,
+    EPIC_WORKSPACE_MODE: workspace.mode,
     EPIC_INTERNAL_API_KEY: internalApiKey,
+    EPIC_STARTUP_SECRET: startupSecret,
+    EPIC_STARTUP_NONCE: startupNonce,
     // In dev we want the same sandbox GSP + any user .env values to pass through.
     GSP_PROVIDER: process.env.GSP_PROVIDER || 'sandbox',
     EPIC_SUPPLIER_STATE: process.env.EPIC_SUPPLIER_STATE || '29',
@@ -55,16 +154,19 @@ function startServer() {
     // Prod: compiled JS is copied to resources/server.
     serverProc = spawn('node', ['dist/index.js'], { cwd: serverDir, env, stdio });
   }
-  serverProc.stdout.on('data', (d) => { if (process.env.EPIC_DEBUG) process.stdout.write(`[server] ${d}`); });
+  serverProc.stdout.on('data', processServerOutput);
   serverProc.stderr.on('data', (d) => { process.stderr.write(`[server:err] ${d}`); });
-  serverProc.on('exit', (code) => { if (code && code !== 0 && !app.isQuiting) console.error(`[server] exited code ${code}`); });
+  serverProc.on('exit', (code) => {
+    if (!serverPort) rejectServerReady(new Error(`local server exited before authenticated startup (${code ?? 'unknown'})`));
+    if (code && code !== 0 && !app.isQuiting) console.error(`[server] exited code ${code}`);
+  });
 }
 
 function waitForHealth(retries = 60, delay = 500) {
   return new Promise((resolve, reject) => {
     let n = 0;
     const tick = () => {
-      const req = http.get({ host: HOST, port: PORT, path: '/api/health', timeout: 2000 }, (res) => {
+      const req = http.get({ host: HOST, port: getServerPort(), path: '/api/health', timeout: 2000 }, (res) => {
         res.resume();
         if (res.statusCode === 200) return resolve(true);
         retry();
@@ -80,14 +182,12 @@ function waitForHealth(retries = 60, delay = 500) {
   });
 }
 
-const backupsDir = path.join(app.getPath('userData'), 'backups');
-
 // Minimal promise-based HTTP against the local bundled server (127.0.0.1 only).
 function apiRequest(method, apiPath, body) {
   return new Promise((resolve, reject) => {
     const payload = body != null ? Buffer.from(JSON.stringify(body)) : null;
     const req = http.request({
-      host: HOST, port: PORT, path: apiPath, method,
+      host: HOST, port: getServerPort(), path: apiPath, method,
       headers: {
         'x-epic-internal-key': internalApiKey,
         ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {}),
@@ -126,6 +226,46 @@ async function writeBackupTo(filePath) {
   return filePath;
 }
 
+// Automatic local recovery snapshots never need to be portable. Protect their
+// generated passphrase with Electron safeStorage so a copied backup folder alone
+// cannot disclose business data, while explicit user exports remain passphrase-driven.
+function autoBackupPassphrase() {
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  const keyFile = path.join(app.getPath('userData'), 'auto-backup-key.bin');
+  try {
+    if (fs.existsSync(keyFile)) return safeStorage.decryptString(Buffer.from(fs.readFileSync(keyFile, 'base64')));
+    const passphrase = crypto.randomBytes(32).toString('base64url');
+    fs.mkdirSync(path.dirname(keyFile), { recursive: true });
+    fs.writeFileSync(keyFile, safeStorage.encryptString(passphrase).toString('base64'));
+    return passphrase;
+  } catch { return null; }
+}
+
+async function writeEncryptedBackupTo(filePath, passphrase) {
+  const snapshot = await apiRequest('POST', '/api/ops/backup/encrypted', { passphrase });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, snapshot, 'utf8');
+  return filePath;
+}
+
+async function verifyRecoverySnapshot(filePath) {
+  let backup;
+  try { backup = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch { throw new Error('automatic recovery snapshot is not valid JSON'); }
+  const encrypted = filePath.endsWith('.epicbackup');
+  const response = encrypted
+    ? await apiRequest('POST', '/api/ops/restore/encrypted/verify', { backup, passphrase: autoBackupPassphrase() })
+    : await apiRequest('POST', '/api/ops/restore/verify', backup);
+  const summary = JSON.parse(response);
+  const rehearsalResponse = encrypted
+    ? await apiRequest('POST', '/api/ops/restore/encrypted/rehearse', { backup, passphrase: autoBackupPassphrase() })
+    : await apiRequest('POST', '/api/ops/restore/rehearse', backup);
+  const rehearsal = JSON.parse(rehearsalResponse);
+  const report = { ok: true, verifiedAt: new Date().toISOString(), snapshot: path.basename(filePath), encrypted, rows: Number(summary.rows || 0), financialEntries: Number(summary.financialEntries || 0), financialDocuments: Number(summary.financialDocuments || 0), customerLedgerEntries: Number(summary.customerLedgerEntries || 0), cashShiftCloses: Number(summary.cashShiftCloses || 0), freshDatabase: { ok: rehearsal.ok === true, isolatedDatabase: rehearsal.isolatedDatabase === true, digest: String(rehearsal.digest || ''), counts: rehearsal.counts || {} } };
+  fs.mkdirSync(getBackupsDir(), { recursive: true });
+  fs.writeFileSync(path.join(getBackupsDir(), 'recovery-rehearsal.json'), JSON.stringify(report, null, 2), 'utf8');
+  return report;
+}
+
 async function doBackupDialog() {
   const suggested = path.join(app.getPath('documents'), `EpicLaundry-backup-${tsStamp()}.json`);
   const { canceled, filePath } = await dialog.showSaveDialog(mainWin, {
@@ -139,6 +279,17 @@ async function doBackupDialog() {
   return { ok: true, path: filePath };
 }
 
+async function doEncryptedBackupDialog(passphrase) {
+  if (typeof passphrase !== 'string' || passphrase.length < 12) throw new Error('backup passphrase must be at least 12 characters');
+  const suggested = path.join(app.getPath('documents'), `EpicLaundry-encrypted-backup-${tsStamp()}.epicbackup`);
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWin, { title: 'Save encrypted Epic Laundry backup', defaultPath: suggested, filters: [{ name: 'Encrypted Epic Laundry Backup', extensions: ['epicbackup'] }] });
+  if (canceled || !filePath) return { ok: false, canceled: true };
+  const snapshot = await apiRequest('POST', '/api/ops/backup/encrypted', { passphrase });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true }); fs.writeFileSync(filePath, snapshot, 'utf8');
+  nativeNotify('Encrypted backup complete', `Saved to ${path.basename(filePath)}`);
+  return { ok: true, path: filePath };
+}
+
 async function doRestoreDialog() {
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWin, {
     title: 'Restore Epic Laundry data from backup',
@@ -146,6 +297,11 @@ async function doRestoreDialog() {
     filters: [{ name: 'Epic Laundry Backup', extensions: ['json'] }],
   });
   if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true };
+  const raw = fs.readFileSync(filePaths[0], 'utf8');
+  let db; try { db = JSON.parse(raw); } catch { throw new Error('Selected file is not valid JSON'); }
+  // Verify integrity and workspace binding before asking for confirmation or
+  // creating a pre-restore snapshot. Invalid input must have no side effects.
+  await apiRequest('POST', '/api/ops/restore/verify', db);
   const { response } = await dialog.showMessageBox(mainWin, {
     type: 'warning',
     buttons: ['Restore (replace all data)', 'Cancel'],
@@ -156,33 +312,107 @@ async function doRestoreDialog() {
   });
   if (response !== 0) return { ok: false, canceled: true };
   // Safety net: snapshot current state before we overwrite it.
-  try { await writeBackupTo(path.join(backupsDir, `pre-restore-${tsStamp()}.json`)); } catch { /* best effort */ }
-  const raw = fs.readFileSync(filePaths[0], 'utf8');
-  let db; try { db = JSON.parse(raw); } catch { throw new Error('Selected file is not valid JSON'); }
+  await createPreRestoreSnapshot(writeBackupTo, path.join(getBackupsDir(), `pre-restore-${tsStamp()}.json`));
   await apiRequest('POST', '/api/ops/restore', db);
   nativeNotify('Restore complete', 'Data restored. Reloading…');
   if (mainWin) mainWin.reload();
   return { ok: true, restored: filePaths[0] };
 }
 
-// Auto-backup on quit: keep the last 10 rolling snapshots in userData/backups.
-async function autoBackupOnQuit() {
+async function doEncryptedRestoreDialog(passphrase) {
+  if (typeof passphrase !== 'string' || passphrase.length < 12) throw new Error('backup passphrase must be at least 12 characters');
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWin, { title: 'Restore encrypted Epic Laundry backup', properties: ['openFile'], filters: [{ name: 'Encrypted Epic Laundry Backup', extensions: ['epicbackup', 'json'] }] });
+  if (canceled || !filePaths || !filePaths[0]) return { ok: false, canceled: true };
+  let backup; try { backup = JSON.parse(fs.readFileSync(filePaths[0], 'utf8')); } catch { throw new Error('Selected encrypted backup is not valid JSON'); }
+  // Decrypt and validate before confirmation/safety snapshot so a wrong
+  // passphrase or tampered envelope cannot alter the current workspace.
+  await apiRequest('POST', '/api/ops/restore/encrypted/verify', { backup, passphrase });
+  const { response } = await dialog.showMessageBox(mainWin, { type: 'warning', buttons: ['Restore (replace all data)', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Confirm encrypted restore', message: 'Restoring replaces ALL current data with the encrypted backup contents.', detail: 'A safety backup of your current data is saved automatically first.' });
+  if (response !== 0) return { ok: false, canceled: true };
+  await createPreRestoreSnapshot(writeBackupTo, path.join(getBackupsDir(), `pre-encrypted-restore-${tsStamp()}.json`));
+  await apiRequest('POST', '/api/ops/restore/encrypted', { backup, passphrase });
+  nativeNotify('Encrypted restore complete', 'Data restored. Reloading…'); if (mainWin) mainWin.reload();
+  return { ok: true, restored: filePaths[0] };
+}
+
+let autoBackupBusy = false;
+// Scheduled/local recovery snapshots: keep the last 10 rolling encrypted snapshots in userData/backups.
+async function writeAutoBackupSnapshot() {
+  if (autoBackupBusy) return null;
+  autoBackupBusy = true;
   try {
-    await writeBackupTo(path.join(backupsDir, `autobackup-${tsStamp()}.json`));
-    const files = fs.readdirSync(backupsDir).filter((f) => f.startsWith('autobackup-')).sort();
+    const backupsDir = getBackupsDir();
+    const passphrase = autoBackupPassphrase();
+    const snapshotPath = passphrase ? path.join(backupsDir, `autobackup-${tsStamp()}.epicbackup`) : path.join(backupsDir, `autobackup-${tsStamp()}.json`);
+    if (passphrase) await writeEncryptedBackupTo(snapshotPath, passphrase);
+    else await writeBackupTo(snapshotPath);
+    await verifyRecoverySnapshot(snapshotPath);
+    const files = fs.readdirSync(backupsDir).filter((f) => f.startsWith('autobackup-') && (f.endsWith('.epicbackup') || f.endsWith('.json'))).sort();
     for (const f of files.slice(0, Math.max(0, files.length - 10))) {
       try { fs.unlinkSync(path.join(backupsDir, f)); } catch { /* ignore */ }
     }
-  } catch { /* never block quit on a backup failure */ }
+    return true;
+  } catch (error) {
+    try { fs.writeFileSync(path.join(getBackupsDir(), 'recovery-rehearsal.json'), JSON.stringify({ ok: false, verifiedAt: new Date().toISOString(), error: error instanceof Error ? error.message : 'recovery verification failed' }, null, 2), 'utf8'); } catch { /* never block quit on a backup failure */ }
+  }
+  finally { autoBackupBusy = false; }
+  return null;
+}
+
+async function autoBackupOnQuit() {
+  try { await writeAutoBackupSnapshot(); } catch { /* never block quit on a backup failure */ }
+}
+
+function startAutoBackupSchedule() {
+  const configured = Number(process.env.EPIC_AUTO_BACKUP_INTERVAL_MS || 6 * 60 * 60 * 1000);
+  const intervalMs = Number.isFinite(configured) ? Math.min(Math.max(configured, 15 * 60 * 1000), 7 * 24 * 60 * 60 * 1000) : 6 * 60 * 60 * 1000;
+  const timer = setInterval(() => { if (!app.isQuiting) void writeAutoBackupSnapshot(); }, intervalMs);
+  if (typeof timer.unref === 'function') timer.unref();
 }
 
 // ---- IPC: native actions requested by the renderer (via preload bridge) ----
-ipcMain.handle('epic:backup', () => doBackupDialog());
-ipcMain.handle('epic:restore', () => doRestoreDialog());
-ipcMain.handle('epic:open-backups', () => { fs.mkdirSync(backupsDir, { recursive: true }); return shell.openPath(backupsDir); });
-ipcMain.on('epic:notify', (_e, { title, body } = {}) => nativeNotify(title, body));
+ipcMain.handle('epic:backup', (event) => { assertTrustedIpc(event); return doBackupDialog(); });
+ipcMain.handle('epic:restore', (event) => { assertTrustedIpc(event); return doRestoreDialog(); });
+ipcMain.handle('epic:encrypted-backup', (event, passphrase) => { assertTrustedIpc(event); return doEncryptedBackupDialog(passphrase); });
+ipcMain.handle('epic:encrypted-restore', (event, passphrase) => { assertTrustedIpc(event); return doEncryptedRestoreDialog(passphrase); });
+ipcMain.handle('epic:open-backups', (event) => { assertTrustedIpc(event); const backupsDir = getBackupsDir(); fs.mkdirSync(backupsDir, { recursive: true }); return shell.openPath(backupsDir); });
+ipcMain.handle('epic:backup-location', (event) => { assertTrustedIpc(event); return { configured: Boolean(getWorkspace().backupDirectory), path: getBackupsDir() }; });
+ipcMain.handle('epic:backup-status', (event) => { assertTrustedIpc(event); return backupStatus(); });
+ipcMain.handle('epic:verify-latest-backup', async (event) => { assertTrustedIpc(event); const files = fs.readdirSync(getBackupsDir()).filter((file) => file.startsWith('autobackup-') && (file.endsWith('.epicbackup') || file.endsWith('.json'))).sort(); if (!files.length) throw new Error('no automatic recovery snapshot found'); return verifyRecoverySnapshot(path.join(getBackupsDir(), files.at(-1))); });
+ipcMain.handle('epic:choose-backup-location', async (event) => {
+  assertTrustedIpc(event);
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWin, { title: 'Choose encrypted recovery backup folder', properties: ['openDirectory', 'createDirectory'] });
+  if (canceled || !filePaths?.[0]) return { ok: false, canceled: true, path: getBackupsDir() };
+  const destination = path.resolve(filePaths[0]);
+  if (destination === path.parse(destination).root) throw new Error('choose a folder below the filesystem root');
+  selectWorkspace(app.getPath('userData'), getWorkspace().mode, destination);
+  activeWorkspace = workspacePaths(app.getPath('userData'), getWorkspace().mode, destination);
+  fs.mkdirSync(activeWorkspace.backupsDir, { recursive: true });
+  return { ok: true, path: activeWorkspace.backupsDir };
+});
+ipcMain.handle('epic:workspace-status', (event) => { assertTrustedIpc(event); return { mode: getWorkspace().mode }; });
+ipcMain.handle('epic:select-workspace', (event, mode) => {
+  assertTrustedIpc(event);
+  if (mode !== 'production' && mode !== 'demo') throw new Error('invalid workspace mode');
+  if (mode === getWorkspace().mode) return { mode, changed: false };
+  selectWorkspace(app.getPath('userData'), mode, getWorkspace().backupDirectory);
+  app.relaunch();
+  app.exit(0);
+  return { mode, changed: true };
+});
+ipcMain.handle('epic:reset-demo-workspace', (event) => {
+  assertTrustedIpc(event);
+  if (getWorkspace().mode !== 'demo') throw new Error('demo reset is available only in the demo workspace');
+  if (serverProc) { try { serverProc.kill('SIGTERM'); } catch { /* ignore */ } }
+  resetDemoWorkspace(app.getPath('userData'));
+  app.relaunch();
+  app.exit(0);
+  return { ok: true };
+});
+ipcMain.on('epic:notify', (event, { title, body } = {}) => { assertTrustedIpc(event); nativeNotify(title, body); });
 
-ipcMain.handle('epic:export-pdf', async (_e, suggestedName) => {
+ipcMain.handle('epic:export-pdf', async (event, suggestedName) => {
+  assertTrustedIpc(event);
   if (!mainWin) return { ok: false };
   const suggested = path.join(app.getPath('documents'), `${(suggestedName || 'EpicLaundry').replace(/[^\w.-]/g, '_')}.pdf`);
   const { canceled, filePath } = await dialog.showSaveDialog(mainWin, {
@@ -197,7 +427,8 @@ ipcMain.handle('epic:export-pdf', async (_e, suggestedName) => {
   return { ok: true, path: filePath };
 });
 
-ipcMain.handle('epic:save-file', async (_e, { content = '', suggestedName = 'export.csv', filters } = {}) => {
+ipcMain.handle('epic:save-file', async (event, { content = '', suggestedName = 'export.csv', filters } = {}) => {
+  assertTrustedIpc(event);
   const suggested = path.join(app.getPath('documents'), suggestedName.replace(/[^\w.-]/g, '_'));
   const { canceled, filePath } = await dialog.showSaveDialog(mainWin, {
     title: 'Save file',
@@ -211,7 +442,8 @@ ipcMain.handle('epic:save-file', async (_e, { content = '', suggestedName = 'exp
 
 // Print an isolated HTML document from the renderer through the native system dialog.
 // This avoids relying on window.open(), which is intentionally denied by the external-link policy.
-ipcMain.handle('epic:print-html', async (_e, html) => {
+ipcMain.handle('epic:print-html', async (event, html) => {
+  assertTrustedIpc(event);
   if (typeof html !== 'string' || html.length > 2_000_000) throw new Error('Print document is invalid or too large');
   const printWin = new BrowserWindow({
     parent: mainWin || undefined,
@@ -236,8 +468,8 @@ ipcMain.handle('epic:print-html', async (_e, html) => {
 // their original URLs so the existing generic surface is still reachable when needed.
 function navigate(route) {
   if (!mainWin) return;
-  if (route.startsWith('/ui/')) mainWin.loadURL(`http://${HOST}:${PORT}${route}`);
-  else mainWin.loadURL(`http://${HOST}:${PORT}/ui/app/#${route}`);
+  if (route.startsWith('/ui/')) mainWin.loadURL(localAppUrl(route));
+  else mainWin.loadURL(localAppUrl(`/ui/app/#${route}`));
 }
 
 // India-first application menu — mirrors the modules an Indian SME runs day to day.
@@ -254,7 +486,7 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Backup Data…', accelerator: 'CmdOrCtrl+Shift+B', click: () => doBackupDialog().catch((e) => dialog.showErrorBox('Backup failed', String(e.message || e))) },
         { label: 'Restore Data…', click: () => doRestoreDialog().catch((e) => dialog.showErrorBox('Restore failed', String(e.message || e))) },
-        { label: 'Open Backups Folder', click: () => { fs.mkdirSync(backupsDir, { recursive: true }); shell.openPath(backupsDir); } },
+        { label: 'Open Backups Folder', click: () => { const backupsDir = getBackupsDir(); fs.mkdirSync(backupsDir, { recursive: true }); shell.openPath(backupsDir); } },
         { type: 'separator' },
         { label: 'Export View to PDF…', accelerator: 'CmdOrCtrl+P', click: () => ipcMain.emit('epic:export-pdf-menu') },
         { type: 'separator' },
@@ -309,7 +541,7 @@ function buildMenu() {
     {
       role: 'help',
       submenu: [
-        { label: 'Epic Laundry on the Web', click: () => shell.openExternal('https://updates.epicbos.app/') },
+        { label: 'Epic Laundry on the Web', click: () => openApprovedExternal('https://updates.epicbos.app/') },
         { label: `Version ${app.getVersion()}`, enabled: false },
       ],
     },
@@ -343,12 +575,31 @@ function createWindow() {
     },
   });
 
-  mainWin.loadURL(`http://${HOST}:${PORT}/ui/app/#/laundry/dashboard`);
+  const session = mainWin.webContents.session;
+  // The counter UI does not need ambient browser permissions. Hardware integrations will
+  // be exposed through audited desktop adapters rather than renderer permissions.
+  session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  session.setPermissionCheckHandler(() => false);
+  session.webRequest.onHeadersReceived((details, callback) => {
+    if (!isLocalAppUrl(details.url)) return callback({ responseHeaders: details.responseHeaders });
+    const headers = { ...details.responseHeaders };
+    for (const key of Object.keys(headers)) if (key.toLowerCase() === 'content-security-policy') delete headers[key];
+    headers['Content-Security-Policy'] = ["default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"];
+    callback({ responseHeaders: headers });
+  });
 
-  // External links (WhatsApp, Razorpay, GSP portals) open in the OS browser, not a new Electron window.
-  mainWin.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
+  mainWin.loadURL(localAppUrl('/ui/app/#/laundry/dashboard'));
+
+  // Navigation is local-only. Deliberately supported external providers open in the OS browser after URL allowlisting.
+  mainWin.webContents.setWindowOpenHandler(({ url }) => {
+    try { if (!isLocalAppUrl(url)) openApprovedExternal(url); } catch { /* blocked destination */ }
+    return { action: 'deny' };
+  });
   mainWin.webContents.on('will-navigate', (e, url) => {
-    if (!url.startsWith(`http://${HOST}:${PORT}`)) { e.preventDefault(); shell.openExternal(url); }
+    if (!isLocalAppUrl(url)) {
+      e.preventDefault();
+      try { openApprovedExternal(url); } catch { /* blocked destination */ }
+    }
   });
 
   mainWin.once('ready-to-show', () => mainWin.show());
@@ -389,7 +640,7 @@ async function quitApp() {
 }
 
 // Allow the renderer to request a quit (via preload bridge).
-ipcMain.on('app:quit', () => quitApp());
+ipcMain.on('app:quit', (event) => { assertTrustedIpc(event); quitApp(); });
 
 // Single instance: a second launch focuses the running window instead of opening two backends.
 const gotLock = app.requestSingleInstanceLock();
@@ -397,8 +648,10 @@ if (!gotLock) { app.quit(); }
 app.on('second-instance', () => { if (mainWin) { mainWin.show(); mainWin.focus(); } });
 
 app.whenReady().then(async () => {
+  initializeWorkspace();
   startServer();
   try {
+    await waitForAuthenticatedServer();
     await waitForHealth();
   } catch (e) {
     dialog.showErrorBox('Epic Laundry failed to start', String(e && e.message || e));
@@ -408,10 +661,15 @@ app.whenReady().then(async () => {
   createWindow();
   buildMenu();
   createTray();
+  startAutoBackupSchedule();
   nativeNotify('Epic Laundry is ready', 'Your offline laundry desk is running locally.');
 
-  // Self-update: notify + auto-install on next launch (prod builds only).
-  if (autoUpdater && app.isPackaged) {
+  // Self-update is fail-closed: a packaged app never contacts an implicit or
+  // untrusted feed. Configure an HTTPS allow-listed provider explicitly, then
+  // the normal Electron updater flow can be enabled for that release channel.
+  const updateFeed = configuredUpdateFeed();
+  if (autoUpdater && app.isPackaged && updateFeed) {
+    autoUpdater.setFeedURL({ url: updateFeed });
     autoUpdater.autoInstallOnQuit = true;
     autoUpdater.on('update-available', () => { if (process.env.EPIC_DEBUG) console.log('[updater] update available'); });
     autoUpdater.on('update-downloaded', async () => {
@@ -419,6 +677,8 @@ app.whenReady().then(async () => {
       if (response === 0) autoUpdater.quitAndInstall();
     });
     autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+  } else if (app.isPackaged && process.env.EPIC_DEBUG) {
+    console.log('[updater] disabled: no approved EPIC_UPDATE_FEED_URL configured');
   }
 
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

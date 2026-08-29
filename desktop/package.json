@@ -7,25 +7,36 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test:workspace": "node workspace.test.js",
+    "test:recovery-policy": "node recovery-policy.test.js",
     "build:server": "npm --prefix ../server run build",
-    "pack": "npm run build:server && electron-builder --dir",
-    "dist": "npm run build:server && electron-builder",
-    "dist:win": "npm run build:server && electron-builder --win"
+    "manifest": "node scripts/release-manifest.mjs",
+    "verify:manifest": "node scripts/verify-release-manifest.mjs",
+    "sign:manifest": "node scripts/sign-release-manifest.mjs",
+    "verify:signature": "node scripts/verify-release-signature.mjs",
+    "test:release-signature": "node scripts/release-signature.test.mjs",
+    "pack": "npm run build:server && electron-builder --dir && npm run manifest",
+    "dist": "npm run build:server && electron-builder && npm run manifest",
+    "dist:win": "npm run build:server && electron-builder --win && npm run manifest"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
-    "electron": "^33.4.11",
-    "electron-builder": "^25.1.8"
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.epic.laundry",
     "productName": "Epic Laundry",
     "asar": true,
+    "disableDefaultIgnoredFiles": true,
     "files": [
       "main.js",
+      "recovery-policy.js",
       "preload.js",
+      "workspace.js",
+      "scripts/**/*",
       "package.json"
     ],
     "extraResources": [
@@ -33,17 +44,29 @@
         "from": "../server",
         "to": "server",
         "filter": [
-          "dist/**/*",
-          "public/**/*",
-          "node_modules/**/*",
-          "package.json"
+          "**/*",
+          "!src{,/**/*}",
+          "!data{,/**/*}",
+          "!package-lock.json",
+          "!tsconfig*.json",
+          "!README.md"
+        ]
+      },
+      {
+        "from": "../server/node_modules",
+        "to": "server/node_modules",
+        "filter": [
+          "**/*"
         ]
       }
     ],
     "win": {
       "icon": "icon.ico",
       "signAndEditExecutable": false,
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
     "nsis": {
       "oneClick": false,

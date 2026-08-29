@@ -19,7 +19,7 @@ try {
   const app = Fastify(); registerApi(app);
   store.withStoreScope('CUSTOMER', 'STORE-C', () => seedLaundryDefaults('CUSTOMER'));
 
-  const created = await app.inject({ method: 'POST', url: '/api/laundry/customers', headers, payload: { name: 'Meera Das', phone: '+91 90000-40001', email: 'meera@example.test', address: '12 Ledger Lane', openingBalance: 125 } });
+  const created = await app.inject({ method: 'POST', url: '/api/laundry/customers', headers, payload: { name: 'Meera Das', phone: '+91 90000-40001', email: 'meera@example.test', address: '12 Ledger Lane', openingBalance: 125, preferredContact: 'WhatsApp', servicePreferences: 'Fragrance-free detergent', marketingConsent: true } });
   assert.equal(created.statusCode, 201, `customer create succeeds: ${created.body}`);
   assert.equal(created.json().phone, '919000040001', 'customer phone is normalized');
   const duplicate = await app.inject({ method: 'POST', url: '/api/laundry/customers', headers: { ...headers, 'idempotency-key': 'customer-create-002' }, payload: { name: 'Duplicate Meera', phone: '919000040001' } });
@@ -27,8 +27,15 @@ try {
   const customerId = created.json().id;
   let profile = await app.inject({ method: 'GET', url: `/api/laundry/customers/${customerId}`, headers });
   assert.equal(profile.json().metrics.orderBalance, 125, 'opening balance derives from customer ledger');
-  const edited = await app.inject({ method: 'PATCH', url: `/api/laundry/customers/${customerId}`, headers, payload: { name: 'Meera D.', address: '99 Reconciled Road' } });
+  assert.equal(profile.json().customer.preferredContact, 'WhatsApp', 'customer preference is exposed in the profile');
+  assert.equal(profile.json().customer.servicePreferences, 'Fragrance-free detergent', 'service preferences are retained');
+  assert.equal(profile.json().customer.marketingConsent, true, 'marketing consent state is explicit');
+  assert.equal(profile.json().consents.length, 1, 'initial consent capture is append-only');
+  const edited = await app.inject({ method: 'PATCH', url: `/api/laundry/customers/${customerId}`, headers, payload: { name: 'Meera D.', address: '99 Reconciled Road', marketingConsent: false } });
   assert.equal(edited.statusCode, 200, 'customer profile is editable');
+  profile = await app.inject({ method: 'GET', url: `/api/laundry/customers/${customerId}`, headers });
+  assert.equal(profile.json().customer.marketingConsent, false, 'consent can be withdrawn');
+  assert.equal(profile.json().consents.length, 2, 'consent withdrawal is retained as history');
   const walletCredit = await app.inject({ method: 'POST', url: `/api/laundry/customers/${customerId}/wallet`, headers: { ...headers, 'idempotency-key': 'wallet-credit-001' }, payload: { type: 'Credit', amount: 80, reason: 'Counter wallet deposit' } });
   assert.equal(walletCredit.statusCode, 201, 'wallet credit is posted');
   const walletCreditRetry = await app.inject({ method: 'POST', url: `/api/laundry/customers/${customerId}/wallet`, headers: { ...headers, 'idempotency-key': 'wallet-credit-001' }, payload: { type: 'Credit', amount: 80, reason: 'Counter wallet deposit' } });
@@ -44,6 +51,9 @@ try {
   profile = await app.inject({ method: 'GET', url: `/api/laundry/customers/${customerId}`, headers });
   assert.equal(profile.json().metrics.walletBalance, 50, 'wallet balance reconciles from append-only entries');
   assert.equal(profile.json().wallet.length, 2, 'idempotent retry does not post a second wallet movement');
+  const normalizedWallet = store.withStoreScope('CUSTOMER', 'STORE-C', () => store.listWalletEntries('CUSTOMER', customerId));
+  assert.equal(normalizedWallet.length, 2, 'wallet movements are persisted in normalized store-scoped rows');
+  assert.equal(normalizedWallet.reduce((sum, entry) => sum + (entry.entryType === 'Debit' ? -entry.amountPaise : entry.amountPaise), 0), 5000, 'normalized wallet balance is exact integer paise');
   assert.equal(profile.json().metrics.rewardPoints, 25, 'reward points reconcile from append-only entries');
   assert.equal(profile.json().customer.address, '99 Reconciled Road', 'edited address round-trips');
   const catalogue = store.withStoreScope('CUSTOMER', 'STORE-C', () => laundryCatalogue('CUSTOMER'));
@@ -55,6 +65,17 @@ try {
   assert.equal(invoiceSearch.json().some((entry: any) => entry.id === customerId && entry.matchedBy === 'invoice'), true, 'customer search resolves invoice number');
   profile = await app.inject({ method: 'GET', url: `/api/laundry/customers/${customerId}`, headers });
   assert.equal(profile.json().ledger.some((entry: any) => entry.entryType === 'Invoice Debit' && entry.referenceId === booked.json().order.id), true, 'booking ledger entry is retained in customer profile');
+  assert.deepEqual(profile.json().orders[0].items, [{ garment: garment.id, service: service.id, qty: 2 }], 'customer profile exposes a safe repeat-order template');
+  assert.equal(profile.json().orders[0].fulfillmentMode, 'Home Delivery', 'repeat-order template retains fulfilment preference');
+  const insights = await app.inject({ method: 'GET', url: '/api/laundry/customer-insights', headers });
+  assert.equal(insights.statusCode, 200, 'customer lifecycle insights endpoint is branch-scoped and readable');
+  assert.equal(insights.json().summary.totalCustomers, 1, 'customer lifecycle insights count durable customers');
+  assert.equal(insights.json().customers[0].segment, 'new', 'recent first order is classified as a deterministic new segment');
+  assert.equal(insights.json().customers[0].contactEligible, false, 'withdrawn consent prevents outreach eligibility');
+  assert.match(insights.json().policy.note, /deterministic activity windows/i, 'insights disclose their deterministic policy');
+  const normalizedLedger = store.withStoreScope('CUSTOMER', 'STORE-C', () => store.listCustomerLedgerEntries('CUSTOMER', customerId));
+  assert.ok(normalizedLedger.length >= 4, 'opening balance, wallet and invoice ledger movements are normalized');
+  assert.equal(normalizedLedger.every((entry) => Number.isInteger(entry.debitPaise) && Number.isInteger(entry.creditPaise)), true, 'normalized customer ledger stores only integer paise');
   assert.equal(store.withStoreScope('CUSTOMER', 'STORE-C', () => store.auditOf('CUSTOMER').some((entry) => entry.action === 'customer:wallet-posted')), true, 'wallet operations are auditable');
   await app.close();
   console.log('PASS  customer ledger, wallet, rewards and invoice-search self-test complete');

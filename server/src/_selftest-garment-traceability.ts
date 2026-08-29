@@ -1,0 +1,84 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const tempDir = mkdtempSync(join(tmpdir(), 'epic-garment-traceability-'));
+process.env.EPIC_DATA_FILE = join(tempDir, 'legacy.json');
+process.env.EPIC_DB_FILE = join(tempDir, 'epic.sqlite');
+process.env.EPIC_LEGACY_JSON_FILE = join(tempDir, 'legacy.json');
+let closeStore: (() => void) | undefined;
+
+try {
+  const { store } = await import('./kernel/store.js');
+  closeStore = () => store.close();
+  const { bookLaundryOrder, cancelLaundryOrder, getLaundryGarmentUnit, laundryCatalogue, listLaundryGarmentUnits, reprintLaundryTag, scanLaundryGarment, seedLaundryDefaults } = await import('./modules/laundry/domain.js');
+  const { listProductionTasks, startProductionTask } = await import('./modules/laundry/production.js');
+  const { listCustomerCorrections, listQualityClaims, openQualityClaim, resolveQualityClaim } = await import('./modules/laundry/quality.js');
+  const { createRackProfile, rackOccupancy } = await import('./modules/laundry/rack.js');
+  const tenant = 'GARMENT-TRACE';
+  const actor = 'trace-owner';
+  store.withStoreScope(tenant, 'STORE-DEFAULT', () => seedLaundryDefaults(tenant));
+  const catalogue = store.withStoreScope(tenant, 'STORE-DEFAULT', () => laundryCatalogue(tenant));
+  const shirt = catalogue.garments.find((garment: any) => garment.unit === 'Piece')!;
+  const service = catalogue.services[0];
+  const mixed = catalogue.garments.find((garment: any) => garment.unit === 'Kilogram')!;
+  const mixedPrice = (catalogue.prices as any[]).find((price: any) => price.garment === mixed.id)!;
+  const mixedService = catalogue.services.find((candidate: any) => candidate.id === mixedPrice.service)!;
+  const booked = store.withStoreScope(tenant, 'STORE-DEFAULT', () => bookLaundryOrder(tenant, actor, {
+    customer: { name: 'Traceability Customer', phone: '9000000888' }, items: [{ garment: shirt.id, service: service.id, qty: 3 }, { garment: mixed.id, service: mixedService.id, qty: 2.5 }], expectedDeliveryDate: '2026-09-06', fulfillmentMode: 'Home Delivery',
+  }));
+  assert.equal(booked.garmentUnits.length, 3, 'piece quantities create one durable unit per physical garment');
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => listProductionTasks(tenant, { status: 'Open' }).length), 3, 'each physical unit opens an intake production task');
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => listLaundryGarmentUnits(tenant)).length, 3, 'weight lines do not fabricate physical garment units');
+  const first = booked.garmentUnits[0];
+  const scanned = store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: first.tagCode, nextState: 'Processing', location: 'Wash station', note: 'Loaded into batch A' }));
+  assert.equal(scanned.state, 'Processing', 'valid tag scan advances the garment state');
+  assert.equal(scanned.events.at(-1)?.toState, 'Processing', 'state transition is retained in the event history');
+  const processingTask = store.withStoreScope(tenant, 'STORE-DEFAULT', () => listProductionTasks(tenant, { station: 'Processing' })[0]);
+  assert.ok(processingTask, 'state transition creates a processing task');
+  const startedTask = store.withStoreScope(tenant, 'STORE-DEFAULT', () => startProductionTask(tenant, actor, processingTask.id));
+  assert.equal(startedTask.status, 'In Progress', 'production staff can explicitly start a station task');
+  const claim = store.withStoreScope(tenant, 'STORE-DEFAULT', () => openQualityClaim(tenant, actor, { garmentUnitId: first.id, category: 'Stain', severity: 'High', description: 'Visible stain remains after first wash' }));
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => listQualityClaims(tenant, { status: 'Open' }).length), 1, 'quality claim is visible to the supervisor register');
+  const resolvedClaim = store.withStoreScope(tenant, 'STORE-DEFAULT', () => resolveQualityClaim(tenant, actor, claim.id, 'Rewash', 'Send back through wash batch B'));
+  assert.equal(resolvedClaim.status, 'Resolved', 'quality claim stores a terminal decision');
+  assert.ok(resolvedClaim.correction?.id, 'quality resolution issues an immutable customer correction document');
+  assert.match(String(resolvedClaim.correction?.customerMessage), /rewash/i, 'correction document contains a customer-safe resolution message');
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => listCustomerCorrections(tenant, { claimId: claim.id }).length), 1, 'one correction document is retained per resolved claim');
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => getLaundryGarmentUnit(tenant, first.id).state), 'Rewash', 'rewash decision advances the physical garment lifecycle');
+  const racked = booked.garmentUnits[1];
+  for (const state of ['Processing', 'QC', 'Assembly', 'Racked'] as const) store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: racked.tagCode, nextState: state, location: state === 'Racked' ? 'RACK-A-01' : `${state} station`, note: `Move to ${state}` }));
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => getLaundryGarmentUnit(tenant, racked.id).location), 'RACK-A-01', 'racking records a physical bin location');
+  const occupancy = store.withStoreScope(tenant, 'STORE-DEFAULT', () => rackOccupancy(tenant));
+  assert.equal(occupancy.totals.rackedUnits, 1, 'rack occupancy reports durable racked units');
+  assert.equal(occupancy.totals.occupiedSlots, 1, 'rack occupancy reports durable occupied slots');
+  assert.equal(occupancy.locations[0].capacity, null, 'rack occupancy does not invent capacity');
+  assert.equal(occupancy.locations[0].location, 'RACK-A-01', 'rack occupancy preserves the physical location key');
+  assert.equal(occupancy.locations[0].units[0].tagCode, racked.tagCode, 'rack occupancy exposes the tagged unit for retrieval');
+  store.withStoreScope(tenant, 'STORE-DEFAULT', () => createRackProfile(tenant, actor, { name: 'RACK-A-01', code: 'A01', capacity: 2 }));
+  const configuredOccupancy = store.withStoreScope(tenant, 'STORE-DEFAULT', () => rackOccupancy(tenant));
+  assert.equal(configuredOccupancy.locations[0].capacity, 2, 'rack profile supplies owner-configured physical capacity');
+  assert.equal(configuredOccupancy.locations[0].available, 1, 'rack profile reports available slots');
+  assert.equal(configuredOccupancy.totals.configuredCapacity, 2, 'configured capacity is aggregated');
+  const collision = booked.garmentUnits[2];
+  for (const state of ['Processing', 'QC', 'Assembly'] as const) store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: collision.tagCode, nextState: state, note: `Move to ${state}` }));
+  assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: collision.tagCode, nextState: 'Racked', location: 'rack-a-01', note: 'Attempt duplicate rack assignment' })), /already occupied/, 'rack collision is rejected case-insensitively');
+  assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: first.tagCode, nextState: 'Rewash' })), /requires an operator reason/, 'quality exceptions require an operator reason');
+  assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: first.tagCode, nextState: 'Delivered' })), /cannot move/, 'invalid lifecycle jumps are rejected');
+  assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: 'TAG-NOT-REAL', nextState: 'Processing' })), /not found/, 'unknown tags are rejected without creating an event');
+  const reprinted = store.withStoreScope(tenant, 'STORE-DEFAULT', () => reprintLaundryTag(tenant, actor, first.id, { station: 'Counter-1', reason: 'Original tag damaged by steam' }));
+  assert.notEqual(reprinted.tagCode, first.tagCode, 'reprint issues a new opaque active tag code');
+  assert.equal(reprinted.reprints.length, 1, 'reprint history is retained');
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => getLaundryGarmentUnit(tenant, reprinted.tagCode).tagCode), reprinted.tagCode, 'new tag resolves to the same unit');
+  assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: first.tagCode, nextState: 'QC' })), /not found/, 'retired tags no longer scan after a reprint');
+  assert.equal(store.withStoreScope('OTHER-TENANT', 'STORE-DEFAULT', () => listLaundryGarmentUnits('OTHER-TENANT')).length, 0, 'garment units are isolated by tenant scope');
+  const cancellable = store.withStoreScope(tenant, 'STORE-DEFAULT', () => bookLaundryOrder(tenant, actor, { customer: { name: 'Cancelled Unit Customer', phone: '9000000889' }, items: [{ garment: shirt.id, service: service.id, qty: 1 }], expectedDeliveryDate: '2026-09-06', fulfillmentMode: 'Home Delivery' }));
+  store.withStoreScope(tenant, 'STORE-DEFAULT', () => cancelLaundryOrder(tenant, actor, cancellable.order.id, 'Customer cancelled before processing'));
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => listLaundryGarmentUnits(tenant, { orderId: cancellable.order.id })[0].state), 'Cancelled', 'order cancellation closes outstanding physical units');
+  assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => reprintLaundryTag(tenant, actor, first.id, { reason: 'x' })), /reason/, 'reprints require an operator reason');
+  console.log('PASS  durable garment units, lifecycle scans, and tag reprint audit self-test complete');
+} finally {
+  closeStore?.();
+  rmSync(tempDir, { recursive: true, force: true });
+}

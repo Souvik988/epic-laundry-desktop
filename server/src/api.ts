@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { createHash } from 'node:crypto';
 import {
   listDefs, getDef, createRow, getRow, listRows, submitRow, cancelRow,
 } from './kernel/entity-service.js';
@@ -47,21 +48,55 @@ import {
 } from './modules/crm/engagement.js';
 import { dashboardSummary } from './modules/analytics/dashboard.js';
 import {
-  assignLaundryOrder, bookLaundryOrder, cancelLaundryExpense, cancelLaundryOrder, createLaundryExpense, createLaundryRider, editLaundryExpense, editLaundryOrder, getLaundryOrder, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard, listLaundryFulfillment, recordLaundryFulfillment,
+  applyLaundryGarmentBackfill, assignLaundryOrder, bookLaundryOrder, cancelLaundryExpense, cancelLaundryOrder, createLaundryExpense, createLaundryRider, editLaundryExpense, editLaundryOrder, getLaundryOrder, importLaundryCatalogue, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard, listLaundryFulfillment, recordLaundryFulfillment, listLaundryGarmentUnits, getLaundryGarmentUnit, previewLaundryGarmentBackfill, scanLaundryGarment, reprintLaundryTag,
   laundryDispatch, laundryReportDetail, laundryReports, laundryStatistics, listLaundryExpenses, listLaundryImportJobs, listLaundryOrders, listLaundryRiderSettlements, listLaundryRiders, quoteLaundryOrder, saveLaundryCategory, saveLaundryChargeRule, saveLaundryDiscountRule,
-  saveLaundryGarment, saveLaundryPrice, saveLaundryRiderSettlement, saveLaundryService, saveLaundryTaxRule, searchLaundryCustomers, transitionLaundryOrder,
+  saveLaundryGarment, saveLaundryPrice, saveLaundryRiderSettlement, saveLaundryService, saveLaundryTaxRule, searchLaundryCustomers, seedLaundryDefaults, transitionLaundryOrder,
 } from './modules/laundry/domain.js';
-import { adjustRewards, applyWalletCommand, createLaundryCustomer, customerProfile, updateLaundryCustomer } from './modules/laundry/customers.js';
-import { createServicePackage, customerPackages, listServicePackages, purchaseServicePackage, redeemServicePackage } from './modules/laundry/packages.js';
+import { adjustRewards, applyWalletCommand, archiveLaundryCustomerAddress, createLaundryCustomer, customerProfile, customerRetentionInsights, listLaundryCustomerAddresses, saveLaundryCustomerAddress, updateLaundryCustomer } from './modules/laundry/customers.js';
+import { collectServicePackagePayment, createServicePackage, customerPackages, listServicePackages, packageLiability, purchaseServicePackage, redeemServicePackage } from './modules/laundry/packages.js';
 import { collectLaundryPayment, laundryPaymentSummary, reverseLaundryPayment } from './modules/laundry/payments.js';
 import { laundryBusinessDate } from './modules/laundry/dates.js';
+import { cashCloseDrill, laundryFinancialReconciliation } from './modules/laundry/reconciliation.js';
+import { closeCashShift, getCurrentCashShift, listCashShifts, openCashShift } from './modules/laundry/cash.js';
+import { applyProductionWorkloadRecommendations, assignProductionTask, listProductionTasks, productionLoad, productionSchedule, productionSupervisorMetrics, productionWorkload, startProductionTask } from './modules/laundry/production.js';
+import { listCustomerCorrections, listQualityClaims, openQualityClaim, qualityAnalytics, resolveQualityClaim } from './modules/laundry/quality.js';
+import { cancelLaundryOrderHold, claimLaundryOrderHold, createLaundryOrderHold, listLaundryOrderHolds, orderHoldPresence, releaseLaundryOrderHold, renewLaundryOrderHold, resumeLaundryOrderHold } from './modules/laundry/holds.js';
+import { completeRouteStop, createRouteRun, createServiceZone, listRouteRuns, listServiceZoneMaster, listServiceZones, routeCoverageAnalytics, startRouteRun, updateServiceZone } from './modules/laundry/routes.js';
+import { createRackProfile, listRackProfiles, rackOccupancy, updateRackProfile } from './modules/laundry/rack.js';
+import { hardwareCapabilities, hardwareStatus, listHardwareReceipts, recordHardwareReceipt } from './modules/laundry/hardware.js';
+import { buildDiagnostics } from './modules/ops/diagnostics.js';
+import { freshDatabaseRestoreRehearsal } from './modules/ops/fresh-recovery.js';
+import { decryptBackup, encryptBackup } from './modules/ops/backup-crypto.js';
+import { applyFinancialNormalization, previewFinancialNormalization } from './modules/ops/financial-normalization.js';
+import { compatibilityRetirementAudit } from './modules/ops/compatibility-audit.js';
+import { applyEntityNormalization, previewEntityNormalization, ENTITY_NORMALIZATION_ENTITIES, type EntityNormalizationEntity } from './modules/ops/entity-normalization.js';
+import { searchLaundryWorkspace } from './modules/laundry/search.js';
+import { createLaundryReportExportJob, getLaundryReportExportJob, readLaundryReportExport } from './modules/laundry/report-exports.js';
+import { createSavedReportView, deleteSavedReportView, listSavedReportViews } from './modules/laundry/report-views.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
+// Legacy ERP routes predate the laundry workspace APIs. Always derive their
+// tenant/actor from the authenticated request so a multi-store session cannot
+// read or mutate the process-default workspace.
+const requestTenant = (req: any) => req?.auth?.tenant || TENANT;
+const requestActor = (req: any) => req?.auth?.actor || USER;
 declare module 'fastify' { interface FastifyRequest { auth?: AuthContext } }
 
 function sessionCookie(token: string, maxAgeSeconds: number) {
   return `epic_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAgeSeconds}`;
+}
+
+function validateRestorePayload(input: any, tenant: string, storeId: string) {
+  const { backupFormat, backupVersion, checksum, tenant: backupTenant, storeId: backupStoreId, createdAt: _createdAt, migrations: _migrations, ...db } = input || {};
+  if (backupFormat !== undefined) {
+    if (backupFormat !== 'epic-laundry-backup' || backupVersion !== 1 || typeof checksum !== 'string' || !/^[a-f0-9]{64}$/.test(checksum)) throw new Error('invalid backup envelope');
+    if (backupTenant !== tenant || backupStoreId !== storeId) throw new Error('backup belongs to another workspace');
+    const actual = createHash('sha256').update(JSON.stringify(db), 'utf8').digest('hex');
+    if (actual !== checksum) throw new Error('backup checksum mismatch');
+  }
+  if (!db || !Array.isArray(db.rows) || !Array.isArray(db.gl) || !Array.isArray(db.audit) || !Array.isArray(db.outbox) || !Array.isArray(db.stock) || !Array.isArray(db.ims) || (db.seq !== undefined && (typeof db.seq !== 'object' || Array.isArray(db.seq)))) throw new Error('invalid backup payload');
+  return db;
 }
 
 export function registerApi(app: FastifyInstance) {
@@ -77,33 +112,75 @@ export function registerApi(app: FastifyInstance) {
     const internalKey = String(req.headers['x-epic-internal-key'] || '');
     if (internalKey && process.env.EPIC_INTERNAL_API_KEY && internalKey === process.env.EPIC_INTERNAL_API_KEY) {
       req.auth = { identityId: 'desktop-system', actor: 'desktop-system', tenant: TENANT, storeId: 'STORE-DEFAULT', roles: ['owner'], sessionHash: 'desktop-internal' } satisfies AuthContext;
+      store.enterStoreScope(req.auth.tenant, req.auth.storeId);
       return;
     }
     const auth = contextForToken(readSessionToken(req.headers));
     if (!auth) return rep.code(401).send({ error: 'authentication required' });
     req.auth = auth;
+    store.enterStoreScope(auth.tenant, auth.storeId);
   };
   const allow = (permission: string) => async (req: any, rep: any) => {
     if (!req.auth || !can(req.auth, permission)) return rep.code(403).send({ error: 'permission denied' });
+  };
+  const allowAny = (...permissions: string[]) => async (req: any, rep: any) => {
+    if (!req.auth || !permissions.some((permission) => can(req.auth, permission))) return rep.code(403).send({ error: 'permission denied' });
   };
   const idempotent = <T>(req: any, scope: string, work: () => T) => {
     const key = String(req.headers['idempotency-key'] || '').trim();
     if (!key || key.length > 160) throw new Error('a valid idempotency key is required');
     const auth = req.auth as AuthContext;
-    return store.transaction(() => {
-      const previous = store.idempotencyResult<T>(auth.tenant, scope, key);
-      if (previous !== undefined) return previous;
+    const requestHash = createHash('sha256').update(JSON.stringify(req.body === undefined ? null : req.body)).digest('hex');
+    let conflict = false;
+    const result = store.transaction(() => {
+      const previous = store.idempotencyRecord<T>(auth.tenant, scope, key);
+      if (previous) {
+        if (previous.requestHash && previous.requestHash !== requestHash) {
+          conflict = true;
+          return undefined as T;
+        }
+        return previous.response;
+      }
       const result = work();
-      store.recordIdempotencyResult(auth.tenant, scope, key, result);
+      store.recordIdempotencyResult(auth.tenant, scope, key, result, requestHash);
       return result;
     });
+    if (conflict) {
+      audit(auth.tenant, auth.actor, 'ops:idempotency-conflict', { after: { scope, keyHash: createHash('sha256').update(key).digest('hex'), requestHash } });
+      throw new Error('idempotency key was already used for a different command payload; use a new key or resolve the conflict');
+    }
+    return result;
   };
   const inStore = <T>(req: any, work: () => T) => store.withStoreScope(req.auth!.tenant, req.auth!.storeId, work);
 
   app.get('/api/auth/bootstrap-status', async () => ({ needsBootstrap: store.authIdentityCount() === 0 }));
   app.post('/api/auth/bootstrap', async (req: any, rep: any) => {
     try {
-      const identity = bootstrapOwner(req.body as any);
+      const body = req.body as any;
+      const identity = bootstrapOwner({
+        username: body?.username, password: body?.password,
+        tenant: body?.tenant, storeId: body?.storeId,
+        firstName: body?.firstName, lastName: body?.lastName, email: body?.email, phone: body?.phone,
+      });
+      // Production starts without fabricated business activity. Catalogue defaults are
+      // neutral master data, created only after the owner explicitly completes setup.
+      store.withStoreScope(identity.tenant, identity.storeId, () => {
+        seedLaundryDefaults(identity.tenant);
+        store.saveStoreSettings(identity.tenant, identity.username, {
+          businessName: body?.businessName,
+          address: body?.address,
+          phone: body?.phone,
+          email: body?.email,
+          upiId: body?.upiId,
+          taxMode: body?.taxMode,
+          gstin: body?.gstin,
+          currency: body?.currency,
+          timezone: body?.timezone,
+          printerProfile: body?.printerProfile,
+        }, identity.storeId);
+        const setupProgress = store.saveSetupProgress(identity.tenant, identity.username, { business: true, owner: true, operations: true }, identity.storeId);
+        audit(identity.tenant, identity.username, 'settings:setup-progress-updated', { entity: 'store_settings', row_id: identity.storeId, after: { ...setupProgress, source: 'bootstrap' } });
+      });
       const signedIn = signIn(identity.username, (req.body as any).password);
       rep.header('Set-Cookie', sessionCookie(signedIn.token, 60 * 60 * 12));
       return { user: { username: signedIn.context.actor, roles: signedIn.context.roles, tenant: signedIn.context.tenant, storeId: signedIn.context.storeId }, expiresAt: signedIn.expiresAt };
@@ -132,7 +209,7 @@ export function registerApi(app: FastifyInstance) {
       const switched = switchOperationalStore(req.auth!, String((req.body as any)?.storeId || ''));
       const token = readSessionToken(req.headers);
       if (token) rep.header('Set-Cookie', sessionCookie(token, 60 * 60 * 12));
-      return { user: { username: req.auth!.actor, roles: switched.roles, tenant: req.auth!.tenant, storeId: switched.store.id }, store: switched.store };
+      return { user: { username: req.auth!.actor, roles: switched.roles, tenant: req.auth!.tenant, storeId: switched.store.id, riderId: req.auth!.riderId || null }, store: switched.store };
     } catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
   app.get('/api/settings/stores', { preHandler: [guard, allow('staff.manage')] }, async (req: any) => listOperationalStores(req.auth!));
@@ -152,8 +229,8 @@ export function registerApi(app: FastifyInstance) {
     try {
       return inStore(req, () => {
         const body = req.body as any;
-        const identity = createOperationalUser(req.auth!, { username: body?.username, password: body?.password, roles: body?.roles, storeId: body?.storeId || req.auth!.storeId, firstName: body?.firstName, lastName: body?.lastName, email: body?.email, phone: body?.phone, description: body?.description });
-        audit(req.auth!.tenant, req.auth!.actor, 'settings:staff-created', { entity: 'auth_identity', row_id: identity.id, after: { username: identity.username, roles: identity.roles, enabled: identity.enabled, firstName: identity.firstName, lastName: identity.lastName, email: identity.email, phone: identity.phone, description: identity.description } });
+        const identity = createOperationalUser(req.auth!, { username: body?.username, password: body?.password, roles: body?.roles, storeId: body?.storeId || req.auth!.storeId, firstName: body?.firstName, lastName: body?.lastName, email: body?.email, phone: body?.phone, description: body?.description, riderId: body?.riderId });
+        audit(req.auth!.tenant, req.auth!.actor, 'settings:staff-created', { entity: 'auth_identity', row_id: identity.id, after: { username: identity.username, roles: identity.roles, enabled: identity.enabled, riderId: identity.riderId || '', firstName: identity.firstName, lastName: identity.lastName, email: identity.email, phone: identity.phone, description: identity.description } });
         const { passwordHash: _passwordHash, ...safeIdentity } = identity;
         return rep.code(201).send(safeIdentity);
       });
@@ -164,8 +241,8 @@ export function registerApi(app: FastifyInstance) {
       return inStore(req, () => {
         const before = store.identityById(req.params.id);
         const body = req.body as any;
-        const identity = updateOperationalUser(req.auth!, req.params.id, { firstName: body?.firstName, lastName: body?.lastName, email: body?.email, phone: body?.phone, description: body?.description, roles: body?.roles, enabled: body?.enabled });
-        audit(req.auth!.tenant, req.auth!.actor, 'settings:staff-updated', { entity: 'auth_identity', row_id: identity.id, before: before ? { username: before.username, roles: before.roles, enabled: before.enabled, firstName: before.firstName, lastName: before.lastName, email: before.email, phone: before.phone, description: before.description } : undefined, after: { username: identity.username, roles: identity.roles, enabled: identity.enabled, firstName: identity.firstName, lastName: identity.lastName, email: identity.email, phone: identity.phone, description: identity.description } });
+        const identity = updateOperationalUser(req.auth!, req.params.id, { firstName: body?.firstName, lastName: body?.lastName, email: body?.email, phone: body?.phone, description: body?.description, roles: body?.roles, enabled: body?.enabled, riderId: body?.riderId });
+        audit(req.auth!.tenant, req.auth!.actor, 'settings:staff-updated', { entity: 'auth_identity', row_id: identity.id, before: before ? { username: before.username, roles: before.roles, enabled: before.enabled, riderId: before.riderId || '', firstName: before.firstName, lastName: before.lastName, email: before.email, phone: before.phone, description: before.description } : undefined, after: { username: identity.username, roles: identity.roles, enabled: identity.enabled, riderId: identity.riderId || '', firstName: identity.firstName, lastName: identity.lastName, email: identity.email, phone: identity.phone, description: identity.description } });
         const { passwordHash: _passwordHash, ...safeIdentity } = identity;
         return safeIdentity;
       });
@@ -202,13 +279,28 @@ export function registerApi(app: FastifyInstance) {
       });
     } catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
+  app.get('/api/settings/setup-progress', { preHandler: [guard, allow('settings.manage')] }, async (req: any) =>
+    inStore(req, () => store.getStoreSettings(req.auth!.tenant, req.auth!.storeId).setupProgress),
+  );
+  app.post('/api/settings/setup-progress', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const allowed = ['business', 'owner', 'operations', 'catalogue', 'recovery'] as const;
+      const progress = inStore(req, () => store.saveSetupProgress(req.auth!.tenant, req.auth!.actor, Object.fromEntries(allowed.filter((key) => typeof body?.[key] === 'boolean').map((key) => [key, body[key]])) as any, req.auth!.storeId));
+      audit(req.auth!.tenant, req.auth!.actor, 'settings:setup-progress-updated', { entity: 'store_settings', row_id: req.auth!.storeId, after: progress });
+      return progress;
+    } catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
   app.get('/api/auth/session', async (req: any) => {
     const auth = contextForToken(readSessionToken(req.headers));
-    return auth ? { user: { username: auth.actor, roles: auth.roles, tenant: auth.tenant, storeId: auth.storeId } } : { user: null };
+    return auth ? { user: { username: auth.actor, roles: auth.roles, tenant: auth.tenant, storeId: auth.storeId, riderId: auth.riderId || null } } : { user: null };
   });
 
   // ---- Laundry desk: dedicated domain API, kept separate from generic ERP screens ----
   app.get('/api/laundry/catalogue', { preHandler: [guard, allow('catalogue.read')] }, async (req: any) => inStore(req, () => laundryCatalogue(req.auth!.tenant)));
+  app.get('/api/laundry/search', { preHandler: [guard, allowAny('orders.read', 'customers.read', 'garments.read')] }, async (req: any) => inStore(req, () => searchLaundryWorkspace(req.auth!.tenant, (req.query as any)?.q, {
+    customers: can(req.auth!, 'customers.read'), orders: can(req.auth!, 'orders.read'), garments: can(req.auth!, 'garments.read'),
+  })));
   app.post('/api/laundry/catalogue/categories', { preHandler: [guard, allow('catalogue.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => saveLaundryCategory(req.auth!.tenant, req.auth!.actor, req.body as any))); }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
@@ -265,8 +357,23 @@ export function registerApi(app: FastifyInstance) {
     try { return inStore(req, () => saveLaundryTaxRule(req.auth!.tenant, req.auth!.actor, req.body as any, req.params.id)); }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
+  app.post('/api/laundry/catalogue/import', { preHandler: [guard, allow('catalogue.manage')] }, async (req: any, rep: any) => {
+    try {
+      const result = inStore(req, () => idempotent(req, 'laundry.catalogue-import', () => importLaundryCatalogue(req.auth!.tenant, req.auth!.actor, req.body as any)));
+      inStore(req, () => store.saveSetupProgress(req.auth!.tenant, req.auth!.actor, { catalogue: true }, req.auth!.storeId));
+      return rep.code(201).send(result);
+    } catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/garment-backfill', { preHandler: [guard, allow('catalogue.manage')] }, async (req: any) => inStore(req, () => previewLaundryGarmentBackfill(req.auth!.tenant)));
+  app.post('/api/laundry/garment-backfill', { preHandler: [guard, allow('catalogue.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(200).send(inStore(req, () => idempotent(req, 'laundry.garment-backfill', () => applyLaundryGarmentBackfill(req.auth!.tenant, req.auth!.actor)))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message || 'garment backfill failed' }); }
+  });
   app.get('/api/laundry/customers', { preHandler: [guard, allow('customers.read')] }, async (req: any) =>
     inStore(req, () => searchLaundryCustomers(req.auth!.tenant, String((req.query as any)?.search || ''))),
+  );
+  app.get('/api/laundry/customer-insights', { preHandler: [guard, allow('customers.read')] }, async (req: any) =>
+    inStore(req, () => customerRetentionInsights(req.auth!.tenant)),
   );
   app.post('/api/laundry/customers', { preHandler: [guard, allow('customers.create')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.customer-create', () => createLaundryCustomer(req.auth!.tenant, req.auth!.actor, req.body as any)))); }
@@ -280,6 +387,18 @@ export function registerApi(app: FastifyInstance) {
     try { return inStore(req, () => updateLaundryCustomer(req.auth!.tenant, req.auth!.actor, req.params.id, req.body as any)); }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
+  app.get('/api/laundry/customers/:id/addresses', { preHandler: [guard, allow('customers.read')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => listLaundryCustomerAddresses(req.auth!.tenant, req.params.id)); } catch (error: any) { return rep.code(404).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/customers/:id/addresses', { preHandler: [guard, allow('customers.edit')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `customer-address:${req.params.id}`, () => saveLaundryCustomerAddress(req.auth!.tenant, req.auth!.actor, req.params.id, req.body || {}))); } catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.patch('/api/laundry/customers/:id/addresses/:addressId', { preHandler: [guard, allow('customers.edit')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `customer-address:${req.params.id}`, () => saveLaundryCustomerAddress(req.auth!.tenant, req.auth!.actor, req.params.id, req.body || {}, req.params.addressId))); } catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/customers/:id/addresses/:addressId/archive', { preHandler: [guard, allow('customers.edit')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `customer-address-archive:${req.params.id}`, () => archiveLaundryCustomerAddress(req.auth!.tenant, req.auth!.actor, req.params.id, req.params.addressId))); } catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
   app.post('/api/laundry/customers/:id/wallet', { preHandler: [guard, allow('wallet.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `laundry.customer-wallet:${req.params.id}`, () => applyWalletCommand(req.auth!.tenant, req.auth!.actor, req.params.id, req.body as any)))); }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
@@ -289,6 +408,7 @@ export function registerApi(app: FastifyInstance) {
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
   app.get('/api/laundry/packages', { preHandler: [guard, allow('packages.read')] }, async (req: any) => inStore(req, () => listServicePackages(req.auth!.tenant, String((req.query as any)?.includeInactive || '') === 'true')));
+  app.get('/api/laundry/package-liability', { preHandler: [guard, allowAny('packages.read', 'reports.read')] }, async (req: any) => inStore(req, () => packageLiability(req.auth!.tenant, { customerId: String((req.query as any)?.customerId || '').trim() || undefined })));
   app.post('/api/laundry/packages', { preHandler: [guard, allow('packages.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.package-create', () => createServicePackage(req.auth!.tenant, req.auth!.actor, req.body as any)))); }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
@@ -305,6 +425,10 @@ export function registerApi(app: FastifyInstance) {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `laundry.package-redemption:${req.params.id}`, () => redeemServicePackage(req.auth!.tenant, req.auth!.actor, { ...(req.body as any), customerPackage: req.params.id })))); }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
+  app.post('/api/laundry/customer-packages/:id/payments', { preHandler: [guard, allow('packages.sell')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `laundry.package-payment:${req.params.id}`, () => collectServicePackagePayment(req.auth!.tenant, req.auth!.actor, req.params.id, req.body as any)))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
   app.get('/api/laundry/dashboard', { preHandler: [guard, allow('orders.read')] }, async (req: any) =>
     inStore(req, () => laundryDashboard(req.auth!.tenant, String((req.query as any)?.asOf || laundryBusinessDate()))),
   );
@@ -316,6 +440,32 @@ export function registerApi(app: FastifyInstance) {
   });
   app.post('/api/laundry/orders', { preHandler: [guard, allow('orders.create')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.booking', () => bookLaundryOrder(req.auth!.tenant, req.auth!.actor, req.body as any)))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/order-holds', { preHandler: [guard, allow('orders.hold')] }, async (req: any) => inStore(req, () => listLaundryOrderHolds(req.auth!.tenant, req.auth!.actor, String(req.query?.includeClosed || '') === 'true')));
+  app.get('/api/laundry/order-holds/presence', { preHandler: [guard, allow('orders.hold')] }, async (req: any) => inStore(req, () => orderHoldPresence(req.auth!.tenant, req.auth!.actor)));
+  app.post('/api/laundry/order-holds', { preHandler: [guard, allow('orders.hold')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.order-hold', () => createLaundryOrderHold(req.auth!.tenant, req.auth!.actor, req.body)))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/order-holds/:id/resume', { preHandler: [guard, allow('orders.hold')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `laundry.order-hold-resume:${req.params.id}`, () => resumeLaundryOrderHold(req.auth!.tenant, req.auth!.actor, req.params.id, req.auth!.roles?.includes('owner') === true))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/order-holds/:id/claim', { preHandler: [guard, allow('orders.hold')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `laundry.order-hold-claim:${req.params.id}`, () => claimLaundryOrderHold(req.auth!.tenant, req.auth!.actor, req.params.id))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/order-holds/:id/heartbeat', { preHandler: [guard, allow('orders.hold')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `laundry.order-hold-heartbeat:${req.params.id}`, () => renewLaundryOrderHold(req.auth!.tenant, req.auth!.actor, req.params.id))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/order-holds/:id/release', { preHandler: [guard, allow('orders.hold')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `laundry.order-hold-release:${req.params.id}`, () => releaseLaundryOrderHold(req.auth!.tenant, req.auth!.actor, req.params.id, req.auth!.roles?.includes('owner') === true))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/order-holds/:id/cancel', { preHandler: [guard, allow('orders.hold')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `laundry.order-hold-cancel:${req.params.id}`, () => cancelLaundryOrderHold(req.auth!.tenant, req.auth!.actor, req.params.id, req.auth!.roles?.includes('owner') === true))); }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
   app.get('/api/laundry/orders', { preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => listLaundryOrders(req.auth!.tenant, req.query as any)));
@@ -338,11 +488,11 @@ export function registerApi(app: FastifyInstance) {
   app.post('/api/laundry/orders/:id/transition', { preHandler: [guard, allow('orders.transition')] }, async (req: any, rep: any) => {
     try {
       const body = req.body as any;
-      return inStore(req, () => transitionLaundryOrder(req.auth!.tenant, req.auth!.actor, req.params.id, body?.state, body?.note));
+      return inStore(req, () => transitionLaundryOrder(req.auth!.tenant, req.auth!.actor, req.params.id, body?.state, body?.note, body?.expectedVersion));
     } catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
   app.post('/api/laundry/orders/:id/cancel', { preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
-    try { return inStore(req, () => cancelLaundryOrder(req.auth!.tenant, req.auth!.actor, req.params.id, String((req.body as any)?.reason || ''))); }
+    try { return inStore(req, () => cancelLaundryOrder(req.auth!.tenant, req.auth!.actor, req.params.id, String((req.body as any)?.reason || ''), (req.body as any)?.expectedVersion)); }
     catch (error: any) { return rep.code(400).send({ error: error.message || 'order cancellation failed' }); }
   });
   app.patch('/api/laundry/orders/:id', { preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
@@ -357,6 +507,97 @@ export function registerApi(app: FastifyInstance) {
     try { return inStore(req, () => listLaundryFulfillment(req.auth!.tenant, req.params.id)); }
     catch (error: any) { return rep.code(404).send({ error: error.message }); }
   });
+  app.get('/api/laundry/garment-units', { preHandler: [guard, allow('garments.read')] }, async (req: any) => inStore(req, () => listLaundryGarmentUnits(req.auth!.tenant, req.query as any)));
+  app.get('/api/laundry/rack-occupancy', { preHandler: [guard, allow('garments.read')] }, async (req: any) => inStore(req, () => rackOccupancy(req.auth!.tenant, req.query as any)));
+  app.get('/api/laundry/rack-profiles', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listRackProfiles(req.auth!.tenant, true)));
+  app.post('/api/laundry/rack-profiles', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => { try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.rack-profile-create', () => createRackProfile(req.auth!.tenant, req.auth!.actor, req.body || {})))); } catch (error: any) { return rep.code(400).send({ error: error.message }); } });
+  app.patch('/api/laundry/rack-profiles/:id', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => inStore(req, () => { try { return updateRackProfile(req.auth!.tenant, req.auth!.actor, req.params.id, req.body || {}); } catch (error: any) { rep.code(400); return { error: error.message }; } }));
+  app.get('/api/laundry/garment-units/:id', { preHandler: [guard, allow('garments.read')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => getLaundryGarmentUnit(req.auth!.tenant, req.params.id)); }
+    catch (error: any) { return rep.code(404).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/garment-units/scan', { preHandler: [guard, allow('garments.scan')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.garment-scan', () => scanLaundryGarment(req.auth!.tenant, req.auth!.actor, req.body as any)))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/garment-units/:id/reprint', { preHandler: [guard, allow('tags.reprint')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `laundry.tag-reprint:${req.params.id}`, () => reprintLaundryTag(req.auth!.tenant, req.auth!.actor, req.params.id, req.body as any)))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/production-queue', { preHandler: [guard, allow('production.read')] }, async (req: any) => inStore(req, () => listProductionTasks(req.auth!.tenant, req.query as any)));
+  app.get('/api/laundry/production-load', { preHandler: [guard, allow('production.read')] }, async (req: any) => inStore(req, () => productionLoad(req.auth!.tenant)));
+  app.get('/api/laundry/production-workload', { preHandler: [guard, allow('production.read')] }, async (req: any) => inStore(req, () => productionWorkload(req.auth!.tenant)));
+  app.get('/api/laundry/production-supervisor-metrics', { preHandler: [guard, allow('production.read')] }, async (req: any) => inStore(req, () => productionSupervisorMetrics(req.auth!.tenant, req.query as any)));
+  app.get('/api/laundry/production-schedule', { preHandler: [guard, allow('production.read')] }, async (req: any) => inStore(req, () => productionSchedule(req.auth!.tenant, req.query as any)));
+  app.post('/api/laundry/production-workload/assign', { preHandler: [guard, allow('production.assign')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, 'laundry.production-workload-assign', () => applyProductionWorkloadRecommendations(req.auth!.tenant, req.auth!.actor, (req.body as any)?.taskIds))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/production-tasks/:id/assign', { preHandler: [guard, allow('production.assign')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `laundry.production-assign:${req.params.id}`, () => assignProductionTask(req.auth!.tenant, req.auth!.actor, req.params.id, String((req.body as any)?.assignedTo || '')))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/production-tasks/:id/start', { preHandler: [guard, allow('production.start')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `laundry.production-start:${req.params.id}`, () => startProductionTask(req.auth!.tenant, req.auth!.actor, req.params.id))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/quality-claims', { preHandler: [guard, allow('quality.read')] }, async (req: any) => inStore(req, () => listQualityClaims(req.auth!.tenant, req.query as any)));
+  app.get('/api/laundry/quality-analytics', { preHandler: [guard, allow('quality.read')] }, async (req: any) => inStore(req, () => qualityAnalytics(req.auth!.tenant)));
+  app.get('/api/laundry/customer-corrections', { preHandler: [guard, allow('quality.read')] }, async (req: any) => inStore(req, () => listCustomerCorrections(req.auth!.tenant, req.query as any)));
+  app.post('/api/laundry/quality-claims', { preHandler: [guard, allow('quality.open')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => openQualityClaim(req.auth!.tenant, req.auth!.actor, req.body as any))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/quality-claims/:id/resolve', { preHandler: [guard, allow('quality.resolve')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => resolveQualityClaim(req.auth!.tenant, req.auth!.actor, req.params.id, String((req.body as any)?.decision || ''), String((req.body as any)?.note || ''))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/routes', { preHandler: [guard, allowAny('routes.read', 'routes.read.assigned')] }, async (req: any) => inStore(req, () => listRouteRuns(req.auth!.tenant, { ...(req.query as any), ...(req.auth!.roles.includes('rider') ? { riderId: req.auth!.riderId || '__unlinked-rider__' } : {}) })));
+  app.get('/api/laundry/service-zones', { preHandler: [guard, allowAny('routes.read', 'routes.read.assigned')] }, async (req: any) => inStore(req, () => listServiceZones(req.auth!.tenant, req.auth!.roles.includes('rider') ? req.auth!.riderId : undefined)));
+  app.get('/api/laundry/service-zone-master', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listServiceZoneMaster(req.auth!.tenant, true)));
+  app.post('/api/laundry/service-zone-master', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => { try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.service-zone-create', () => createServiceZone(req.auth!.tenant, req.auth!.actor, req.body || {})))); } catch (error: any) { return rep.code(400).send({ error: error.message }); } });
+  app.patch('/api/laundry/service-zone-master/:id', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => inStore(req, () => { try { return updateServiceZone(req.auth!.tenant, req.auth!.actor, req.params.id, req.body || {}); } catch (error: any) { rep.code(400); return { error: error.message }; } }));
+  app.get('/api/laundry/route-analytics', { preHandler: [guard, allowAny('routes.read', 'routes.read.assigned')] }, async (req: any) => inStore(req, () => routeCoverageAnalytics(req.auth!.tenant, req.auth!.roles.includes('rider') ? (req.auth!.riderId || '__unlinked-rider__') : undefined)));
+  app.post('/api/laundry/routes', { preHandler: [guard, allow('routes.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.route-create', () => createRouteRun(req.auth!.tenant, req.auth!.actor, req.body as any)))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/routes/:id/start', { preHandler: [guard, allowAny('routes.manage', 'routes.manage.assigned')] }, async (req: any, rep: any) => {
+    if (req.auth!.roles.includes('rider') && !req.auth!.riderId) return rep.code(403).send({ error: 'rider account is not linked to an active rider record' });
+    try { return inStore(req, () => idempotent(req, `laundry.route-start:${req.params.id}`, () => startRouteRun(req.auth!.tenant, req.auth!.actor, req.params.id, req.auth!.roles.includes('rider') ? req.auth!.riderId : undefined))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/routes/:runId/stops/:stopId/complete', { preHandler: [guard, allowAny('routes.manage', 'routes.manage.assigned')] }, async (req: any, rep: any) => {
+    if (req.auth!.roles.includes('rider') && !req.auth!.riderId) return rep.code(403).send({ error: 'rider account is not linked to an active rider record' });
+    try { return inStore(req, () => idempotent(req, `laundry.route-stop:${req.params.stopId}`, () => completeRouteStop(req.auth!.tenant, req.auth!.actor, req.params.runId, req.params.stopId, req.body as any, req.auth!.roles.includes('rider') ? req.auth!.riderId : undefined))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/ops/hardware-capabilities', { preHandler: [guard, allow('hardware.read')] }, async () => hardwareCapabilities());
+  app.get('/api/ops/hardware-status', { preHandler: [guard, allow('hardware.read')] }, async (req: any) => inStore(req, () => hardwareStatus(req.auth!.tenant)));
+  app.get('/api/ops/diagnostics', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => buildDiagnostics(req.auth!.tenant, req.auth!.storeId)));
+  app.get('/api/ops/financial-normalization', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => previewFinancialNormalization(req.auth!.tenant)));
+  app.get('/api/ops/compatibility-audit', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => compatibilityRetirementAudit(req.auth!.tenant, req.auth!.storeId)));
+  app.get('/api/ops/entity-normalization', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    const entity = String((req.query as any)?.entity || '');
+    if (!ENTITY_NORMALIZATION_ENTITIES.includes(entity as EntityNormalizationEntity)) return rep.code(400).send({ error: 'entity must be party or laundry_order' });
+    try { return inStore(req, () => previewEntityNormalization(req.auth!.tenant, entity as EntityNormalizationEntity)); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/ops/entity-normalization', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    const entity = String((req.body as any)?.entity || '');
+    if (!ENTITY_NORMALIZATION_ENTITIES.includes(entity as EntityNormalizationEntity)) return rep.code(400).send({ error: 'entity must be party or laundry_order' });
+    try { return inStore(req, () => idempotent(req, `ops.entity-normalization:${entity}`, () => applyEntityNormalization(req.auth!.tenant, req.auth!.actor, entity as EntityNormalizationEntity, Number((req.body as any)?.batchSize || 250)))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/ops/financial-normalization', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, 'ops.financial-normalization', () => applyFinancialNormalization(req.auth!.tenant, req.auth!.actor))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/ops/hardware-receipts', { preHandler: [guard, allow('hardware.read')] }, async (req: any) => inStore(req, () => listHardwareReceipts(req.auth!.tenant)));
+  app.post('/api/ops/hardware-receipts', { preHandler: [guard, allow('hardware.receipt')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'ops.hardware-receipt', () => recordHardwareReceipt(req.auth!.tenant, req.auth!.actor, req.body as any)))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
   app.get('/api/laundry/print-settings', { preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => {
     const settings = store.getStoreSettings(req.auth!.tenant, req.auth!.storeId);
     return {
@@ -367,6 +608,11 @@ export function registerApi(app: FastifyInstance) {
       upiId: settings.upiId,
       qrOnPrint: settings.qrOnPrint,
       logoDataUrl: settings.logoDataUrl,
+      taxMode: settings.taxMode,
+      gstin: settings.gstin,
+      currency: settings.currency,
+      timezone: settings.timezone,
+      printerProfile: settings.printerProfile,
     };
   }));
   app.post('/api/laundry/orders/:id/fulfillment', { preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
@@ -405,8 +651,51 @@ export function registerApi(app: FastifyInstance) {
     const query = req.query as any;
     return inStore(req, () => laundryReports(req.auth!.tenant, query?.from, query?.to));
   });
+  app.get('/api/laundry/reports/:kind/export', { preHandler: [guard, allow('reports.read')] }, async (req: any, rep: any) => {
+    try {
+      const cap = 5000;
+      const result = inStore(req, () => laundryReportDetail(req.auth!.tenant, req.params.kind, req.query?.from, req.query?.to, req.query?.search, 1, cap, cap));
+      return { ...result, exportAll: true, exportCap: cap, exportTruncated: result.totalRows > cap };
+    }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/report-exports', { preHandler: [guard, allow('reports.read')] }, async (req: any, rep: any) => {
+    try { return rep.code(202).send(inStore(req, () => idempotent(req, 'laundry.report-export-queue', () => createLaundryReportExportJob(req.auth!.tenant, req.auth!.actor, { ...(req.body || {}), kind: req.body?.kind || req.body?.reportKind })))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message || 'report export could not be queued' }); }
+  });
+  app.get('/api/laundry/report-exports/:id', { preHandler: [guard, allow('reports.read')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => getLaundryReportExportJob(req.auth!.tenant, req.params.id)); }
+    catch (error: any) { return rep.code(404).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/report-exports/:id/download', { preHandler: [guard, allow('reports.read')] }, async (req: any, rep: any) => {
+    try { const result = inStore(req, () => readLaundryReportExport(req.auth!.tenant, req.params.id)); rep.header('Content-Type', 'text/csv; charset=utf-8'); rep.header('Content-Disposition', `attachment; filename="${result.job.fileName}"`); return rep.send(result.csv); }
+    catch (error: any) { return rep.code(409).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/report-views', { preHandler: [guard, allow('reports.read')] }, async (req: any) => inStore(req, () => listSavedReportViews(req.auth!.tenant, req.auth!.actor)));
+  app.post('/api/laundry/report-views', { preHandler: [guard, allow('reports.read')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.report-view-create', () => createSavedReportView(req.auth!.tenant, req.auth!.actor, { ...(req.body || {}), kind: req.body?.kind || req.body?.reportKind }, req.auth!.roles.includes('owner'))))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message || 'saved report view could not be created' }); }
+  });
+  app.delete('/api/laundry/report-views/:id', { preHandler: [guard, allow('reports.read')] }, async (req: any, rep: any) => inStore(req, () => { try { return deleteSavedReportView(req.auth!.tenant, req.auth!.actor, req.params.id); } catch (error: any) { rep.code(400); return { error: error.message }; } }));
+  app.get('/api/laundry/reconciliation', { preHandler: [guard, allow('reports.read')] }, async (req: any) => inStore(req, () => laundryFinancialReconciliation(req.auth!.tenant)));
+  app.get('/api/laundry/cash-close-drill', { preHandler: [guard, allow('reports.read')] }, async (req: any) => inStore(req, () => cashCloseDrill(req.auth!.tenant, String(req.query?.businessDate || ''))));
+  app.get('/api/laundry/financial-entries', { preHandler: [guard, allow('reports.read')] }, async (req: any) => inStore(req, () => store.listFinancialEntries(req.auth!.tenant, req.query as any)));
+  app.get('/api/laundry/cash-shift', { preHandler: [guard, allow('cash.read')] }, async (req: any) => inStore(req, () => getCurrentCashShift(req.auth!.tenant, String((req.query as any)?.register || '').trim() || undefined)));
+  app.get('/api/laundry/cash-shifts', { preHandler: [guard, allow('cash.read')] }, async (req: any) => inStore(req, () => listCashShifts(req.auth!.tenant)));
+  app.post('/api/laundry/cash-shift/open', { preHandler: [guard, allow('cash.open')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.cash-shift-open', () => openCashShift(req.auth!.tenant, req.auth!.actor, req.body as any)))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/cash-shift/close', { preHandler: [guard, allow('cash.close')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.cash-shift-close', () => closeCashShift(req.auth!.tenant, req.auth!.actor, { ...(req.body || {}), supervisorApproved: req.auth!.roles.includes('owner'), supervisorActor: req.auth!.roles.includes('owner') ? req.auth!.actor : undefined })))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
   app.get('/api/laundry/reports/:kind', { preHandler: [guard, allow('reports.read')] }, async (req: any, rep: any) => {
-    try { return inStore(req, () => laundryReportDetail(req.auth!.tenant, req.params.kind, req.query?.from, req.query?.to, req.query?.search)); }
+    try {
+      const page = Math.max(1, Math.floor(Number(req.query?.page) || 1));
+      const pageSize = Math.max(1, Math.min(500, Math.floor(Number(req.query?.pageSize) || 100)));
+      return inStore(req, () => laundryReportDetail(req.auth!.tenant, req.params.kind, req.query?.from, req.query?.to, req.query?.search, page, pageSize));
+    }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
   app.get('/api/laundry/statistics', { preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => {
@@ -480,8 +769,12 @@ export function registerApi(app: FastifyInstance) {
       });
       audit(TENANT, 'wa-bot', 'crm:lead-created', { row_id: party.id, after: { from } });
     }
-    audit(TENANT, 'wa-bot', 'wa:inbound', { entity: 'party', row_id: party.id, after: { from, text } });
-    console.log(`[wa] inbound from ${from}: ${text}`);
+    // Never place phone numbers or message bodies in logs/audit payloads.
+    // Support can correlate a webhook without exposing customer content.
+    const senderHash = createHash('sha256').update(String(from), 'utf8').digest('hex');
+    const textHash = createHash('sha256').update(String(text), 'utf8').digest('hex');
+    audit(TENANT, 'wa-bot', 'wa:inbound', { entity: 'party', row_id: party.id, after: { senderHash, textHash, textLength: String(text).length } });
+    console.log(`[wa] inbound received senderHash=${senderHash} textLength=${String(text).length}`);
     return { ok: true, party: party.id };
   });
 
@@ -509,21 +802,21 @@ export function registerApi(app: FastifyInstance) {
     };
   }
   app.get('/api/gst/einvoice/:id', { preHandler: guard }, async (req: any, rep: any) => {
-    const row = store.getRow(TENANT, req.params.id);
+    const row = store.getRow(requestTenant(req), req.params.id);
     if (!row || !['sales_invoice', 'pos_invoice'].includes(row.entity)) return rep.code(404).send({ error: 'not found' });
     const gst = row.data.__gst;
     if (!gst) return rep.code(400).send({ error: 'invoice not submitted' });
-    const p = store.getRow(TENANT, row.data.customer);
+    const p = store.getRow(requestTenant(req), row.data.customer);
     return buildEinvoicePayload({ name: row.data.name, posting_date: row.data.posting_date, data: row.data }, company(), {
       name: p?.data?.name || (row.entity === 'pos_invoice' ? 'Walk-in Customer' : ''), gstin: p?.data?.gstin, addr: p?.data?.addr,
       state: p?.data?.state, pos: row.data.place_of_supply,
     }, gst);
   });
   app.get('/api/gst/print/:id', { preHandler: guard }, async (req: any, rep: any) => {
-    const row = store.getRow(TENANT, req.params.id);
+    const row = store.getRow(requestTenant(req), req.params.id);
     const gst = row?.data?.__gst;
     if (!gst) return rep.code(400).send({ error: 'no GST computed' });
-    const p = store.getRow(TENANT, row.data.customer);
+    const p = store.getRow(requestTenant(req), row.data.customer);
     rep.header('Content-Type', 'text/html');
     return renderTaxInvoice(
       { name: row.data.name, posting_date: row.data.posting_date, data: row.data },
@@ -531,20 +824,21 @@ export function registerApi(app: FastifyInstance) {
       row.data.__einvoice,
     );
   });
-  app.get('/api/gst/gstr1', { preHandler: guard }, async () => {
-    const invs = store.rowsOf(TENANT, 'sales_invoice')
+  app.get('/api/gst/gstr1', { preHandler: guard }, async (req: any) => {
+    const tenant = requestTenant(req);
+    const invs = store.rowsOf(tenant, 'sales_invoice')
       .filter((r) => r.status === 'Submitted')
       .map((r) => ({ data: r.data, gst: r.data.__gst }));
-    const cns = store.rowsOf(TENANT, 'credit_note')
+    const cns = store.rowsOf(tenant, 'credit_note')
       .filter((r) => r.status === 'Submitted')
       .map((r) => ({ data: r.data, gst: r.data.__gst }));
     return {
-      ...buildGstr1(invs, (data) => !!store.getRow(TENANT, data.customer)?.data?.gstin),
-      ...buildCdnr(cns, (data) => store.getRow(TENANT, data.reference_invoice)?.data?.name || ''),
+      ...buildGstr1(invs, (data) => !!store.getRow(tenant, data.customer)?.data?.gstin),
+      ...buildCdnr(cns, (data) => store.getRow(tenant, data.reference_invoice)?.data?.name || ''),
     };
   });
-  app.get('/api/gst/cockpit', { preHandler: guard }, async () => {
-    const invs = store.rowsOf(TENANT, 'sales_invoice').filter((r) => r.status === 'Submitted');
+  app.get('/api/gst/cockpit', { preHandler: guard }, async (req: any) => {
+    const invs = store.rowsOf(requestTenant(req), 'sales_invoice').filter((r) => r.status === 'Submitted');
     let cgst = 0, sgst = 0, igst = 0, taxable = 0;
     for (const r of invs) { const g = r.data.__gst; if (!g) continue; cgst += g.totalCgst; sgst += g.totalSgst; igst += g.totalIgst; taxable += g.totalTaxable; }
     const threshold = Number(process.env.GST_EINVOICE_THRESHOLD || 5000000);
@@ -562,45 +856,45 @@ export function registerApi(app: FastifyInstance) {
 
   // ---- E-invoice (IRN) via GSP ----
   app.post('/api/gst/irn/:id', { preHandler: guard }, async (req: any, rep: any) => {
-    try { return await generateIrnForInvoice(TENANT, req.params.id); }
+    try { return await generateIrnForInvoice(requestTenant(req), req.params.id); }
     catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
   app.post('/api/gst/irn/:id/cancel', { preHandler: guard }, async (req: any, rep: any) => {
     const reason = (req.body as any)?.reason || 'Data entry mistake';
-    try { return await cancelIrnForInvoice(TENANT, req.params.id, reason); }
+    try { return await cancelIrnForInvoice(requestTenant(req), req.params.id, reason); }
     catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
   app.get('/api/gst/irn/:id', { preHandler: guard }, async (req: any, rep: any) => {
-    const row = store.getRow(TENANT, req.params.id);
+    const row = store.getRow(requestTenant(req), req.params.id);
     return { einvoice: row?.data?.__einvoice || null, status: row?.data?.einvoice_status || 'NOT_GENERATED' };
   });
 
   // ---- E-way bill via GSP ----
   app.post('/api/gst/eway/:id', { preHandler: guard }, async (req: any, rep: any) => {
-    try { return await generateEwbForInvoice(TENANT, req.params.id, (req.body as any)?.transporter); }
+    try { return await generateEwbForInvoice(requestTenant(req), req.params.id, (req.body as any)?.transporter); }
     catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
   app.get('/api/gst/eway/:id', { preHandler: guard }, async (req: any, rep: any) => {
-    const row = store.getRow(TENANT, req.params.id);
+    const row = store.getRow(requestTenant(req), req.params.id);
     return { eway: row?.data?.__eway || null };
   });
 
   // ---- IMS (inward supply 2A/2B matching) ----
   app.get('/api/gst/ims', { preHandler: guard }, async (req: any) => {
     const period = (req.query as any)?.period as string | undefined;
-    return getImsSupplies(TENANT, period);
+    return getImsSupplies(requestTenant(req), period);
   });
   app.post('/api/gst/ims/action', { preHandler: guard }, async (req: any, rep: any) => {
     const { irn, action, reason } = req.body as any;
     if (!irn || !['ACC', 'REJ', 'PEN'].includes(action)) return rep.code(400).send({ error: 'irn + valid action required' });
-    return recordImsAction(TENANT, irn, action, reason, USER);
+    return recordImsAction(requestTenant(req), irn, action, reason, requestActor(req));
   });
 
   // ---- CRM: convert a lead into party + opportunity (optionally a quotation) ----
   app.post('/api/lead/:id/convert', { preHandler: guard }, async (req: any, rep: any) => {
     try {
       const b = (req.body as any) || {};
-      const out = convertLead(TENANT, USER, req.params.id, { gstin: b.gstin, createQuotation: !!b.createQuotation });
+      const out = convertLead(requestTenant(req), requestActor(req), req.params.id, { gstin: b.gstin, createQuotation: !!b.createQuotation });
       return {
         party: out.party,
         opportunity: { id: out.opportunity.id },
@@ -612,53 +906,53 @@ export function registerApi(app: FastifyInstance) {
 
   // ---- CRM: lead scoring ----
   app.post('/api/crm/lead/:id/score', { preHandler: guard }, async (req: any, rep: any) => {
-    try { return scoreLead(TENANT, req.params.id); }
+    try { return scoreLead(requestTenant(req), req.params.id); }
     catch (e: any) { return rep.code(404).send({ error: e.message }); }
   });
-  app.post('/api/crm/score-all', { preHandler: guard }, async () => scoreAllLeads(TENANT));
+  app.post('/api/crm/score-all', { preHandler: guard }, async (req: any) => scoreAllLeads(requestTenant(req)));
 
   // ---- CRM: activities (timeline) ----
   app.post('/api/crm/activity', { preHandler: guard }, async (req: any, rep: any) => {
     try {
       const b = (req.body as any)?.data || req.body;
-      const row = logActivity(TENANT, USER, b);
+      const row = logActivity(requestTenant(req), requestActor(req), b);
       return rep.code(201).send(row);
     } catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
   app.get('/api/crm/timeline/:id', { preHandler: guard }, async (req: any) =>
-    activitiesFor(TENANT, (req.query as any)?.ref_entity, req.params.id).map((a) => ({ id: a.id, ...a.data, created_at: a.created_at })));
+    activitiesFor(requestTenant(req), (req.query as any)?.ref_entity, req.params.id).map((a) => ({ id: a.id, ...a.data, created_at: a.created_at })));
 
   // ---- CRM: duplicate detection + merge ----
-  app.get('/api/crm/duplicates', { preHandler: guard }, async () => findDuplicateLeads(TENANT));
+  app.get('/api/crm/duplicates', { preHandler: guard }, async (req: any) => findDuplicateLeads(requestTenant(req)));
   app.post('/api/crm/merge', { preHandler: guard }, async (req: any, rep: any) => {
     try {
       const b = (req.body as any) || {};
       if (!b.primary || !Array.isArray(b.duplicates)) return rep.code(400).send({ error: 'primary + duplicates[] required' });
-      return mergeLeads(TENANT, USER, b.primary, b.duplicates);
+      return mergeLeads(requestTenant(req), requestActor(req), b.primary, b.duplicates);
     } catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
 
   // ---- CRM: opportunity win/lose + assignment ----
   app.post('/api/crm/opportunity/:id/win', { preHandler: guard }, async (req: any, rep: any) => {
-    try { return winOpportunity(TENANT, USER, req.params.id); }
+    try { return winOpportunity(requestTenant(req), requestActor(req), req.params.id); }
     catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
   app.post('/api/crm/opportunity/:id/lose', { preHandler: guard }, async (req: any, rep: any) => {
-    try { return loseOpportunity(TENANT, USER, req.params.id, (req.body as any)?.lost_reason || ''); }
+    try { return loseOpportunity(requestTenant(req), requestActor(req), req.params.id, (req.body as any)?.lost_reason || ''); }
     catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
-  app.post('/api/crm/lead/:id/assign', { preHandler: guard }, async (req: any) => ({ owner: assignOwner(TENANT, req.params.id) }));
+  app.post('/api/crm/lead/:id/assign', { preHandler: guard }, async (req: any) => ({ owner: assignOwner(requestTenant(req), req.params.id) }));
 
   // ---- CRM: pipeline board, forecast, analytics (for the dashboard) ----
-  app.get('/api/crm/pipeline', { preHandler: guard }, async (req: any) => getPipeline(TENANT, req.query as any));
-  app.get('/api/crm/forecast', { preHandler: guard }, async (req: any) => getForecast(TENANT, req.query as any));
-  app.get('/api/crm/analytics/source', { preHandler: guard }, async () => getSourceAnalytics(TENANT));
-  app.get('/api/crm/analytics/lost-reasons', { preHandler: guard }, async () => getLostReasonPareto(TENANT));
-  app.get('/api/crm/analytics/owners', { preHandler: guard }, async () => getOwnerPerformance(TENANT));
+  app.get('/api/crm/pipeline', { preHandler: guard }, async (req: any) => getPipeline(requestTenant(req), req.query as any));
+  app.get('/api/crm/forecast', { preHandler: guard }, async (req: any) => getForecast(requestTenant(req), req.query as any));
+  app.get('/api/crm/analytics/source', { preHandler: guard }, async (req: any) => getSourceAnalytics(requestTenant(req)));
+  app.get('/api/crm/analytics/lost-reasons', { preHandler: guard }, async (req: any) => getLostReasonPareto(requestTenant(req)));
+  app.get('/api/crm/analytics/owners', { preHandler: guard }, async (req: any) => getOwnerPerformance(requestTenant(req)));
 
   // ---- Dashboard analytics: KPIs + time-series for the home command center ----
   app.get('/api/dashboard/summary', { preHandler: guard }, async (req: any) =>
-    dashboardSummary(TENANT, (req.query as any)?.asOf));
+    dashboardSummary(requestTenant(req), (req.query as any)?.asOf));
 
   // ---- P19 Engagement: multi-channel gateway, templates, campaigns, notifications ----
   // Templates use the generic CRUD (`/api/message_template`). These are the action routes.
@@ -721,10 +1015,11 @@ export function registerApi(app: FastifyInstance) {
   // ---- Inventory: stock balances + low-stock alert ----
   app.get('/api/inventory/stock', { preHandler: guard }, async (req: any) => {
     const wh = (req.query as any)?.warehouse as string | undefined;
-    const items = store.rowsOf(TENANT, 'item');
-    const whs = store.rowsOf(TENANT, 'warehouse');
+    const tenant = requestTenant(req);
+    const items = store.rowsOf(tenant, 'item');
+    const whs = store.rowsOf(tenant, 'warehouse');
     const balances: Record<string, Record<string, number>> = {};
-    for (const s of store.stockOf(TENANT)) {
+    for (const s of store.stockOf(tenant)) {
       if (wh && s.warehouse !== wh) continue;
       balances[s.item] ||= {};
       balances[s.item][s.warehouse] = (balances[s.item][s.warehouse] || 0) + s.qty;
@@ -745,44 +1040,44 @@ export function registerApi(app: FastifyInstance) {
   // ---- Inventory depth (Phase-16): valuation, serials, batches ----
   app.get('/api/inventory/valuation', { preHandler: guard }, async (req: any) => {
     const method = ((req.query as any).method === 'fifo' ? 'fifo' : 'moving-average') as 'moving-average' | 'fifo';
-    return { method, ...stockValuation(TENANT, method) };
+    return { method, ...stockValuation(requestTenant(req), method) };
   });
-  app.get('/api/inventory/serials', { preHandler: guard }, async () => serialStock(TENANT));
-  app.get('/api/inventory/batches', { preHandler: guard }, async () => batchStock(TENANT));
-  app.get('/api/inventory/balances', { preHandler: guard }, async () => getStockBalance(TENANT));
+  app.get('/api/inventory/serials', { preHandler: guard }, async (req: any) => serialStock(requestTenant(req)));
+  app.get('/api/inventory/batches', { preHandler: guard }, async (req: any) => batchStock(requestTenant(req)));
+  app.get('/api/inventory/balances', { preHandler: guard }, async (req: any) => getStockBalance(requestTenant(req)));
 
   // ---- Manufacturing depth (Phase-17): BOM cost, explosion, MRP planning ----
   app.get('/api/manufacturing/bom-cost', { preHandler: guard }, async (req: any) => {
     const item = (req.query as any).item; if (!item) return { error: 'item required' };
-    return bomCost(TENANT, item, Number((req.query as any).qty || 1));
+    return bomCost(requestTenant(req), item, Number((req.query as any).qty || 1));
   });
   app.get('/api/manufacturing/explode', { preHandler: guard }, async (req: any) => {
     const item = (req.query as any).item; if (!item) return { error: 'item required' };
-    return explodeBom(TENANT, item, Number((req.query as any).qty || 1));
+    return explodeBom(requestTenant(req), item, Number((req.query as any).qty || 1));
   });
-  app.get('/api/manufacturing/mrp', { preHandler: guard }, async () => planMaterials(TENANT));
+  app.get('/api/manufacturing/mrp', { preHandler: guard }, async (req: any) => planMaterials(requestTenant(req)));
   app.post('/api/manufacturing/mrp/work-orders', { preHandler: guard }, async (req: any, rep: any) => {
     const b = req.body || {};
     if (!b.items?.length) return rep.code(400).send({ error: 'items required' });
-    const created = createPlannedWorkOrders(TENANT, b.module || 'manufacturing', b.items);
+    const created = createPlannedWorkOrders(requestTenant(req), b.module || 'manufacturing', b.items);
     return { created: created.map((r: any) => ({ id: r.id, name: r.data.name })) };
   });
   app.post('/api/manufacturing/mrp/purchase-order', { preHandler: guard }, async (req: any, rep: any) => {
     const b = req.body || {};
     if (!b.supplier || !b.items?.length) return rep.code(400).send({ error: 'supplier and items required' });
-    const po = createPlannedPurchaseOrder(TENANT, b.module || 'buying', b.supplier, b.items, {
+    const po = createPlannedPurchaseOrder(requestTenant(req), b.module || 'buying', b.supplier, b.items, {
       isSubcontracted: b.isSubcontracted, suppliedItems: b.suppliedItems,
     });
     return { id: po.id, name: po.data.name };
   });
 
   // ---- Accounting: Trial Balance / P&L / Balance Sheet / Ledger ----
-  app.get('/api/accounting/trial-balance', { preHandler: guard }, async (req: any) => getTrialBalance(TENANT, (req.query as any).cost_center));
-  app.get('/api/accounting/pnl', { preHandler: guard }, async (req: any) => getPnL(TENANT, (req.query as any).cost_center));
-  app.get('/api/accounting/balancesheet', { preHandler: guard }, async (req: any) => getBalanceSheet(TENANT, (req.query as any).cost_center));
+  app.get('/api/accounting/trial-balance', { preHandler: guard }, async (req: any) => getTrialBalance(requestTenant(req), (req.query as any).cost_center));
+  app.get('/api/accounting/pnl', { preHandler: guard }, async (req: any) => getPnL(requestTenant(req), (req.query as any).cost_center));
+  app.get('/api/accounting/balancesheet', { preHandler: guard }, async (req: any) => getBalanceSheet(requestTenant(req), (req.query as any).cost_center));
   app.get('/api/accounting/ledger/:account', { preHandler: guard }, async (req: any) => {
     const name = decodeURIComponent(String(req.params.account));
-    return { account: name, entries: getLedger(TENANT, name) };
+    return { account: name, entries: getLedger(requestTenant(req), name) };
   });
 
   // ---- Banking: bank statement import + reconcile + outstanding ----
@@ -797,7 +1092,7 @@ export function registerApi(app: FastifyInstance) {
       reconciled: false,
     }));
     try {
-      const stmt = createRow(TENANT, USER, 'bank_statement', {
+      const stmt = createRow(requestTenant(req), requestActor(req), 'bank_statement', {
         bank_name: b.bank_name, account_no: b.account_no, period: b.period, lines,
       });
       return rep.code(201).send(stmt);
@@ -805,7 +1100,7 @@ export function registerApi(app: FastifyInstance) {
   });
 
   app.post('/api/bank/:id/reconcile', { preHandler: guard }, async (req: any, rep: any) => {
-    const stmt = store.getRow(TENANT, req.params.id);
+    const stmt = store.getRow(requestTenant(req), req.params.id);
     if (!stmt || stmt.entity !== 'bank_statement') return rep.code(404).send({ error: 'statement not found' });
     const { index, party } = req.body as any;
     const lines = (stmt.data.lines || []) as any[];
@@ -818,7 +1113,7 @@ export function registerApi(app: FastifyInstance) {
     const isDeposit = deposit > 0;
     const amount = isDeposit ? deposit : withdrawal;
     try {
-      const payment = createRow(TENANT, USER, 'payment_entry', {
+      const payment = createRow(requestTenant(req), requestActor(req), 'payment_entry', {
         payment_type: isDeposit ? 'Receive' : 'Pay',
         party: party || undefined,
         posting_date: line.date || new Date().toISOString().slice(0, 10),
@@ -827,21 +1122,21 @@ export function registerApi(app: FastifyInstance) {
         amount,
         remarks: line.narration || '',
       });
-      submitRow(TENANT, USER, 'payment_entry', payment.id);
+      submitRow(requestTenant(req), requestActor(req), 'payment_entry', payment.id);
       line.reconciled = true;
       store.updateRow(stmt);
       return { payment: payment.id, type: isDeposit ? 'Receive' : 'Pay', amount, index: Number(index) };
     } catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
 
-  app.get('/api/banking/outstanding', { preHandler: guard }, async () => {
+  app.get('/api/banking/outstanding', { preHandler: guard }, async (req: any) => {
     const paidFor = (invId: string) =>
-      store.rowsOf(TENANT, 'payment_entry').filter((p) => p.status === 'Submitted').reduce(
-        (acc, p) => acc + ((p.data.against_sales === invId || p.data.against_purchase === invId) ? (Number(p.data.amount) || 0) : 0),
+      store.rowsOf(requestTenant(req), 'payment_entry').filter((p) => p.status === 'Submitted').reduce(
+        (acc, p) => acc + ((p.data.against_sales === invId || p.data.against_purchase === invId) ? ((store.financialDocumentAmountPaise(requestTenant(req), 'payment', p.entity, p.id) ?? Math.round((Number(p.data.amount) || 0) * 100)) / 100) : 0),
         0,
       );
     const map = (r: any) => {
-      const gt = Number(r.data.grand_total || 0);
+      const gt = (store.financialDocumentAmountPaise(requestTenant(req), 'invoice', r.entity, r.id) ?? Math.round((Number(r.data.grand_total) || 0) * 100)) / 100;
       const paid = paidFor(r.id);
       return {
         id: r.id, name: r.data.name, type: r.entity,
@@ -849,8 +1144,8 @@ export function registerApi(app: FastifyInstance) {
         grand_total: gt, paid, balance: Math.max(0, Math.round((gt - paid) * 100) / 100),
       };
     };
-    const sales = store.rowsOf(TENANT, 'sales_invoice').filter((r) => r.status === 'Submitted').map(map).filter((x) => x.balance > 0);
-    const purchases = store.rowsOf(TENANT, 'purchase_invoice').filter((r) => r.status === 'Submitted').map(map).filter((x) => x.balance > 0);
+    const sales = store.rowsOf(requestTenant(req), 'sales_invoice').filter((r) => r.status === 'Submitted').map(map).filter((x) => x.balance > 0);
+    const purchases = store.rowsOf(requestTenant(req), 'purchase_invoice').filter((r) => r.status === 'Submitted').map(map).filter((x) => x.balance > 0);
     return { receivables: sales, payables: purchases };
   });
 
@@ -858,37 +1153,70 @@ export function registerApi(app: FastifyInstance) {
   app.post('/api/sync/push', { preHandler: guard }, async (req: any, rep: any) => {
     const docs = (req.body as any)?.docs;
     if (!Array.isArray(docs)) return rep.code(400).send({ error: 'docs[] required' });
+    if (docs.length > 500) return rep.code(413).send({ error: 'a maximum of 500 offline commands can be replayed at once' });
+    const auth = req.auth as AuthContext;
+    const supported = new Set(['laundry_order', 'laundry_expense', 'party', 'laundry_order_transition', 'laundry_order_cancel', 'laundry_order_edit']);
     const results: any[] = [];
     let okN = 0;
     for (let i = 0; i < docs.length; i++) {
       const d = docs[i] as any;
       try {
-        const row = createRow(TENANT, USER, d.entity, d.data || {});
-        const sub = submitRow(TENANT, USER, d.entity, row.id);
-        results.push({ index: i, ok: true, id: row.id, name: sub.id });
+        const testDelayMs = Math.max(0, Math.min(5_000, Number(process.env.EPIC_TEST_SYNC_DELAY_MS || 0)));
+        if (testDelayMs) await new Promise((resolve) => setTimeout(resolve, testDelayMs));
+        const entity = String(d?.entity || '').trim();
+        if (!supported.has(entity)) throw new Error(`offline sync does not support '${entity || 'unknown'}'; use its authoritative command endpoint`);
+        const key = String(d?.idempotencyKey || d?.clientId || '').trim();
+        if (!key || key.length > 160) throw new Error('each offline command requires a unique idempotencyKey or clientId');
+        const result: any = inStore(req, () => idempotent({ headers: { 'idempotency-key': key }, auth, body: d.data || {} }, `sync:${entity}`, () => {
+          if (entity === 'laundry_order') return bookLaundryOrder(auth.tenant, auth.actor, d.data || {});
+          if (entity === 'laundry_order_transition') {
+            const command = d.data || {};
+            if (!command.orderId || !command.state) throw new Error('offline order transition requires orderId and state');
+            return transitionLaundryOrder(auth.tenant, auth.actor, String(command.orderId), command.state, command.note, command.expectedVersion);
+          }
+          if (entity === 'laundry_order_cancel') {
+            const command = d.data || {};
+            if (!command.orderId || !command.reason) throw new Error('offline order cancellation requires orderId and reason');
+            return cancelLaundryOrder(auth.tenant, auth.actor, String(command.orderId), String(command.reason), command.expectedVersion);
+          }
+          if (entity === 'laundry_order_edit') {
+            const command = d.data || {};
+            if (!command.orderId) throw new Error('offline order edit requires orderId');
+            const { orderId, ...edit } = command;
+            return editLaundryOrder(auth.tenant, auth.actor, String(orderId), edit);
+          }
+          if (entity === 'laundry_expense') return createLaundryExpense(auth.tenant, auth.actor, d.data || {});
+          const customer = d.data || {};
+          if (!customer.is_customer && customer.is_customer !== undefined) throw new Error('offline party sync only accepts customer records');
+          return createLaundryCustomer(auth.tenant, auth.actor, customer);
+        }));
+        const id = result?.order?.id || result?.id || result?.expense?.id;
+        audit(auth.tenant, auth.actor, 'ops:offline-replay-applied', { after: { entity, id: id || null, keyHash: createHash('sha256').update(key).digest('hex') } });
+        results.push({ index: i, ok: true, id, entity });
         okN++;
       } catch (e: any) { results.push({ index: i, ok: false, error: e.message }); }
     }
     return { accepted: docs.length, applied: okN, results };
   });
+  app.get('/api/sync/replay-audit', { preHandler: [guard, allow('reports.read')] }, async (req: any) => inStore(req, () => store.auditOf(req.auth!.tenant).filter((entry) => entry.action === 'ops:offline-replay-applied' || entry.action === 'ops:idempotency-conflict').slice(-200).reverse()));
 
   // ---- HR & Payroll ----
   app.get('/api/payroll/preview', { preHandler: guard }, async (req: any, rep: any) => {
-    const emp = store.getRow(TENANT, (req.query as any).employee);
+    const emp = store.getRow(requestTenant(req), (req.query as any).employee);
     if (!emp) return rep.code(404).send({ error: 'employee not found' });
-    const ss = emp.data.salary_structure ? store.getRow(TENANT, emp.data.salary_structure)?.data : null;
+    const ss = emp.data.salary_structure ? store.getRow(requestTenant(req), emp.data.salary_structure)?.data : null;
     if (!ss) return rep.code(400).send({ error: 'employee has no salary structure' });
     return computePayroll(ss, Number((req.query as any).paid_days) || 30, 30);
   });
   app.post('/api/payroll/run', { preHandler: guard }, async (req: any, rep: any) => {
     const { period, paid_days, payment_mode } = req.body as any;
     if (!period) return rep.code(400).send({ error: 'period required' });
-    const emps = store.rowsOf(TENANT, 'employee').filter((e) => e.data.is_active && e.data.salary_structure);
+    const emps = store.rowsOf(requestTenant(req), 'employee').filter((e) => e.data.is_active && e.data.salary_structure);
     const results: any[] = [];
     for (const e of emps) {
       try {
-        const r = createRow(TENANT, USER, 'salary_slip', { employee: e.id, period, paid_days: Number(paid_days) || 30, payment_mode: payment_mode || 'Bank' });
-        const s = submitRow(TENANT, USER, 'salary_slip', r.id);
+        const r = createRow(requestTenant(req), requestActor(req), 'salary_slip', { employee: e.id, period, paid_days: Number(paid_days) || 30, payment_mode: payment_mode || 'Bank' });
+        const s = submitRow(requestTenant(req), requestActor(req), 'salary_slip', r.id);
         results.push({ ok: true, id: r.id, name: s.id, employee: e.data.name });
       } catch (err: any) { results.push({ ok: false, employee: e.data.name, error: err.message }); }
     }
@@ -899,11 +1227,11 @@ export function registerApi(app: FastifyInstance) {
   // Attendance
   app.post('/api/hr/attendance', { preHandler: guard }, async (req: any, rep: any) => {
     const b = req.body || {}; if (!b.data?.employee || !b.data?.date || !b.data?.status) return rep.code(400).send({ error: 'employee, date, status required' });
-    return recordAttendance(TENANT, 'hr', b.data);
+    return recordAttendance(requestTenant(req), requestActor(req), b.data);
   });
   app.get('/api/hr/attendance', { preHandler: guard }, async (req: any) => {
     const { employee, from, to } = req.query as any;
-    let rows = store.rowsOf(TENANT, 'attendance');
+    let rows = store.rowsOf(requestTenant(req), 'attendance');
     if (employee) rows = rows.filter(r => r.data.employee === employee);
     if (from) rows = rows.filter(r => r.data.date >= from);
     if (to) rows = rows.filter(r => r.data.date <= to);
@@ -914,25 +1242,25 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/hr/leave-balance', { preHandler: guard }, async (req: any, rep: any) => {
     const { employee, fiscal_year } = req.query as any;
     if (!employee || !fiscal_year) return rep.code(400).send({ error: 'employee and fiscal_year required' });
-    return getLeaveBalances(TENANT, employee, fiscal_year);
+    return getLeaveBalances(requestTenant(req), employee, fiscal_year);
   });
   app.post('/api/hr/leave-apply', { preHandler: guard }, async (req: any, rep: any) => {
     const b = req.body || {}; if (!b.data?.employee || !b.data?.leave_type || !b.data?.from_date || !b.data?.to_date) return rep.code(400).send({ error: 'employee, leave_type, from_date, to_date required' });
-    return applyLeave(TENANT, 'hr', b.data);
+    return applyLeave(requestTenant(req), requestActor(req), b.data);
   });
   app.post('/api/hr/leave-approve/:id', { preHandler: guard }, async (req: any, rep: any) => {
     const approver = (req.body as any)?.approver; if (!approver) return rep.code(400).send({ error: 'approver required' });
-    return approveLeave(TENANT, req.params.id, approver);
+    return approveLeave(requestTenant(req), req.params.id, approver);
   });
 
   // Expense Claims
   app.post('/api/hr/expense-claim', { preHandler: guard }, async (req: any, rep: any) => {
     const b = req.body || {}; if (!b.data?.employee || !b.data?.posting_date || !b.data?.items?.length) return rep.code(400).send({ error: 'employee, posting_date, items[] required' });
-    return createExpenseClaim(TENANT, 'hr', b.data);
+    return createExpenseClaim(requestTenant(req), requestActor(req), b.data);
   });
   app.get('/api/hr/expense-claims', { preHandler: guard }, async (req: any) => {
     const { employee, status } = req.query as any;
-    let rows = store.rowsOf(TENANT, 'expense_claim');
+    let rows = store.rowsOf(requestTenant(req), 'expense_claim');
     if (employee) rows = rows.filter(r => r.data.employee === employee);
     if (status) rows = rows.filter(r => r.data.status === status);
     return rows;
@@ -941,12 +1269,12 @@ export function registerApi(app: FastifyInstance) {
   // Employee Loans
   app.post('/api/hr/loan', { preHandler: guard }, async (req: any, rep: any) => {
     const b = req.body || {}; if (!b.data?.employee || !b.data?.loan_type || !b.data?.principal_amount || !b.data?.start_date) return rep.code(400).send({ error: 'employee, loan_type, principal_amount, start_date required' });
-    return createEmployeeLoan(TENANT, 'hr', b.data);
+    return createEmployeeLoan(requestTenant(req), requestActor(req), b.data);
   });
-  app.get('/api/hr/loan/:id/schedule', { preHandler: guard }, async (req: any) => getLoanSchedule(TENANT, req.params.id));
+  app.get('/api/hr/loan/:id/schedule', { preHandler: guard }, async (req: any) => getLoanSchedule(requestTenant(req), req.params.id));
   app.get('/api/hr/loans', { preHandler: guard }, async (req: any) => {
     const { employee, status } = req.query as any;
-    let rows = store.rowsOf(TENANT, 'employee_loan');
+    let rows = store.rowsOf(requestTenant(req), 'employee_loan');
     if (employee) rows = rows.filter(r => r.data.employee === employee);
     if (status) rows = rows.filter(r => r.data.status === status);
     return rows;
@@ -955,23 +1283,23 @@ export function registerApi(app: FastifyInstance) {
   // Recruitment
   app.post('/api/hr/job-opening', { preHandler: guard }, async (req: any, rep: any) => {
     const b = req.body || {}; if (!b.data?.title) return rep.code(400).send({ error: 'title required' });
-    return createJobOpening(TENANT, 'hr', b.data);
+    return createJobOpening(requestTenant(req), requestActor(req), b.data);
   });
   app.get('/api/hr/job-openings', { preHandler: guard }, async (req: any) => {
     const { status } = req.query as any;
-    let rows = store.rowsOf(TENANT, 'job_opening');
+    let rows = store.rowsOf(requestTenant(req), 'job_opening');
     if (status) rows = rows.filter(r => r.data.status === status);
     return rows;
   });
   app.post('/api/hr/job-apply', { preHandler: guard }, async (req: any, rep: any) => {
     const b = req.body || {}; if (!b.data?.job_opening || !b.data?.applicant_name) return rep.code(400).send({ error: 'job_opening, applicant_name required' });
-    return applyToJob(TENANT, 'hr', b.data);
+    return applyToJob(requestTenant(req), requestActor(req), b.data);
   });
   app.post('/api/hr/interview', { preHandler: guard }, async (req: any, rep: any) => {
     const b = req.body || {}; if (!b.data?.job_applicant || !b.data?.round || !b.data?.interviewer || !b.data?.scheduled_on) return rep.code(400).send({ error: 'job_applicant, round, interviewer, scheduled_on required' });
-    return scheduleInterview(TENANT, 'hr', b.data);
+    return scheduleInterview(requestTenant(req), requestActor(req), b.data);
   });
-  app.get('/api/hr/recruitment-pipeline', { preHandler: guard }, async () => getRecruitmentPipeline(TENANT));
+  app.get('/api/hr/recruitment-pipeline', { preHandler: guard }, async (req: any) => getRecruitmentPipeline(requestTenant(req)));
 
   // ---- Migration: Tally / Zoho / generic CSV import ----
   app.get('/api/migration/presets', { preHandler: guard }, async () => PRESETS);
@@ -980,7 +1308,7 @@ export function registerApi(app: FastifyInstance) {
     if (!entity || !Array.isArray(rows)) return rep.code(400).send({ error: 'entity + rows[] required' });
     if (!getDef(entity)) return rep.code(400).send({ error: 'unknown entity: ' + entity });
     try {
-      const results = runImport(TENANT, USER, entity, rows, fieldMap, open_bal_account);
+      const results = runImport(requestTenant(req), requestActor(req), entity, rows, fieldMap, open_bal_account);
       const ok = results.filter((r) => r.ok).length;
       return { accepted: rows.length, imported: ok, results };
     } catch (e: any) { return rep.code(400).send({ error: e.message }); }
@@ -990,35 +1318,35 @@ export function registerApi(app: FastifyInstance) {
   app.post('/api/projects/bill', { preHandler: guard }, async (req: any, rep: any) => {
     const { project } = req.body as any;
     if (!project) return rep.code(400).send({ error: 'project required' });
-    try { return billProject(TENANT, USER, project); } catch (e: any) { return rep.code(400).send({ error: e.message }); }
+    try { return billProject(requestTenant(req), requestActor(req), project); } catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
 
   // ---- Fixed Assets: run depreciation for a period (YYYY-MM) ----
   app.post('/api/assets/depreciate', { preHandler: guard }, async (req: any, rep: any) => {
     const { period } = req.body as any;
     if (!period) return rep.code(400).send({ error: 'period required (YYYY-MM)' });
-    try { return runDepreciation(TENANT, USER, period); } catch (e: any) { return rep.code(400).send({ error: e.message }); }
+    try { return runDepreciation(requestTenant(req), requestActor(req), period); } catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
 
   // ---- Compliance: statutory summary + audit-trail verification ----
-  app.get('/api/compliance/summary', { preHandler: guard }, async () => getComplianceSummary(TENANT));
-  app.get('/api/compliance/audit', { preHandler: guard }, async () => verifyAuditTrail(TENANT));
+  app.get('/api/compliance/summary', { preHandler: guard }, async (req: any) => getComplianceSummary(requestTenant(req)));
+  app.get('/api/compliance/audit', { preHandler: guard }, async (req: any) => verifyAuditTrail(requestTenant(req)));
 
   // ---- Multi-currency: FX rate lookup + convert to base (INR) ----
   app.get('/api/fx/rate', { preHandler: guard }, async (req: any) => {
     const code = (req.query as any).code || 'INR';
-    return { code, rate: getRate(TENANT, code) };
+    return { code, rate: getRate(requestTenant(req), code) };
   });
   app.get('/api/fx/convert', { preHandler: guard }, async (req: any) => {
     const code = (req.query as any).code || 'INR';
     const amount = Number((req.query as any).amount) || 0;
-    const rate = getRate(TENANT, code);
+    const rate = getRate(requestTenant(req), code);
     return { code, amount, rate, base: convert(amount, rate) };
   });
 
   // ---- Platform & Ecosystem: RBAC, payments, RPA, marketplace ----
   app.get('/api/auth/whoami', { preHandler: guard }, async (req: any) => ({
-    role: req.headers['x-role'] || 'admin', tenant: TENANT,
+    role: req.headers['x-role'] || 'admin', tenant: requestTenant(req),
   }));
   app.get('/api/rbac/check', { preHandler: guard }, async (req: any) => {
     const { entity, action, role } = req.query as any;
@@ -1034,37 +1362,76 @@ export function registerApi(app: FastifyInstance) {
   app.post('/api/rpa/run', { preHandler: guard }, async (req: any, rep: any) => {
     const { bot, input } = req.body as any;
     if (!bot) return rep.code(400).send({ error: 'bot required' });
-    try { return runBot(TENANT, USER, bot, input || {}); } catch (e: any) { return rep.code(400).send({ error: e.message }); }
+    try { return runBot(requestTenant(req), requestActor(req), bot, input || {}); } catch (e: any) { return rep.code(400).send({ error: e.message }); }
   });
   app.get('/api/bank/statement', { preHandler: guard }, async (req: any) => fetchBankStatement({ provider: (req.query as any).provider }));
-  app.get('/api/marketplace/apps', { preHandler: guard }, async () => store.rowsOf(TENANT, 'app_def').map((a) => a.data));
+  app.get('/api/marketplace/apps', { preHandler: guard }, async (req: any) => store.rowsOf(requestTenant(req), 'app_def').map((a) => a.data));
 
   // ---- Phase-14 Ops pack: pricing, recurring invoices, reorder, alerts, backup ----
-  app.post('/api/ops/quote', { preHandler: guard }, async (req: any) => quoteRate(TENANT, req.body || {}));
+  app.post('/api/ops/quote', { preHandler: guard }, async (req: any) => quoteRate(requestTenant(req), req.body || {}));
   app.post('/api/ops/recurring/run', { preHandler: guard }, async (req: any) => {
-    const ids = runRecurring(TENANT, (req.body as any)?.asOf);
+    const ids = runRecurring(requestTenant(req), (req.body as any)?.asOf);
     return { created: ids.length, invoices: ids };
   });
-  app.get('/api/ops/reorder', { preHandler: guard }, async () => reorderSuggestions(TENANT));
-  app.get('/api/ops/alerts', { preHandler: guard }, async (req: any) => getAlerts(TENANT, (req.query as any)?.asOf));
+  app.get('/api/ops/reorder', { preHandler: guard }, async (req: any) => reorderSuggestions(requestTenant(req)));
+  app.get('/api/ops/alerts', { preHandler: guard }, async (req: any) => getAlerts(requestTenant(req), (req.query as any)?.asOf));
   app.post('/api/ops/po/from-reorder', { preHandler: guard }, async (req: any, rep: any) => {
-    const id = createReorderPO(TENANT, (req.body as any)?.supplier);
+    const id = createReorderPO(requestTenant(req), (req.body as any)?.supplier);
     if (!id) return rep.code(400).send({ error: 'nothing below reorder level' });
     return { purchase_order: id };
   });
   app.get('/api/ops/backup', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     const db = store.snapshotFor(req.auth!.tenant, req.auth!.storeId);
+    const checksum = createHash('sha256').update(JSON.stringify(db), 'utf8').digest('hex');
     rep.type('application/json').header('Content-Disposition', 'attachment; filename="epic-bos-backup.json"');
-    return db;
+    return { ...db, backupFormat: 'epic-laundry-backup', backupVersion: 1, createdAt: new Date().toISOString(), tenant: req.auth!.tenant, storeId: req.auth!.storeId, migrations: store.migrationStatus(), checksum };
+  });
+  app.post('/api/ops/backup/encrypted', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try {
+      const db = store.snapshotFor(req.auth!.tenant, req.auth!.storeId);
+      return rep.type('application/json').send(encryptBackup(db, (req.body as any)?.passphrase, req.auth!.tenant, req.auth!.storeId));
+    } catch (error: any) { return rep.code(400).send({ error: error.message || 'encrypted backup failed' }); }
+  });
+  app.get('/api/ops/migrations', { preHandler: [guard, allow('settings.manage')] }, async () => ({ status: 'ok', migrations: store.migrationStatus() }));
+  app.post('/api/ops/restore/verify', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try {
+      const db = validateRestorePayload(req.body, req.auth!.tenant, req.auth!.storeId);
+      return { ok: true, backupFormat: 'epic-laundry-backup', rows: db.rows.length, financialEntries: Array.isArray(db.financialEntries) ? db.financialEntries.length : 0, financialDocuments: Array.isArray(db.financialDocuments) ? db.financialDocuments.length : 0, customerLedgerEntries: Array.isArray(db.customerLedgerEntries) ? db.customerLedgerEntries.length : 0, cashShiftCloses: Array.isArray(db.cashShiftCloses) ? db.cashShiftCloses.length : 0, normalizedCustomers: Array.isArray(db.normalizedCustomers) ? db.normalizedCustomers.length : 0, normalizedOrders: Array.isArray(db.normalizedOrders) ? db.normalizedOrders.length : 0, storeId: req.auth!.storeId };
+    } catch (error: any) { return rep.code(400).send({ error: error.message || 'backup verification failed' }); }
+  });
+  app.post('/api/ops/restore/rehearse', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { const db = validateRestorePayload(req.body, req.auth!.tenant, req.auth!.storeId); const result = freshDatabaseRestoreRehearsal(req.auth!.tenant, req.auth!.storeId, db); audit(req.auth!.tenant, req.auth!.actor, 'ops:fresh-database-recovery-rehearsal', { after: { storeId: req.auth!.storeId, ...result } }); return result; }
+    catch (error: any) { return rep.code(400).send({ error: error.message || 'fresh-database recovery rehearsal failed' }); }
   });
   app.post('/api/ops/restore', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
-    const db = req.body as any;
-    if (!db || !Array.isArray(db.rows) || !Array.isArray(db.gl) || !Array.isArray(db.audit) || !Array.isArray(db.outbox) || !Array.isArray(db.stock) || !Array.isArray(db.ims) || (db.seq !== undefined && (typeof db.seq !== 'object' || Array.isArray(db.seq)))) return rep.code(400).send({ error: 'invalid backup payload' });
     try {
+      const db = validateRestorePayload(req.body, req.auth!.tenant, req.auth!.storeId);
       const result = store.replaceScoped(req.auth!.tenant, req.auth!.storeId, db);
       audit(req.auth!.tenant, req.auth!.actor, 'ops:restore', { after: { storeId: req.auth!.storeId, rows: result.rows } });
       return { ok: true, rows: result.rows, storeId: req.auth!.storeId };
     } catch (error: any) { return rep.code(400).send({ error: error.message || 'backup restore failed' }); }
+  });
+  app.post('/api/ops/restore/encrypted/verify', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try {
+      const envelope = (req.body as any)?.backup;
+      if (!envelope || envelope.tenant !== req.auth!.tenant || envelope.storeId !== req.auth!.storeId) throw new Error('encrypted backup belongs to another workspace');
+      const db = validateRestorePayload(decryptBackup(envelope, (req.body as any)?.passphrase), req.auth!.tenant, req.auth!.storeId);
+      return { ok: true, backupFormat: 'epic-laundry-encrypted-backup', rows: db.rows.length, financialEntries: Array.isArray(db.financialEntries) ? db.financialEntries.length : 0, financialDocuments: Array.isArray(db.financialDocuments) ? db.financialDocuments.length : 0, customerLedgerEntries: Array.isArray(db.customerLedgerEntries) ? db.customerLedgerEntries.length : 0, cashShiftCloses: Array.isArray(db.cashShiftCloses) ? db.cashShiftCloses.length : 0, normalizedCustomers: Array.isArray(db.normalizedCustomers) ? db.normalizedCustomers.length : 0, normalizedOrders: Array.isArray(db.normalizedOrders) ? db.normalizedOrders.length : 0, storeId: req.auth!.storeId };
+    } catch (error: any) { return rep.code(400).send({ error: error.message || 'encrypted backup verification failed' }); }
+  });
+  app.post('/api/ops/restore/encrypted/rehearse', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { const envelope = (req.body as any)?.backup; if (!envelope || envelope.tenant !== req.auth!.tenant || envelope.storeId !== req.auth!.storeId) throw new Error('encrypted backup belongs to another workspace'); const db = validateRestorePayload(decryptBackup(envelope, (req.body as any)?.passphrase), req.auth!.tenant, req.auth!.storeId); const result = freshDatabaseRestoreRehearsal(req.auth!.tenant, req.auth!.storeId, db); audit(req.auth!.tenant, req.auth!.actor, 'ops:encrypted-fresh-database-recovery-rehearsal', { after: { storeId: req.auth!.storeId, ...result } }); return result; }
+    catch (error: any) { return rep.code(400).send({ error: error.message || 'encrypted fresh-database recovery rehearsal failed' }); }
+  });
+  app.post('/api/ops/restore/encrypted', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try {
+      const envelope = (req.body as any)?.backup;
+      if (!envelope || envelope.tenant !== req.auth!.tenant || envelope.storeId !== req.auth!.storeId) return rep.code(400).send({ error: 'encrypted backup belongs to another workspace' });
+      const db = validateRestorePayload(decryptBackup(envelope, (req.body as any)?.passphrase), req.auth!.tenant, req.auth!.storeId);
+      const result = store.replaceScoped(req.auth!.tenant, req.auth!.storeId, db);
+      audit(req.auth!.tenant, req.auth!.actor, 'ops:encrypted-restore', { after: { storeId: req.auth!.storeId, rows: result.rows } });
+      return result;
+    } catch (error: any) { return rep.code(400).send({ error: error.message || 'encrypted backup restore failed' }); }
   });
 
   // ---- Distribution: read-only customer portal (self-serve invoices + pay link) ----
@@ -1075,11 +1442,11 @@ export function registerApi(app: FastifyInstance) {
     if (!party || party.entity !== 'party') return rep.code(404).send({ error: 'customer not found' });
     const paidFor = (invId: string) =>
       store.rowsOf(TENANT, 'payment_entry').filter((p) => p.status === 'Submitted' && p.data.against_sales === invId)
-        .reduce((a, p) => a + (Number(p.data.amount) || 0), 0);
+        .reduce((a, p) => a + ((store.financialDocumentAmountPaise(TENANT, 'payment', p.entity, p.id) ?? Math.round((Number(p.data.amount) || 0) * 100)) / 100), 0);
     const invs = store.rowsOf(TENANT, 'sales_invoice')
       .filter((r) => r.status === 'Submitted' && r.data.customer === cid)
       .map((r) => {
-        const gt = Number(r.data.grand_total || 0);
+        const gt = (store.financialDocumentAmountPaise(TENANT, 'invoice', r.entity, r.id) ?? Math.round((Number(r.data.grand_total) || 0) * 100)) / 100;
         const paid = Math.round(paidFor(r.id) * 100) / 100;
         return { name: r.data.name, date: r.data.posting_date, grand_total: gt, paid, balance: Math.max(0, Math.round((gt - paid) * 100) / 100) };
       })
@@ -1092,11 +1459,11 @@ export function registerApi(app: FastifyInstance) {
   });
 
   // ---- Epic AI & Analytics ----
-  app.get('/api/ai/insights', { preHandler: guard }, async () => getInsights(TENANT));
+  app.get('/api/ai/insights', { preHandler: guard }, async (req: any) => getInsights(requestTenant(req)));
   app.post('/api/ai/ask', { preHandler: guard }, async (req: any, rep: any) => {
     const q = (req.body as any)?.question;
     if (!q) return rep.code(400).send({ error: 'question required' });
-    try { return await ask(TENANT, q); } catch (e: any) { return rep.code(500).send({ error: e.message }); }
+    try { return await ask(requestTenant(req), q); } catch (e: any) { return rep.code(500).send({ error: e.message }); }
   });
 
   console.log('[api] routes registered');

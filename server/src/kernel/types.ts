@@ -39,6 +39,10 @@ export interface EntityRow {
   created_by: string;
   created_at: string;
   updated_at: string;
+  /** Optional constrained paise source column for financial entities. */
+  amountPaise?: number;
+  amountDirection?: 'DEBIT' | 'CREDIT' | 'NONE';
+  amountCurrency?: string;
 }
 
 export interface GLEntry {

@@ -1,10 +1,12 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { BarChart3, Bell, Bike, BookOpenCheck, ChevronDown, ClipboardList, ContactRound, LayoutDashboard, LogOut, MapPinned, Plus, Printer, ReceiptText, Settings2, Shirt, Sparkles, Upload, UsersRound, WalletCards, CircleDollarSign } from 'lucide-react'
+import { AlertTriangle, BarChart3, Bell, Bike, BookOpenCheck, ChevronDown, ClipboardList, ContactRound, LayoutDashboard, LogOut, MapPinned, Plus, Printer, ReceiptText, Settings2, Shirt, Sparkles, Upload, UsersRound, WalletCards, CircleDollarSign, ScanLine, Banknote, ShieldCheck, Route as RouteIcon, Wrench, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { apiGet, apiPost } from '@/lib/api'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { lndryBrand } from '@/assets/generated/manifest'
+import { exportOfflineQueue, offlineQueueSnapshot, replayOfflineQueue, retryOfflineDeadLetters } from '@/lib/api'
+import { CommandPalette } from '@/components/layout/CommandPalette'
 
 const navigation: Array<{ to: string; label: string; icon: typeof LayoutDashboard; permission: UiPermission }> = [
   { to: '/laundry/dashboard', label: 'Dashboard', icon: LayoutDashboard, permission: 'orders.read' },
@@ -13,24 +15,31 @@ const navigation: Array<{ to: string; label: string; icon: typeof LayoutDashboar
   { to: '/laundry/packages', label: 'Care packages', icon: Sparkles, permission: 'packages.read' },
   { to: '/laundry/new-order', label: 'Order booking', icon: Plus, permission: 'orders.create' },
   { to: '/laundry/orders', label: 'Store orders', icon: ClipboardList, permission: 'orders.read' },
+  { to: '/laundry/garment-tracking', label: 'Garment tracking', icon: ScanLine, permission: 'garments.read' },
+  { to: '/laundry/production-queue', label: 'Production queue', icon: Wrench, permission: 'production.read' },
+  { to: '/laundry/quality-claims', label: 'Quality claims', icon: ShieldCheck, permission: 'quality.read' },
+  { to: '/laundry/corrections', label: 'Correction documents', icon: AlertTriangle, permission: 'quality.read' },
+  { to: '/laundry/routes', label: 'Route runs', icon: RouteIcon, permission: 'routes.read' },
+  { to: '/laundry/cash-closing', label: 'Cash closing', icon: Banknote, permission: 'cash.read' },
   { to: '/laundry/print-centre', label: 'Print centre', icon: Printer, permission: 'orders.read' },
   { to: '/laundry/settlements', label: 'Rider settlements', icon: CircleDollarSign, permission: 'orders.read' },
   { to: '/laundry/dispatch', label: 'Pickup & delivery', icon: Bike, permission: 'orders.read' },
   { to: '/laundry/expenses', label: 'Store expense', icon: WalletCards, permission: 'expenses.create' },
   { to: '/laundry/import-prices', label: 'Import prices', icon: Upload, permission: 'settings.manage' },
+  { to: '/laundry/import-catalogue', label: 'Import catalogue', icon: Upload, permission: 'settings.manage' },
   { to: '/laundry/import-customers', label: 'Import customers', icon: UsersRound, permission: 'settings.manage' },
   { to: '/laundry/reports', label: 'Reports', icon: ReceiptText, permission: 'settings.manage' },
   { to: '/laundry/catalogue', label: 'Garments & prices', icon: Shirt, permission: 'catalogue.read' },
   { to: '/laundry/settings', label: 'Store settings', icon: Settings2, permission: 'settings.manage' },
 ]
 
-export type UiPermission = 'orders.read' | 'orders.create' | 'expenses.create' | 'settings.manage' | 'catalogue.read' | 'customers.read' | 'packages.read'
+export type UiPermission = 'orders.read' | 'orders.create' | 'expenses.create' | 'settings.manage' | 'catalogue.read' | 'customers.read' | 'packages.read' | 'garments.read' | 'cash.read' | 'production.read' | 'quality.read' | 'routes.read'
 export function canUseUi(roles: string[] | undefined, permission: UiPermission) {
   if (roles?.includes('owner')) return true
   const rolePermissions: Record<string, UiPermission[]> = {
-    counter_staff: ['orders.read', 'orders.create', 'expenses.create', 'customers.read', 'packages.read'],
-    processing_staff: ['orders.read', 'catalogue.read', 'packages.read'],
-    rider: [],
+    counter_staff: ['orders.read', 'orders.create', 'expenses.create', 'customers.read', 'packages.read', 'garments.read', 'cash.read', 'production.read', 'quality.read', 'routes.read'],
+    processing_staff: ['orders.read', 'catalogue.read', 'packages.read', 'garments.read', 'production.read', 'quality.read', 'routes.read'],
+  rider: ['routes.read'],
   }
   return roles?.some((role) => rolePermissions[role]?.includes(permission)) || false
 }
@@ -38,9 +47,11 @@ export function canUseUi(roles: string[] | undefined, permission: UiPermission) 
 export function LaundryShell() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const session = useQuery({ queryKey: ['auth-session'], queryFn: () => apiGet<Session>('/auth/session') })
+  const workspace = useQuery({ queryKey: ['workspace-mode'], queryFn: () => window.epic?.workspaceStatus?.() || Promise.resolve({ mode: 'production' as const }) })
   const notifications = useQuery({ queryKey: ['notifications'], queryFn: () => apiGet<NotificationItem[]>('/notifications') })
   const markRead = useMutation({ mutationFn: (id: string) => apiPost(`/notifications/${id}/read`, { read: true }), onSuccess: () => notifications.refetch() })
   const signOut = useMutation({ mutationFn: () => apiPost('/auth/sign-out'), onSuccess: () => window.location.assign('/ui/app/') })
+  const resetDemo = useMutation({ mutationFn: () => window.epic?.resetDemoWorkspace?.() || Promise.reject(new Error('Demo reset is only available in the desktop application.')) })
   const permittedNavigation = navigation.filter((item) => canUseUi(session.data?.user?.roles, item.permission))
   const canBook = canUseUi(session.data?.user?.roles, 'orders.create')
   return (
@@ -83,18 +94,55 @@ export function LaundryShell() {
           </div>
           <StoreSwitcher />
           <div className="flex items-center gap-2">
+            {workspace.data?.mode === 'demo' ? <button type="button" onClick={() => { if (window.confirm('Reset all sample customers, orders and settings in the demo workspace? Production data is not affected.')) resetDemo.mutate() }} disabled={resetDemo.isPending} className="hidden rounded-lg bg-[#fff2ce] px-2.5 py-1.5 text-[10px] font-extrabold uppercase tracking-[.1em] text-[#855815] sm:inline disabled:opacity-60">{resetDemo.isPending ? 'Resetting…' : 'Demo workspace · reset'}</button> : <span className="hidden rounded-lg bg-[#eaf3ef] px-2.5 py-1.5 text-[10px] font-extrabold uppercase tracking-[.1em] text-[#2e6a60] sm:inline">Production workspace</span>}
             {canBook ? <NavLink to="/laundry/new-order" className="inline-flex items-center gap-2 rounded-xl bg-[#123039] px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1d4a53]">
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New order</span>
             </NavLink> : null}
+            <button type="button" onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))} className="hidden h-9 items-center gap-2 rounded-xl border border-[#263f44]/12 bg-white px-3 text-xs font-semibold text-[#476066] transition hover:bg-[#eeece6] md:inline-flex" aria-label="Open command search"><Search className="h-4 w-4" /><span>Search</span><kbd className="rounded border border-[#263f44]/15 px-1.5 py-0.5 text-[10px] font-normal">Ctrl K</kbd></button>
+            <OfflineQueueIndicator />
             <div className="relative"><button type="button" onClick={() => setNotificationsOpen((value) => !value)} className="relative grid h-9 w-9 place-items-center rounded-xl text-[#476066] transition hover:bg-[#e6e5df]" aria-label="Notifications"><Bell className="h-[18px] w-[18px]" />{(notifications.data || []).filter((item) => !item.read).length ? <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[#d86b4d] ring-2 ring-[#f8f7f3]" /> : null}</button>{notificationsOpen && <NotificationPopover rows={notifications.data || []} pending={markRead.isPending} onRead={(id) => markRead.mutate(id)} onClose={() => setNotificationsOpen(false)} />}</div>
             <button type="button" disabled={signOut.isPending} onClick={() => signOut.mutate()} className="grid h-9 w-9 place-items-center rounded-xl text-[#476066] transition hover:bg-[#e6e5df] disabled:opacity-50" aria-label="Sign out" title="Sign out"><LogOut className="h-[18px] w-[18px]" /></button>
           </div>
         </header>
         <main className="mx-auto max-w-[1600px] p-4 md:p-7"><Outlet /></main>
       </div>
+      <CommandPalette destinations={permittedNavigation.map((item) => ({ to: item.to, label: item.label, icon: item.icon, ws: 'Laundry' }))} recordSearchPath="/laundry/search" />
     </div>
   )
+}
+
+function OfflineQueueIndicator() {
+  const [items, setItems] = useState(() => offlineQueueSnapshot())
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const refresh = () => setItems(offlineQueueSnapshot())
+  async function replay() {
+    setBusy(true); setError('')
+    try { await replayOfflineQueue(); refresh() } catch (cause) { setError(cause instanceof Error ? cause.message : 'Offline replay is unavailable.') } finally { setBusy(false) }
+  }
+  function retryDeadLetters() { retryOfflineDeadLetters(); refresh(); setError('Dead-letter commands were reset and are ready for replay.') }
+  async function exportQueue() {
+    const content = exportOfflineQueue()
+    try {
+      if (window.epic?.saveFile) {
+        const result = await window.epic.saveFile({ content, suggestedName: 'epic-laundry-offline-queue.json', filters: [{ name: 'JSON', extensions: ['json'] }, { name: 'All Files', extensions: ['*'] }] })
+        if (result.ok) setError(`Offline queue exported${result.path ? ` to ${result.path}` : ''}.`)
+        return
+      }
+      await navigator.clipboard?.writeText(content)
+      setError('Offline queue copied to the clipboard.')
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not export the offline queue.') }
+  }
+  useEffect(() => {
+    const onChange = () => refresh(); const onOnline = () => void replay()
+    window.addEventListener('epic-offline-queue-changed', onChange); window.addEventListener('online', onOnline)
+    const timer = window.setInterval(() => { if (navigator.onLine && offlineQueueSnapshot().some((item) => !item.deadLetter)) void replay() }, 15000)
+    return () => { window.removeEventListener('epic-offline-queue-changed', onChange); window.removeEventListener('online', onOnline); window.clearInterval(timer) }
+  }, [])
+  const pending = items.filter((item) => !item.deadLetter).length; const dead = items.filter((item) => item.deadLetter).length
+  if (!pending && !dead && !error) return null
+  return <div className="relative"><button type="button" onClick={() => void replay()} disabled={busy || !pending} className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-[10px] font-extrabold uppercase tracking-[.1em] ${dead ? 'bg-rose-50 text-rose-700' : 'bg-[#fff2ce] text-[#855815]'} disabled:opacity-50`} title={error || `${pending} offline command${pending === 1 ? '' : 's'} waiting`}><span className={`h-2 w-2 rounded-full ${dead ? 'bg-rose-500' : 'bg-[#c79129]'}`} />{busy ? 'Syncing…' : `${pending || dead} offline`}</button>{(error || dead) ? <div className="absolute right-0 top-11 z-40 w-80 rounded-xl border border-[#263f44]/10 bg-white p-3 text-xs text-[#617178] shadow-xl"><p className="font-semibold text-[#31484d]">Offline replay</p><p className="mt-1 leading-5">{error || `${dead} command${dead === 1 ? '' : 's'} need review after five failed attempts.`}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={retryDeadLetters} disabled={!dead} className="rounded-lg bg-[#39786f] px-2.5 py-1.5 text-[10px] font-bold text-white disabled:opacity-40">Retry dead letters</button><button type="button" onClick={() => void exportQueue()} className="rounded-lg border border-[#39786f]/20 px-2.5 py-1.5 text-[10px] font-bold text-[#39786f]">Export queue</button></div></div> : null}</div>
 }
 
 type Session = { user: { username: string; roles: string[]; storeId: string } | null }

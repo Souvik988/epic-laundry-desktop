@@ -6,6 +6,7 @@ node_modules/
 # build output
 server/dist/
 desktop/dist/
+desktop/dist-fresh/
 *.tsbuildinfo
 
 # runtime data (per-tenant JSON snapshots)

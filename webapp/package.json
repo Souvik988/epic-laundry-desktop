@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:app": "vite build",
+    "audit:a11y": "node scripts/accessibility-audit.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

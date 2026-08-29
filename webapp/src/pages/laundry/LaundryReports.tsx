@@ -1,8 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
-import { BarChart3, CalendarDays, CircleDollarSign, Download, Loader2, Printer, RefreshCw, Scissors, Shirt, Users, WalletCards } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AlertTriangle, BarChart3, CalendarDays, CircleDollarSign, Download, Loader2, Printer, RefreshCw, Scissors, ShieldCheck, Shirt, Users, WalletCards } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiGet } from '@/lib/api'
+import { apiGet, apiPost } from '@/lib/api'
 import { formatINR } from '@/lib/utils'
 
 type TrendPoint = { date: string; orders: number; orderValue: number; collected: number; expenses: number }
@@ -16,11 +16,16 @@ type Reports = {
   topGarments: RankedItem[]
   topServices: RankedItem[]
 }
+type Reconciliation = { status: string; totals: { invoice: number; collected: number; outstanding: number; expenses: number; canonicalNet?: number }; journals: { balanced: boolean }; checks: { issueCount: number; passed: boolean }; issues: Array<{ code: string; entity: string; id: string; message: string }>; cash?: { closedShiftCount: number; normalizedCloseCount: number; missingSnapshotCount: number; totals: { opening: number; collections: number; expenses: number; refunds: number; expected: number; counted: number; variance: number } } }
+type FinancialEntry = { id: string; kind: string; sourceEntity: string; sourceId: string; direction: 'IN' | 'OUT'; amountPaise: number; occurredAt: string; actor: string }
+type SavedReportView = { id: string; name: string; kind: string; from: string | null; to: string | null; search: string; shared: boolean; owner: string }
 
 export default function LaundryReports() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const report = useQuery({ queryKey: ['laundry-reports', from, to], queryFn: () => apiGet<Reports>(`/laundry/reports?${from ? `from=${from}&` : ''}${to ? `to=${to}` : ''}`) })
+  const reconciliation = useQuery({ queryKey: ['laundry-reconciliation'], queryFn: () => apiGet<Reconciliation>('/laundry/reconciliation') })
+  const financialEntries = useQuery({ queryKey: ['laundry-financial-entries'], queryFn: () => apiGet<FinancialEntry[]>('/laundry/financial-entries') })
   const data = report.data
 
   if (report.isLoading) return <div className="grid h-80 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-[#3a7d78]" /></div>
@@ -43,12 +48,18 @@ export default function LaundryReports() {
         </div>
       </div>
 
+      <SavedReportViews from={from} to={to} />
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Order value" value={formatINR(data.summary.orderValue)} icon={BarChart3} hint={`${data.summary.orders} orders in range`} />
         <Metric label="Collected" value={formatINR(data.summary.collected)} icon={CircleDollarSign} hint={`${formatINR(data.summary.outstanding)} outstanding`} />
         <Metric label="Store expenses" value={formatINR(data.summary.expenses)} icon={WalletCards} hint="Posted operating costs" />
         <Metric label="Operating cash" value={formatINR(data.summary.operatingCash)} icon={Users} hint={`${data.summary.customers} customers served`} />
       </section>
+
+      <section className={`rounded-[22px] border p-5 shadow-[0_8px_28px_rgba(37,48,43,.04)] md:p-6 ${reconciliation.data?.checks.passed ? 'border-[#39786f]/20 bg-[#f3faf6]' : 'border-[#d89b4b]/30 bg-[#fff8e8]'}`}><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div className="flex items-start gap-3"><span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${reconciliation.data?.checks.passed ? 'bg-[#dcefe5] text-[#2e6a60]' : 'bg-[#ffedc8] text-[#9a6518]'}`}>{reconciliation.data?.checks.passed ? <ShieldCheck className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}</span><div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#4d8982]">Financial controls</p><h2 className="mt-1 font-serif text-2xl text-[#17353c]">{reconciliation.isLoading ? 'Checking reconciliation…' : reconciliation.data?.status || 'Unavailable'}</h2><p className="mt-1 text-sm text-[#617178]">Invoices, collections, expenses, and posted journals are compared in paise. Exceptions stay visible for controlled correction.</p></div></div>{reconciliation.data ? <div className="grid grid-cols-2 gap-x-7 gap-y-2 text-sm sm:grid-cols-5"><Mini label="Invoices" value={formatINR(reconciliation.data.totals.invoice)} /><Mini label="Collected" value={formatINR(reconciliation.data.totals.collected)} /><Mini label="Outstanding" value={formatINR(reconciliation.data.totals.outstanding)} /><Mini label="Canonical net" value={formatINR(reconciliation.data.totals.canonicalNet || 0)} /><Mini label="Exceptions" value={String(reconciliation.data.checks.issueCount)} /></div> : null}</div>{reconciliation.data?.issues.length ? <div className="mt-4 space-y-2">{reconciliation.data.issues.slice(0, 3).map((issue) => <p key={`${issue.code}-${issue.id}`} className="rounded-lg bg-white/70 px-3 py-2 text-xs text-[#855815]"><strong>{issue.code}</strong> · {issue.message}</p>)}</div> : null}<div className="mt-4 flex items-center gap-2 text-xs font-semibold text-[#617178]"><CircleDollarSign className="h-4 w-4 text-[#39786f]" />{financialEntries.isLoading ? 'Loading canonical entries…' : `${financialEntries.data?.length || 0} immutable paise entries linked to source documents`}</div></section>
+
+      {reconciliation.data?.cash ? <section className="rounded-[22px] border border-[#263f44]/10 bg-white p-5 shadow-[0_8px_28px_rgba(37,48,43,.04)] md:p-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#4d8982]">Daily close control</p><h2 className="mt-1 font-serif text-2xl text-[#17353c]">Cash drawer snapshots</h2><p className="mt-1 text-sm text-[#718087]">Immutable paise close totals remain available for audit and reconciliation.</p></div><div className="grid grid-cols-2 gap-x-7 gap-y-2 text-sm sm:grid-cols-4"><Mini label="Closed shifts" value={String(reconciliation.data.cash.closedShiftCount)} /><Mini label="Snapshots" value={String(reconciliation.data.cash.normalizedCloseCount)} /><Mini label="Expected" value={formatINR(reconciliation.data.cash.totals.expected)} /><Mini label="Variance" value={formatINR(reconciliation.data.cash.totals.variance)} /></div></div>{reconciliation.data.cash.missingSnapshotCount ? <p className="mt-4 rounded-lg bg-[#fff8e8] px-3 py-2 text-xs font-semibold text-[#855815]">{reconciliation.data.cash.missingSnapshotCount} closed shift(s) still need a normalized snapshot.</p> : <p className="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-[#32695f]"><ShieldCheck className="h-4 w-4" />Every closed shift has a normalized close snapshot.</p>}</section> : null}
 
       <section className="grid gap-5 xl:grid-cols-[1.4fr_.8fr]">
         <div className="rounded-[22px] border border-[#263f44]/10 bg-white p-5 shadow-[0_8px_28px_rgba(37,48,43,.04)] md:p-6">
@@ -71,7 +82,18 @@ export default function LaundryReports() {
   )
 }
 
+function SavedReportViews({ from, to }: { from: string; to: string }) {
+  const queryClient = useQueryClient()
+  const views = useQuery({ queryKey: ['laundry-report-views'], queryFn: () => apiGet<SavedReportView[]>('/laundry/report-views') })
+  const [name, setName] = useState('')
+  const [kind, setKind] = useState('collection')
+  const create = useMutation({ mutationFn: () => apiPost<SavedReportView>('/laundry/report-views', { name, kind, from: from || undefined, to: to || undefined }), onSuccess: () => { setName(''); queryClient.invalidateQueries({ queryKey: ['laundry-report-views'] }) } })
+  const options = [['invoice', 'Invoice'], ['collection', 'Collection'], ['order', 'Order'], ['customer', 'Customer'], ['expense', 'Expense'], ['balance', 'Balance'], ['pickup', 'Pickup'], ['rider-delivery', 'Rider delivery'], ['rider-collection', 'Rider collection']] as const
+  return <section className="rounded-[22px] border border-[#263f44]/10 bg-[#f7faf7] p-5 shadow-[0_8px_28px_rgba(37,48,43,.03)]"><div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#4d8982]">Report workspace</p><h2 className="mt-1 font-serif text-xl text-[#17353c]">Saved views</h2><p className="mt-1 text-xs text-[#718087]">Save the current date range as a reusable, store-scoped report filter.</p></div><form onSubmit={(event) => { event.preventDefault(); if (name.trim()) create.mutate() }} className="flex flex-wrap items-end gap-2"><label className="text-xs font-semibold text-[#617178]">Name<input required value={name} onChange={(event) => setName(event.target.value)} placeholder="August collections" className="mt-1 h-9 w-44 rounded-lg border border-[#263f44]/15 bg-white px-2.5 font-normal" /></label><label className="text-xs font-semibold text-[#617178]">Report<select value={kind} onChange={(event) => setKind(event.target.value)} className="mt-1 h-9 rounded-lg border border-[#263f44]/15 bg-white px-2.5 font-normal">{options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button disabled={create.isPending || !name.trim()} className="h-9 rounded-lg bg-[#123039] px-3 text-xs font-bold text-white disabled:opacity-50">{create.isPending ? 'Saving…' : 'Save view'}</button></form></div>{create.error ? <p className="mt-3 text-xs font-semibold text-rose-700">{(create.error as Error).message}</p> : null}<div className="mt-4 flex flex-wrap gap-2">{views.isLoading ? <span className="text-xs text-[#718087]">Loading saved views…</span> : views.data?.length ? views.data.map((view) => { const params = new URLSearchParams(); if (view.from) params.set('from', view.from); if (view.to) params.set('to', view.to); if (view.search) params.set('search', view.search); return <Link key={view.id} to={`/laundry/reports/${view.kind}?${params.toString()}`} className="rounded-xl border border-[#39786f]/20 bg-white px-3 py-2 text-xs font-semibold text-[#315d57] transition hover:border-[#39786f]/50"><span className="block">{view.name}</span><span className="mt-0.5 block text-[10px] font-normal text-[#819095]">{view.kind} · {view.from || 'all dates'}{view.to ? ` → ${view.to}` : ''}{view.shared ? ' · shared' : ''}</span></Link> }) : <span className="text-xs text-[#718087]">No saved views yet.</span>}</div></section>
+}
+
 function Metric({ label, value, hint, icon: Icon }: { label: string; value: string; hint: string; icon: typeof BarChart3 }) { return <div className="rounded-[20px] border border-[#263f44]/10 bg-white p-5 shadow-[0_8px_28px_rgba(37,48,43,.04)]"><Icon className="h-5 w-5 text-[#3a7d78]" /><p className="mt-4 text-xs font-bold uppercase tracking-[.13em] text-[#718087]">{label}</p><p className="mt-1 font-serif text-3xl text-[#17353c]">{value}</p><p className="mt-1 text-xs text-[#74848a]">{hint}</p></div> }
+function Mini({ label, value }: { label: string; value: string }) { return <div><p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#718087]">{label}</p><p className="mt-1 font-semibold tabular-nums text-[#17353c]">{value}</p></div> }
 
 function Breakdown({ title, headers, rows }: { title: string; headers: string[]; rows: string[][] }) { return <section className="overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]"><h2 className="border-b border-[#263f44]/10 p-5 font-serif text-xl text-[#17353c]">{title}</h2><table className="w-full text-left text-sm"><thead className="bg-[#fafaf7] text-[10px] font-bold uppercase tracking-[.14em] text-[#718087]"><tr>{headers.map((header) => <th key={header} className="px-5 py-3">{header}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row[0]} className="border-t border-[#263f44]/8">{row.map((cell, index) => <td key={index} className="px-5 py-3.5"><span className={index === 2 ? 'font-bold tabular-nums' : ''}>{cell}</span></td>)}</tr>)}</tbody></table></section> }
 

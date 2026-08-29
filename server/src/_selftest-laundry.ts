@@ -20,7 +20,7 @@ try {
   assert.equal(laundryBusinessDate(new Date('2026-08-27T19:00:00.000Z'), 'Asia/Kolkata'), '2026-08-28', 'laundry business dates follow the configured local timezone');
   seedLaundryDefaults(tenant);
   const catalogue = laundryCatalogue(tenant);
-  assert.equal(catalogue.garments.length, 13, 'default laundry catalogue persists the expanded garment master');
+  assert.equal(catalogue.garments.length, 32, 'default laundry catalogue persists the expanded garment master');
   assert.equal(catalogue.services.length, 4, 'default laundry catalogue persists services');
 
   const shirt = catalogue.garments.find((garment: any) => garment.name === 'Shirt / T-shirt')!;

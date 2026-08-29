@@ -55,7 +55,7 @@
 ## Browser/Electron verification
 
 - Local bootstrap screen rendered with no browser console error after favicon correction.
-- Electron packaging completed with the SQLite native dependency rebuilt for Electron 33.
+- Electron packaging completed with the SQLite native dependency rebuilt for Electron 44.
 
 ## Generated assets
 

@@ -11,7 +11,7 @@ try {
   const { store } = await import('./kernel/store.js');
   closeStore = () => store.close();
   const {
-    bookLaundryOrder, importLaundryPrices, laundryCatalogue, listLaundryImportJobs, quoteLaundryOrder,
+    bookLaundryOrder, importLaundryCatalogue, importLaundryPrices, laundryCatalogue, listLaundryImportJobs, quoteLaundryOrder,
     saveLaundryCategory, saveLaundryChargeRule, saveLaundryDiscountRule, saveLaundryGarment, saveLaundryPrice,
     saveLaundryService, saveLaundryTaxRule, seedLaundryDefaults,
   } = await import('./modules/laundry/domain.js');
@@ -68,6 +68,19 @@ try {
   const jobs = listLaundryImportJobs(tenant, 'prices');
   assert.equal(jobs[0]?.skippedRows, 1, 'import history retains actionable rejection counts');
   assert.equal(jobs[0]?.errors[0]?.row, 3, 'import history retains worksheet row references');
+  const importedCatalogue = importLaundryCatalogue(tenant, actor, {
+    categories: [{ id: 'owner-category-1', name: 'Imported premium', color: '#123456' }],
+    services: [{ id: 'owner-service-1', name: 'Imported care', description: 'Owner supplied care', units: ['Piece'] }],
+    garments: [{ id: 'owner-garment-1', name: 'Imported coat', code: 'IMPORTED-COAT', category: 'Imported premium', unit: 'Piece', hsn: '9997', gstRate: 5, photo: '/ui/app/garments/lndry-folded-blazer-v1.png' }],
+    prices: [{ id: 'owner-price-1', garment: 'Imported coat', service: 'Imported care', rate: 275 }],
+    taxRules: [{ id: 'owner-tax-1', name: 'Imported GST', rate: 5 }],
+  });
+  assert.equal(importedCatalogue.created >= 5, true, 'owner catalogue import creates the complete scoped master set');
+  assert.equal(laundryCatalogue(tenant).prices.some((price: any) => price.garmentName === 'Imported coat' && price.serviceName === 'Imported care' && price.rate === 275), true, 'owner catalogue import resolves name references into active price rules');
+  assert.equal(listLaundryImportJobs(tenant, 'catalogue')[0]?.status, 'Completed', 'owner catalogue import creates a durable completed import job');
+  const beforeFailedImport = laundryCatalogue(tenant).garments.length;
+  assert.throws(() => importLaundryCatalogue(tenant, actor, { garments: [{ name: 'Should roll back', category: 'Missing category', unit: 'Piece' }] }), /not found/, 'invalid owner catalogue references are rejected');
+  assert.equal(laundryCatalogue(tenant).garments.length, beforeFailedImport, 'failed catalogue import restores the pre-import branch snapshot');
   assert.equal(laundryCatalogue(tenant).serviceUnits.includes('Kilogram'), true, 'all required service units are exposed to the owner desk');
   assert.equal(mensWear.id.length > 0, true, 'default catalogue remains readable after owner configuration commands');
 

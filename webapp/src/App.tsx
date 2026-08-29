@@ -15,6 +15,7 @@ import LaundryCatalogue from "@/pages/laundry/LaundryCatalogue";
 import LaundryExpenses from "@/pages/laundry/LaundryExpenses";
 import LaundryReports from "@/pages/laundry/LaundryReports";
 import LaundryImport from "@/pages/laundry/LaundryImport";
+import LaundryCatalogueImport from "@/pages/laundry/LaundryCatalogueImport";
 import LaundryDispatch from "@/pages/laundry/LaundryDispatch";
 import LaundrySettings from "@/pages/laundry/LaundrySettings";
 import LaundryCustomers from "@/pages/laundry/LaundryCustomers";
@@ -23,6 +24,12 @@ import LaundryPrintCentre from "@/pages/laundry/LaundryPrintCentre";
 import LaundrySettlements from "@/pages/laundry/LaundrySettlements";
 import LaundryReportDetail from "@/pages/laundry/LaundryReportDetail";
 import LaundryStatistics from "@/pages/laundry/LaundryStatistics";
+import LaundryGarmentTracking from "@/pages/laundry/LaundryGarmentTracking";
+import LaundryCashClosing from "@/pages/laundry/LaundryCashClosing";
+import LaundryProductionQueue from "@/pages/laundry/LaundryProductionQueue";
+import LaundryQualityClaims from "@/pages/laundry/LaundryQualityClaims";
+import LaundryCorrections from "@/pages/laundry/LaundryCorrections";
+import LaundryRoutes from "@/pages/laundry/LaundryRoutes";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { canUseUi, type UiPermission } from "@/components/laundry/LaundryShell";
 import { useQuery } from "@tanstack/react-query";
@@ -41,6 +48,12 @@ export function App() {
         <Route path="packages" element={<PermissionGate permission="packages.read"><LaundryPackages /></PermissionGate>} />
         <Route path="new-order" element={<PermissionGate permission="orders.create"><LaundryBooking /></PermissionGate>} />
         <Route path="orders" element={<PermissionGate permission="orders.read"><LaundryOrders /></PermissionGate>} />
+        <Route path="garment-tracking" element={<PermissionGate permission="garments.read"><LaundryGarmentTracking /></PermissionGate>} />
+        <Route path="cash-closing" element={<PermissionGate permission="cash.read"><LaundryCashClosing /></PermissionGate>} />
+        <Route path="production-queue" element={<PermissionGate permission="production.read"><LaundryProductionQueue /></PermissionGate>} />
+        <Route path="quality-claims" element={<PermissionGate permission="quality.read"><LaundryQualityClaims /></PermissionGate>} />
+        <Route path="corrections" element={<PermissionGate permission="quality.read"><LaundryCorrections /></PermissionGate>} />
+        <Route path="routes" element={<PermissionGate permission="routes.read"><LaundryRoutes /></PermissionGate>} />
         <Route path="print-centre" element={<PermissionGate permission="orders.read"><LaundryPrintCentre /></PermissionGate>} />
         <Route path="settlements" element={<PermissionGate permission="orders.read"><LaundrySettlements /></PermissionGate>} />
         <Route path="dispatch" element={<PermissionGate permission="orders.read"><LaundryDispatch /></PermissionGate>} />
@@ -50,6 +63,7 @@ export function App() {
         <Route path="statistics" element={<PermissionGate permission="orders.read"><LaundryStatistics /></PermissionGate>} />
         <Route path="import-prices" element={<PermissionGate permission="settings.manage"><LaundryImport mode="prices" /></PermissionGate>} />
         <Route path="import-customers" element={<PermissionGate permission="settings.manage"><LaundryImport mode="customers" /></PermissionGate>} />
+        <Route path="import-catalogue" element={<PermissionGate permission="settings.manage"><LaundryCatalogueImport /></PermissionGate>} />
         <Route path="catalogue" element={<PermissionGate permission="catalogue.read"><LaundryCatalogue /></PermissionGate>} />
         <Route path="settings" element={<PermissionGate permission="settings.manage"><LaundrySettings /></PermissionGate>} />
       </Route>

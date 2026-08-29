@@ -1,0 +1,87 @@
+name: Epic Laundry CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            webapp/package-lock.json
+            desktop/package-lock.json
+      - name: Install server dependencies
+        run: npm ci
+        working-directory: server
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: server
+      - name: Generate server SBOM
+        run: npm sbom --omit=dev --sbom-format=cyclonedx > server-sbom.json
+        working-directory: server
+      - name: Upload server SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: epic-laundry-server-sbom
+          path: server/server-sbom.json
+      - name: Typecheck server
+        run: npm run typecheck
+        working-directory: server
+      - name: Run server boundary tests
+        run: npm run test:diagnostics && npm run test:backup-crypto && npm run test:money && npm run test:reconciliation && npm run test:customer && npm run test:garment-traceability && npm run test:cash-shift && npm run test:routes && npm run test:hardware && npm run test:financial-normalization && npm run test:recovery-drill && npm run test:e2e
+        working-directory: server
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: webapp
+      - name: Audit web production dependencies
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: webapp
+      - name: Generate web SBOM
+        run: npm sbom --omit=dev --sbom-format=cyclonedx > webapp-sbom.json
+        working-directory: webapp
+      - name: Upload web SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: epic-laundry-web-sbom
+          path: webapp/webapp-sbom.json
+      - name: Build web application
+        run: npm run build
+        working-directory: webapp
+      - name: Run static accessibility audit
+        run: npm run audit:a11y
+        working-directory: webapp
+      - name: Install desktop dependencies
+        run: npm ci
+        working-directory: desktop
+      - name: Audit desktop production dependencies
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: desktop
+      - name: Generate desktop SBOM
+        run: npm sbom --omit=dev --sbom-format=cyclonedx > desktop-sbom.json
+        working-directory: desktop
+      - name: Upload desktop SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: epic-laundry-desktop-sbom
+          path: desktop/desktop-sbom.json
+      - name: Verify desktop workspace isolation
+        run: npm run test:workspace
+        working-directory: desktop
+      - name: Verify desktop restore safety policy
+        run: npm run test:recovery-policy
+        working-directory: desktop
+      - name: Verify release signature implementation
+        run: npm run test:release-signature
+        working-directory: desktop

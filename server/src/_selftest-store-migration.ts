@@ -33,6 +33,10 @@ try {
   assert.equal(migrated?.data.name, 'Migrated customer', 'legacy SQLite data is available in the default store after migration');
   const hiddenFromOtherStore = store.withStoreScope('MIGRATE', 'STORE-B', () => store.getRow('MIGRATE', 'ROW-1'));
   assert.equal(hiddenFromOtherStore, undefined, 'migrated rows are isolated from other stores');
+  const migrations = store.migrationStatus();
+  assert.deepEqual(migrations.map((migration) => migration.version), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], 'schema migrations are recorded in monotonically ordered versions');
+  assert.equal(migrations.at(-1)?.name, 'normalized-customer-order-projections', 'normalized customer/order projection migration is checksum-tracked');
+  assert.ok(migrations.every((migration) => /^[a-f0-9]{64}$/.test(migration.checksum)), 'each migration has a SHA-256 checksum');
   console.log('PASS  legacy SQLite store-scope migration self-test complete');
 } finally {
   closeStore?.();
