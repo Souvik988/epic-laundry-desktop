@@ -52,6 +52,12 @@ try {
   assert.equal(accept.json().order.state, 'Accepted', 'accepted action updates the local operational projection');
   const acceptedRetry = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/accept', headers: { ...headers, 'idempotency-key': 'marketplace-api-accept-001' }, payload: {} });
   assert.equal(acceptedRetry.json().event.eventId, accept.json().event.eventId, 'operator command retry returns the original durable outbound event');
+  const settlement = await app.inject({ method: 'POST', url: '/api/marketplace/settlements', headers: { ...headers, 'idempotency-key': 'marketplace-api-settlement-001' }, payload: { externalOrderId: 'EXT-API-001', policyVersion: 'policy-api-2026-01', customerCollectedPaise: 10000, vendorServiceGrossPaise: 9000, commissionBps: 1000 } });
+  assert.equal(settlement.statusCode, 201, 'operator can persist a reconciled marketplace settlement');
+  const statement = await app.inject({ method: 'GET', url: '/api/marketplace/settlements/EXT-API-001/statement/print', headers });
+  assert.equal(statement.statusCode, 200, 'operator can print the canonical marketplace settlement statement');
+  assert.match(statement.body, /Marketplace Settlement Statement/, 'settlement statement renderer is exposed through the operator API');
+  assert.match(statement.body, /not a customer tax invoice/, 'settlement statement clearly disclaims tax-invoice/provider-success semantics');
   const noAuth = await app.inject({ method: 'GET', url: '/api/marketplace/orders' });
   assert.equal(noAuth.statusCode, 401, 'online order queue is never exposed without an authenticated local session');
   await app.close();
