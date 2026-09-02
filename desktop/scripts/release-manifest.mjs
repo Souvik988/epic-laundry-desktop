@@ -33,7 +33,8 @@ try {
     entries.push({ path: path.relative(distDir, file).replaceAll(path.sep, '/'), sha256: await sha256(file) })
   }
   const packageJson = JSON.parse(await fs.readFile(path.join(desktopDir, 'package.json'), 'utf8'))
-  const manifest = { schemaVersion: 1, product: packageJson.build?.productName || packageJson.productName || packageJson.name, version: packageJson.version, generatedAt: new Date().toISOString(), files: entries }
+  const releaseChannel = String(process.env.EPIC_RELEASE_CHANNEL || 'internal-unsigned').trim() || 'internal-unsigned'
+  const manifest = { schemaVersion: 1, product: packageJson.build?.productName || packageJson.productName || packageJson.name, version: packageJson.version, releaseChannel, signingRequired: releaseChannel === 'production', generatedAt: new Date().toISOString(), files: entries }
   await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
   console.log(`Wrote ${path.relative(desktopDir, manifestPath)} with ${entries.length} checksum entries`)
 } catch (error) {

@@ -15,7 +15,8 @@ async function sha256(file) {
 
 try {
   const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
-  if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.files)) throw new Error('unsupported or malformed release manifest')
+  if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.files) || !['internal-unsigned', 'production'].includes(manifest.releaseChannel) || typeof manifest.signingRequired !== 'boolean') throw new Error('unsupported or malformed release manifest')
+  if (manifest.releaseChannel === 'production' && manifest.signingRequired !== true) throw new Error('production manifest must require signing')
   let failures = 0
   for (const entry of manifest.files) {
     if (!entry || typeof entry.path !== 'string' || typeof entry.sha256 !== 'string') { failures += 1; continue }
