@@ -74,7 +74,7 @@ import { applyEntityNormalization, previewEntityNormalization, ENTITY_NORMALIZAT
 import { searchLaundryWorkspace } from './modules/laundry/search.js';
 import { createLaundryReportExportJob, getLaundryReportExportJob, readLaundryReportExport } from './modules/laundry/report-exports.js';
 import { createSavedReportView, deleteSavedReportView, listSavedReportViews } from './modules/laundry/report-views.js';
-import { actOnMarketplaceOrder, linkMarketplaceOrderToLocalOrder, marketplaceSyncStatus, replayHeldMarketplaceOrder } from './modules/marketplace/edge-sync.js';
+import { actOnMarketplaceOrder, linkMarketplaceOrderToLocalOrder, marketplaceSyncStatus, materializeMarketplaceOrder, replayHeldMarketplaceOrder } from './modules/marketplace/edge-sync.js';
 import { marketplaceAvailability, saveMarketplaceAvailability } from './modules/marketplace/availability.js';
 import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMarketplaceReassessment, marketplaceOrderTruth, recordMarketplaceIntake } from './modules/marketplace/order-truth.js';
 import { createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
@@ -667,6 +667,10 @@ export function registerApi(app: FastifyInstance) {
   app.post('/api/marketplace/orders/:externalOrderId/link', { schema: { params: marketplaceOrderParams, body: marketplaceLinkBody }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => idempotent(req, `marketplace.order-link:${req.params.externalOrderId}`, () => linkMarketplaceOrderToLocalOrder(req.auth!.tenant, req.auth!.actor, req.params.externalOrderId, req.body.localOrderId))); }
     catch (error: any) { return rep.code(error.message === 'EXTERNAL_ORDER_ALREADY_LINKED' ? 409 : 400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/marketplace/orders/:externalOrderId/materialize', { schema: { params: marketplaceOrderParams, body: { type: 'object', additionalProperties: false } }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.order-materialize:${req.params.externalOrderId}`, () => materializeMarketplaceOrder(req.auth!.tenant, req.auth!.actor, req.params.externalOrderId)))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.post('/api/marketplace/inbox/:id/replay', { schema: { params: laundryIdParams, body: { type: 'object', additionalProperties: false } }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => idempotent(req, `marketplace.inbox-replay:${req.params.id}`, () => replayHeldMarketplaceOrder(req.auth!.tenant, req.auth!.actor, req.params.id))); }

@@ -5,6 +5,7 @@ import { audit } from '../../kernel/audit.js';
 import { createMarketplaceOrderRequest } from './order-truth.js';
 import { recordProviderPaymentEvent } from './provider-events.js';
 import { recordMarketplaceSettlement } from './settlements.js';
+import { bookLaundryOrder } from '../laundry/domain.js';
 
 export const SYNC_VERSION = 1;
 export const MARKETPLACE_ORDER_STATES = ['AwaitingAcceptance', 'Accepted', 'Rejected', 'Expired', 'PickupScheduled', 'IntakeRequired', 'CustomerApprovalRequired', 'Processing', 'Ready', 'DeliveryScheduled', 'Completed', 'Cancelled'] as const;
@@ -136,6 +137,83 @@ function applyMarketplaceOrderEnvelope(tenant: string, actor: string, envelope: 
   audit(tenant, actor, 'marketplace:order-projected', { entity: 'marketplace_order_projection', row_id: saved.id, after: { externalOrderId, sourceVersion: saved.sourceVersion, state: saved.state } });
   return { duplicate: false, held: false, order: saved };
 }
+
+function marketplaceProjection(tenant: string, externalOrderId: string) {
+  return (['MARKETPLACE', 'CUSTOMER_APP', 'WEBSITE', 'VENDOR_APP', 'ADMIN'] as MarketplaceChannel[])
+    .map((channel) => store.getMarketplaceOrderProjection(tenant, channel, externalOrderId))
+    .find(Boolean);
+}
+
+function recordArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))) : [];
+}
+
+/**
+ * Converts a complete accepted marketplace request into the existing local booking
+ * aggregate. This is deliberately conservative: an estimate without item/service IDs
+ * stays in the online queue until physical intake supplies those facts.
+ */
+export function materializeMarketplaceOrder(tenant: string, actor: string, externalOrderId: string) {
+  return store.transaction(() => {
+    const projection = marketplaceProjection(tenant, externalOrderId);
+    if (!projection) throw new Error('marketplace order not found');
+    if (projection.localOrderId) {
+      const existing = store.getRow(tenant, projection.localOrderId);
+      if (!existing || existing.entity !== 'laundry_order') throw new Error('MARKETPLACE_LOCAL_ORDER_LINK_INVALID');
+      return { created: false, reason: 'already_materialized' as const, projection, localOrder: existing };
+    }
+    if (!['Accepted', 'IntakeRequired'].includes(projection.state)) throw new Error('ONLINE_ORDER_NOT_ACCEPTED');
+
+    const request = projection.request || {};
+    const intake = store.rowsOf(tenant, 'marketplace_intake_assessment')
+      .find((candidate) => candidate.data.externalOrderId === externalOrderId && candidate.status === 'Active');
+    const intakeData = intake?.data.actual && typeof intake.data.actual === 'object' ? intake.data.actual as Record<string, unknown> : undefined;
+    const items = recordArray(intakeData?.items || request.items);
+    if (!items.length) return { created: false, reason: 'intake_required' as const, projection };
+
+    const reassessments = store.rowsOf(tenant, 'marketplace_reassessment')
+      .filter((candidate) => candidate.data.externalOrderId === externalOrderId && candidate.status === 'Active');
+    const latestReassessment = reassessments.at(-1);
+    if (latestReassessment?.data.state === 'PendingApproval') throw new Error('CUSTOMER_APPROVAL_REQUIRED');
+    if (latestReassessment?.data.state === 'Rejected') throw new Error('MARKETPLACE_REASSESSMENT_REJECTED');
+
+    const mappedItems = items.map((item) => ({ garment: String(item.garmentId || item.garment || '').trim(), service: String(item.serviceId || item.service || '').trim(), qty: Number(item.qty) }));
+    if (mappedItems.some((item) => !item.garment || !item.service || !Number.isFinite(item.qty) || item.qty <= 0)) throw new Error('MARKETPLACE_INTAKE_ITEMS_INVALID');
+
+    const customer = projection.customer || {};
+    const pickup = projection.pickup || {};
+    const addressValue = pickup.address ?? pickup.pickupAddress ?? customer.address;
+    const address = typeof addressValue === 'string' ? addressValue : addressValue && typeof addressValue === 'object' ? JSON.stringify(addressValue) : undefined;
+    const expectedDeliveryDate = String(request.expectedDeliveryDate || request.deliveryDate || pickup.expectedDeliveryDate || pickup.deliveryDate || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) throw new Error('MARKETPLACE_DELIVERY_DATE_REQUIRED');
+    const localResult = bookLaundryOrder(tenant, actor, {
+      customer: { name: String(customer.name || '').trim(), phone: String(customer.phone || customer.mobile || '').trim(), email: String(customer.email || '').trim(), address },
+      items: mappedItems,
+      expectedDeliveryDate,
+      orderDate: String(request.orderDate || '').trim() || undefined,
+      fulfillmentMode: String(request.fulfillmentMode || pickup.fulfillmentMode || 'Home Delivery') as 'Pickup Order' | 'Home Delivery' | 'Express Delivery',
+      paymentMode: 'Pay Later',
+      serviceZone: String(pickup.serviceZone || request.serviceZone || '').trim(),
+      notes: [projection.preferences, projection.notes, String(request.notes || '')].filter(Boolean).join('\n'),
+      placeOfSupply: String(request.placeOfSupply || '').trim() || undefined,
+    });
+    const local = store.getRow(tenant, localResult.order.id);
+    if (!local) throw new Error('MARKETPLACE_LOCAL_ORDER_CREATE_FAILED');
+    local.data.source = 'Marketplace';
+    local.data.marketplace_channel = projection.channel;
+    local.data.external_order_id = externalOrderId;
+    local.data.marketplace_payment_state = projection.paymentState;
+    local.data.marketplace_request_snapshot = structuredClone(request);
+    local.updated_at = new Date().toISOString();
+    store.updateRow(local);
+    const now = new Date().toISOString();
+    const savedProjection = store.saveMarketplaceOrderProjection({ ...projection, state: 'IntakeRequired', localOrderId: local.id, syncState: 'Current', updatedAt: now });
+    store.saveOrderExternalLink({ id: store.getOrderExternalLink(tenant, projection.channel, externalOrderId)?.id || `oel_${randomUUID()}`, tenant, storeId: store.currentStore(tenant), localOrderId: local.id, channel: projection.channel, externalOrderId, externalStoreId: projection.storeId, externalVendorId: projection.vendorId, sourceRevision: projection.sourceVersion, createdAt: now, lastSyncedAt: now });
+    audit(tenant, actor, 'marketplace:order-materialized', { entity: 'laundry_order', row_id: local.id, after: { externalOrderId, projectionId: projection.id, state: savedProjection.state, paymentState: projection.paymentState } });
+    return { created: true, reason: 'materialized' as const, projection: savedProjection, localOrder: local };
+  });
+}
+
 export function receiveMarketplaceOrder(tenant: string, actor: string, envelope: MarketplaceEnvelope) {
   const device = requireRegisteredDevice(tenant); assertTarget(tenant, envelope, device);
   const input = validateMarketplaceOrderEnvelope(envelope); const now = new Date().toISOString();
@@ -183,8 +261,10 @@ export function actOnMarketplaceOrder(tenant: string, actor: string, externalOrd
   if (input.action === 'reject' && !reason) throw new Error('rejection reason is required');
   const now = new Date().toISOString(); const next: MarketplaceOrderProjectionRecord = { ...order, state: input.action === 'accept' ? 'Accepted' : 'Rejected', notes: input.action === 'reject' ? `${order.notes}${order.notes ? '\n' : ''}Rejected: ${reason}` : order.notes, updatedAt: now, syncState: 'PendingOutbound' };
   const saved = store.saveMarketplaceOrderProjection(next);
-  const event = queueMarketplaceEvent(tenant, actor, { aggregateType: 'marketplace_order', aggregateId: order.externalOrderId, aggregateVersion: order.sourceVersion, eventType: input.action === 'accept' ? 'marketplace.order.accepted.v1' : 'marketplace.order.rejected.v1', payload: { externalOrderId: order.externalOrderId, localProjectionId: order.id, reason: reason || undefined, actedAt: now, vendorId: device.vendorId } });
-  return { order: saved, event };
+  const event = queueMarketplaceEvent(tenant, actor, { aggregateType: 'marketplace_order', aggregateId: order.externalOrderId, aggregateVersion: order.sourceVersion + 1, eventType: input.action === 'accept' ? 'marketplace.order.accepted.v1' : 'marketplace.order.rejected.v1', payload: { externalOrderId: order.externalOrderId, localProjectionId: order.id, state: next.state, reason: reason || undefined, actedAt: now, vendorId: device.vendorId } });
+  const materialized = input.action === 'accept' ? materializeMarketplaceOrder(tenant, actor, order.externalOrderId) : undefined;
+  const finalOrder = materialized?.reason === 'intake_required' ? store.saveMarketplaceOrderProjection({ ...saved, state: 'IntakeRequired', updatedAt: new Date().toISOString() }) : materialized?.projection || saved;
+  return { order: finalOrder, event, materialized };
 }
 export function linkMarketplaceOrderToLocalOrder(tenant: string, actor: string, externalOrderId: string, localOrderId: string) {
   const order = ['MARKETPLACE', 'CUSTOMER_APP', 'WEBSITE', 'VENDOR_APP', 'ADMIN'].map((channel) => store.getMarketplaceOrderProjection(tenant, channel as MarketplaceChannel, externalOrderId)).find(Boolean);
@@ -200,6 +280,8 @@ export function linkMarketplaceOrderToLocalOrder(tenant: string, actor: string, 
   return { projection: saved, localOrder: local, externalLink };
 }
 export function marketplaceSyncStatus(tenant: string) {
-  const device = store.getMarketplaceDevice(tenant); const outbox = store.syncOutboxCounts(tenant); const inbox = store.syncInboxCounts(tenant); const checkpoint = device ? store.getSyncCheckpoint(tenant, device.id, 'marketplace.events') : undefined;
+  const device = store.getMarketplaceDevice(tenant); const outbox = store.syncOutboxCounts(tenant); const inbox = store.syncInboxCounts(tenant);
+  const checkpoints = device ? ['marketplace.events', 'marketplace.orders', 'marketplace.payments', 'marketplace.settlements'].map((stream) => store.getSyncCheckpoint(tenant, device.id, stream)).filter(Boolean) : [];
+  const checkpoint = checkpoints.sort((a, b) => String(b!.updatedAt).localeCompare(String(a!.updatedAt)))[0];
   return { version: SYNC_VERSION, configured: Boolean(device?.status === 'Registered'), device: device ? { id: device.id, vendorId: device.vendorId, storeId: device.storeId, station: device.station, status: device.status, lastSeenAt: device.lastSeenAt, rotationRequired: device.rotationRequired } : null, checkpoint: checkpoint ? { remoteStream: checkpoint.remoteStream, cursor: checkpoint.cursor, lastPullAt: checkpoint.lastPullAt, lastPushAt: checkpoint.lastPushAt, lastHeartbeatAt: checkpoint.lastHeartbeatAt, serverTimeOffsetMs: checkpoint.serverTimeOffsetMs, error: checkpoint.error, updatedAt: checkpoint.updatedAt } : null, outbox: { pending: outbox.Pending, inFlight: outbox.InFlight, retry: outbox.Retry, acknowledged: outbox.Acknowledged, deadLetter: outbox.DeadLetter }, inbox: { received: inbox.Received, held: inbox.Held, failed: inbox.Failed }, onlineOrders: store.marketplaceOrderProjectionCount(tenant) };
 }
