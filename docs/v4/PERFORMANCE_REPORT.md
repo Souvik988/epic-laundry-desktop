@@ -10,13 +10,14 @@ Command: `npm run benchmark:v4-performance` with `V4_BENCH_CUSTOMERS=100000` and
 | --- | ---: |
 | Customers seeded | 100,000 |
 | Orders seeded | 500,000 |
-| Seed time through the production write path | 114 s |
-| First order page (50 rows) | 478.33 ms |
-| Deep order page 10,000 (50 rows) | 1,236.60 ms |
-| Customer-name search | 502.23 ms |
+| Seed time through the production write path | 112 s |
+| First order page (50 rows) | 330.15 ms |
+| Deep order page 10,000 (50 rows) | 823.49 ms |
+| Keyset page at the same deep position (50 rows) | 329.79 ms |
+| Customer-name search | 500.73 ms |
 | Search result count | 5 |
 
-The page query plan selected `entity_rows_laundry_order_page_sort`, added by migration 30. Migration 31 indexes the order-to-customer JSON reference. Migrations 32–33 add a maintained FTS5 search projection and indexed FTS row mapping; the focused order-search self-test verifies new writes, customer/order updates, and restart persistence. The benchmark validates bounded SQL pagination and deterministic deep paging. Customer-name search is materially improved, while deep offset paging and the production-path FTS write cost remain optimization targets.
+The page query plan selected `entity_rows_laundry_order_page_sort`, added by migration 30. Migration 31 indexes the order-to-customer JSON reference. Migrations 32–33 add a maintained FTS5 search projection and indexed FTS row mapping; the focused order-search self-test verifies new writes, customer/order updates, cursor behavior, and restart persistence. The optional keyset cursor reduced the measured deep-page read from 823.49 ms to 329.79 ms at the same position. Customer-name search is materially improved; the production-path FTS write cost and broader UI/report workloads remain optimization targets.
 
 ## Scope limits
 

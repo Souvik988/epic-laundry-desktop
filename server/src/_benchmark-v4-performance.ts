@@ -49,13 +49,15 @@ try {
 
   const firstPage = timed('order page 1', () => store.listLaundryOrderPage(TENANT, { page: 1, pageSize: 50 }));
   const deepPage = timed('order page 10000', () => store.listLaundryOrderPage(TENANT, { page: 10_000, pageSize: 50 }));
+  const cursorAfterOrder51 = Buffer.from(JSON.stringify({ createdAt: new Date(now + (CUSTOMER_COUNT + 50) * 1000).toISOString(), id: 'order-51' }), 'utf8').toString('base64url');
+  const cursorPage = timed('keyset page near order 10000', () => store.listLaundryOrderPage(TENANT, { cursor: cursorAfterOrder51, pageSize: 50 }));
   const searchCustomerNumber = Math.min(CUSTOMER_COUNT, 99_999);
   const searchedPage = timed('customer search', () => store.listLaundryOrderPage(TENANT, { search: `Benchmark Customer ${searchCustomerNumber}`, page: 1, pageSize: 50 }));
   const plan = store.explainRowsOfReportDate(TENANT, 'laundry_order', 'created_at');
   console.log(JSON.stringify({
     counts: { customers: CUSTOMER_COUNT, orders: ORDER_COUNT },
-    checks: { firstPageItems: firstPage.result.rows.length, deepPageItems: deepPage.result.rows.length, searchTotal: searchedPage.result.total },
-    timingsMs: { firstPage: firstPage.elapsedMs, deepPage: deepPage.elapsedMs, customerSearch: searchedPage.elapsedMs },
+    checks: { firstPageItems: firstPage.result.rows.length, deepPageItems: deepPage.result.rows.length, cursorPageItems: cursorPage.result.rows.length, searchTotal: searchedPage.result.total },
+    timingsMs: { firstPage: firstPage.elapsedMs, deepPage: deepPage.elapsedMs, cursorPage: cursorPage.elapsedMs, customerSearch: searchedPage.elapsedMs },
     queryPlan: plan,
   }, null, 2));
 } finally {

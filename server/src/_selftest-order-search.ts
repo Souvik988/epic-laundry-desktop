@@ -20,6 +20,10 @@ try {
     store!.insertRow(row('order-1', 'laundry_order', { name: 'ORD-SEARCH-1', customer: 'customer-1', invoice: '', state: 'Booked', order_date: '2026-09-03', expected_delivery_date: '2026-09-04', fulfillment_mode: 'Pickup Order', items: [], grand_total: 100 }));
     assert.equal(store!.listLaundryOrderPage(tenant, { search: 'Searchable Customer' }).total, 1, 'new order is searchable by customer identity');
     assert.equal(store!.listLaundryOrderPage(tenant, { search: '!!!' }).total, 0, 'punctuation-only search cannot accidentally return every order');
+    const cursorPage = store!.listLaundryOrderPage(tenant, { page: 1, pageSize: 1 });
+    assert.ok(cursorPage.nextCursor, 'full page exposes a stable keyset cursor');
+    assert.equal(store!.listLaundryOrderPage(tenant, { cursor: cursorPage.nextCursor, pageSize: 1 }).rows.length, 0, 'keyset cursor starts after the last row without duplication');
+    assert.throws(() => store!.listLaundryOrderPage(tenant, { cursor: 'invalid' }), /INVALID_PAGE_CURSOR/, 'invalid cursors fail closed');
 
     store!.updateRow(row('customer-1', 'party', { name: 'Renamed Customer', phone: '9000000001', is_customer: true }, 2));
     assert.equal(store!.listLaundryOrderPage(tenant, { search: 'Searchable Customer' }).total, 0, 'customer rename removes the old search projection');

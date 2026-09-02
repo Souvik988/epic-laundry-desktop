@@ -712,7 +712,7 @@ export function registerApi(app: FastifyInstance) {
     try { return inStore(req, () => idempotent(req, `laundry.order-hold-cancel:${req.params.id}`, () => cancelLaundryOrderHold(req.auth!.tenant, req.auth!.actor, req.params.id, req.auth!.roles?.includes('owner') === true))); }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
-  app.get('/api/laundry/orders', { preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => (req.query?.page !== undefined || req.query?.pageSize !== undefined ? listLaundryOrderPage(req.auth!.tenant, req.query as any) : listLaundryOrders(req.auth!.tenant, req.query as any))));
+  app.get('/api/laundry/orders', { preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => (req.query?.page !== undefined || req.query?.pageSize !== undefined || req.query?.cursor !== undefined ? listLaundryOrderPage(req.auth!.tenant, req.query as any) : listLaundryOrders(req.auth!.tenant, req.query as any))));
   app.get('/api/laundry/orders/:id', { schema: { params: laundryIdParams }, preHandler: [guard, allow('orders.read')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => getLaundryOrder(req.auth!.tenant, req.params.id)); }
     catch (error: any) { return rep.code(404).send({ error: error.message }); }

@@ -362,6 +362,19 @@ function ftsSearchQuery(value: string) {
   const tokens = value.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
   return tokens.map((token) => `"${token.replaceAll('"', '""')}"*`).join(' AND ');
 }
+type LaundryOrderPageCursor = { createdAt: string; id: string };
+function decodeLaundryOrderPageCursor(value: string): LaundryOrderPageCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Record<string, unknown>;
+    if (typeof parsed.createdAt !== 'string' || typeof parsed.id !== 'string' || !parsed.createdAt || !parsed.id) throw new Error('invalid cursor fields');
+    return { createdAt: parsed.createdAt.slice(0, 80), id: parsed.id.slice(0, 160) };
+  } catch {
+    throw new Error('INVALID_PAGE_CURSOR');
+  }
+}
+function encodeLaundryOrderPageCursor(row: EntityRow): string {
+  return Buffer.from(JSON.stringify({ createdAt: row.created_at, id: row.id }), 'utf8').toString('base64url');
+}
 
 /** Local SQLite persistence; legacy JSON imports once but is never authoritative again. */
 export class Store {
@@ -923,7 +936,7 @@ export class Store {
   }
   getRow(tenant: string, id: string) { return this.readRows('SELECT * FROM entity_rows WHERE tenant = ? AND store_id = ? AND id = ?', [tenant, this.currentStore(tenant), id])[0]; }
   rowsOf(tenant: string, entity: string) { return this.readRows('SELECT * FROM entity_rows WHERE tenant = ? AND store_id = ? AND entity = ? ORDER BY created_at', [tenant, this.currentStore(tenant), entity]); }
-  listLaundryOrderPage(tenant: string, input: { search?: string; state?: string; from?: string; to?: string; page?: number; pageSize?: number } = {}) {
+  listLaundryOrderPage(tenant: string, input: { search?: string; state?: string; from?: string; to?: string; page?: number; pageSize?: number; cursor?: string } = {}) {
     const pageSize = Math.max(1, Math.min(200, Math.floor(Number(input.pageSize) || 50)));
     const page = Math.max(1, Math.floor(Number(input.page) || 1));
     const offset = (page - 1) * pageSize;
@@ -940,10 +953,13 @@ export class Store {
         params.push(ftsQuery, tenant, this.currentStore(tenant));
       } else clauses.push('1 = 0');
     }
+    const countParams = [...params];
+    const cursor = input.cursor ? decodeLaundryOrderPageCursor(String(input.cursor)) : undefined;
+    if (cursor) { clauses.push('(r.created_at < ? OR (r.created_at = ? AND r.id < ?))'); params.push(cursor.createdAt, cursor.createdAt, cursor.id); }
     const where = clauses.join(' AND ');
-    const total = Number((this.db.prepare(`SELECT COUNT(*) AS count FROM entity_rows r WHERE ${where}`).get(...params) as { count: number }).count);
+    const total = Number((this.db.prepare(`SELECT COUNT(*) AS count FROM entity_rows r WHERE ${where}`).get(...countParams, ...(cursor ? [cursor.createdAt, cursor.createdAt, cursor.id] : []) ) as { count: number }).count);
     const rows = this.readRows(`SELECT r.* FROM entity_rows r WHERE ${where} ORDER BY r.created_at DESC, r.id DESC LIMIT ? OFFSET ?`, [...params, pageSize, offset]);
-    return { rows, total, page, pageSize };
+    return { rows, total, page, pageSize, nextCursor: rows.length === pageSize ? encodeLaundryOrderPageCursor(rows[rows.length - 1]) : undefined, hasMore: rows.length === pageSize };
   }
   private reportDateExpression(field: 'order_date' | 'posting_date' | 'expense_date' | 'created_at') { return field === 'created_at' ? 'created_at' : `json_extract(data_json, '$.${field}')`; }
   rowsOfReportDate(tenant: string, entity: string, field: 'order_date' | 'posting_date' | 'expense_date' | 'created_at', from?: string, to?: string) {
