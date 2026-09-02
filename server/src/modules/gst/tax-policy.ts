@@ -56,4 +56,17 @@ export function supplierTaxProfile(tenant: string) { const row = store.rowsOf(te
 export function saveSupplierTaxProfile(tenant: string, actor: string, input: Partial<SupplierTaxProfileRecord>) {
   const normalized = normalizeProfile(input); const existing = store.rowsOf(tenant, 'supplier_tax_profile')[0]; const timestamp = new Date().toISOString(); const record: SupplierTaxProfileRecord = { id: existing?.id || `supplier_tax_profile_${store.currentStore(tenant)}`, ...normalized, updatedAt: timestamp, updatedBy: actor }; const row: EntityRow = existing ? { ...existing, status: 'Active', version: existing.version + 1, updated_at: timestamp, data: record } : { id: record.id, entity: 'supplier_tax_profile', tenant, status: 'Active', version: 1, created_by: actor, created_at: timestamp, updated_at: timestamp, data: record }; store.updateRow(row); audit(tenant, actor, 'gst:supplier-tax-profile-saved', { entity: row.entity, row_id: row.id, after: { legalName: record.legalName, stateCode: record.stateCode, registrationStatus: record.registrationStatus, gstinPresent: Boolean(record.gstin), einvoiceState: record.einvoiceState } }); return row;
 }
-export function taxReadiness(tenant: string) { const profile = supplierTaxProfile(tenant); if (!profile) return { ready: false, code: 'TAX_PROFILE_INCOMPLETE', profile: null }; return { ready: true, code: null, profile: { ...profile, gstin: profile.gstin ? '[configured]' : undefined } }; }
+export function taxReadiness(tenant: string) {
+  const profile = supplierTaxProfile(tenant);
+  if (!profile) return { ready: false, code: 'TAX_PROFILE_INCOMPLETE', profile: null };
+  const profileView = { ...profile, gstin: profile.gstin ? '[configured]' : undefined };
+  if (profile.registrationStatus === 'Registered') {
+    const asOf = new Date().toISOString().slice(0, 10);
+    const hasEffectiveApprovedRule = store.rowsOf(tenant, 'tax_policy_rule').some((row) => {
+      const rule = fromRow(row);
+      return rule.approvalStatus === 'Approved' && rule.validFrom <= asOf && (!rule.validTo || rule.validTo >= asOf);
+    });
+    if (!hasEffectiveApprovedRule) return { ready: false, code: 'TAX_CLASSIFICATION_MISSING', profile: profileView };
+  }
+  return { ready: true, code: null, profile: profileView };
+}

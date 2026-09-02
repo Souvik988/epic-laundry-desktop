@@ -24,6 +24,12 @@ try {
   assert.equal((profile.data as any).registrationStatus, 'Registered');
   assert.equal(store.withStoreScope(tenant, 'STORE-TAX', () => supplierTaxProfile(tenant))?.gstin, '29ABCDE1234F1Z5');
   assert.equal(store.withStoreScope(tenant, 'STORE-TAX', () => taxReadiness(tenant)).ready, true, 'complete persisted supplier profile passes readiness');
+  const noRuleTenant = 'TAX-POLICY-NO-RULE';
+  store.withStoreScope(noRuleTenant, 'STORE-TAX', () => saveSupplierTaxProfile(noRuleTenant, 'owner', { legalName: 'Unregistered Laundry', address: 'Kolkata', stateCode: '19', pincode: '700001', registrationStatus: 'Unregistered', einvoiceState: 'NotApplicable' }));
+  assert.equal(store.withStoreScope(noRuleTenant, 'STORE-TAX', () => taxReadiness(noRuleTenant)).ready, true, 'unregistered supplier can operate without GST classification rules');
+  const registeredNoRuleTenant = 'TAX-POLICY-REGISTERED-NO-RULE';
+  store.withStoreScope(registeredNoRuleTenant, 'STORE-TAX', () => saveSupplierTaxProfile(registeredNoRuleTenant, 'owner', { legalName: 'Registered Laundry', address: 'Kolkata', stateCode: '19', pincode: '700001', registrationStatus: 'Registered', gstin: '19ABCDE1234F1Z5', invoiceSeries: 'NR', einvoiceState: 'NotConfigured' }));
+  assert.equal(store.withStoreScope(registeredNoRuleTenant, 'STORE-TAX', () => taxReadiness(registeredNoRuleTenant)).code, 'TAX_CLASSIFICATION_MISSING', 'registered supplier without an effective approved rule is not tax-ready');
   assert.throws(() => store.withStoreScope(tenant, 'STORE-TAX', () => saveSupplierTaxProfile(tenant, 'owner', { legalName: 'Incomplete', address: 'Kolkata', stateCode: '29', pincode: '700001', registrationStatus: 'Registered', gstin: '' })), /TAX_PROFILE_INCOMPLETE/);
   console.log('PASS effective-dated tax policy approval, overlap protection, supplier profile, and readiness self-test complete');
 } finally {
