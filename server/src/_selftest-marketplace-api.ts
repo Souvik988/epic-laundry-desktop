@@ -29,6 +29,11 @@ try {
   const status = await app.inject({ method: 'GET', url: '/api/marketplace/sync/status', headers });
   assert.equal(status.statusCode, 200, 'owner can inspect marketplace sync diagnostics');
   assert.equal(status.json().configured, true, 'diagnostics identify a registered marketplace device');
+  const availabilityBefore = await app.inject({ method: 'GET', url: '/api/marketplace/availability', headers });
+  assert.equal(availabilityBefore.json().state, 'NotConfigured', 'marketplace availability starts explicitly unconfigured');
+  const availabilitySave = await app.inject({ method: 'PUT', url: '/api/marketplace/availability', headers: { ...headers, 'idempotency-key': 'marketplace-api-availability-001' }, payload: { state: 'Open', serviceZones: ['Central'], capacity: { orders: 40, bags: 80, kg: 250, stops: 30 }, capabilities: { pickup: true, delivery: true, express: false }, staleAfterMinutes: 45, leadTimeMinutes: 120 } });
+  assert.equal(availabilitySave.statusCode, 200, 'owner can persist an explicit marketplace availability projection');
+  assert.equal(availabilitySave.json().state, 'Open', 'availability preserves the configured store state');
   const orders = await app.inject({ method: 'GET', url: '/api/marketplace/orders?state=AwaitingAcceptance&limit=20', headers });
   assert.equal(orders.statusCode, 200, 'authenticated operator can load the online order queue');
   assert.equal(orders.json().items.length, 1, 'queue returns the store-scoped external order once');

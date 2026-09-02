@@ -74,6 +74,7 @@ import { searchLaundryWorkspace } from './modules/laundry/search.js';
 import { createLaundryReportExportJob, getLaundryReportExportJob, readLaundryReportExport } from './modules/laundry/report-exports.js';
 import { createSavedReportView, deleteSavedReportView, listSavedReportViews } from './modules/laundry/report-views.js';
 import { actOnMarketplaceOrder, marketplaceSyncStatus, replayHeldMarketplaceOrder } from './modules/marketplace/edge-sync.js';
+import { marketplaceAvailability, saveMarketplaceAvailability } from './modules/marketplace/availability.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -522,6 +523,11 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/marketplace/sync/status', { preHandler: [guard, allow('settings.manage')] }, async (req: any) =>
     inStore(req, () => marketplaceSyncStatus(req.auth!.tenant)),
   );
+  app.get('/api/marketplace/availability', { preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => marketplaceAvailability(req.auth!.tenant)));
+  app.put('/api/marketplace/availability', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, 'marketplace.availability-update', () => saveMarketplaceAvailability(req.auth!.tenant, req.auth!.actor, req.body || {}))); }
+    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
   app.get('/api/marketplace/orders', { schema: { querystring: marketplaceOrderQuery }, preHandler: [guard, allow('orders.read')] }, async (req: any) =>
     inStore(req, () => store.listMarketplaceOrderProjectionPage(req.auth!.tenant, req.query as any)),
   );
