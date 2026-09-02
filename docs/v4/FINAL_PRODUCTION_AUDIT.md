@@ -1,6 +1,6 @@
 # Final production audit
 
-This is an updated V4 audit record, not production certification. Current local source checkpoint: `7bc9542` on local `main` (2026-09-03).
+This is an updated V4 audit record, not production certification. Current local source checkpoint: `ff1204a` on local `main` (2026-09-03).
 
 - Critical: a real marketplace cloud contract/transport, provider-backed payment/settlement integration, and production tax/legal policy are not available in this environment.
 - High: legacy debit-note export integration and provider-backed settlement-batch/payout documents remain outside the canonical evidence model; production signing/update trust is absent; six closely related generic/shared garment mappings need owner review; production-path FTS write cost and broader UI/report performance coverage remain; richer completed-order work-card linking and live cloud route assignment remain.
