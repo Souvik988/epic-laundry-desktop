@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
 import {
   listDefs, getDef, createRow, getRow, listRows, submitRow, cancelRow,
 } from './kernel/entity-service.js';
@@ -189,6 +190,15 @@ const marketplacePaymentWebhookBody = {
     payload: { type: 'object', additionalProperties: true },
   }, additionalProperties: false,
 } as const;
+const captureWebhookRawBody = async (req: any, _rep: any, payload: AsyncIterable<Buffer | string>) => {
+  const captured: Buffer[] = [];
+  for await (const chunk of payload) captured.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  const body = Buffer.concat(captured);
+  req.rawBody = body.toString('utf8');
+  const replay = Readable.from([body]);
+  (replay as any).receivedEncodedLength = body.length;
+  return replay;
+};
 
 function sessionCookie(token: string, maxAgeSeconds: number) {
   return `epic_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAgeSeconds}`;
@@ -572,19 +582,19 @@ export function registerApi(app: FastifyInstance) {
   // Provider callbacks are machine-to-machine and intentionally bypass the human
   // session guard. They remain disabled until the operator explicitly configures
   // the secret and the single local tenant/store that owns this edge adapter.
-  // Fastify has already parsed JSON by this point, so this contract signs the
-  // canonical JSON serialization of the validated body. A provider-specific raw
-  // body adapter must be added before enabling a provider that signs raw bytes.
-  app.post('/api/marketplace/payments/webhook/:provider', { schema: { params: marketplacePaymentWebhookParams, body: marketplacePaymentWebhookBody } }, async (req: any, rep: any) => {
+  // Capture exact bytes before Fastify parses the validated JSON. This keeps the
+  // signature boundary compatible with providers that sign raw request bodies.
+  app.post('/api/marketplace/payments/webhook/:provider', { bodyLimit: 256 * 1024, preParsing: captureWebhookRawBody, schema: { params: marketplacePaymentWebhookParams, body: marketplacePaymentWebhookBody } }, async (req: any, rep: any) => {
     const secret = String(process.env.EPIC_MARKETPLACE_PROVIDER_SECRET || '');
     const tenant = String(process.env.EPIC_MARKETPLACE_WEBHOOK_TENANT || '');
     const storeId = String(process.env.EPIC_MARKETPLACE_WEBHOOK_STORE_ID || '');
     if (!secret || !tenant || !storeId) return rep.code(503).send({ code: 'PAYMENT_PROVIDER_UNVERIFIED', error: 'provider webhook is not configured for a tenant and store' });
     try {
       const body = req.body as Omit<ProviderPaymentEvent, 'provider'>;
-      const rawBody = JSON.stringify(body);
+      const rawBody = String(req.rawBody || '');
+      if (!rawBody) throw new Error('PAYMENT_WEBHOOK_RAW_BODY_MISSING');
       verifyProviderWebhook({ secret, signature: String(req.headers['x-provider-signature'] || ''), timestamp: String(req.headers['x-provider-timestamp'] || ''), rawBody });
-      const event: ProviderPaymentEvent = { ...body, provider: String(req.params.provider) };
+      const event: ProviderPaymentEvent = { ...body, provider: String(req.params.provider), rawBody, signatureVerifiedAt: new Date().toISOString() };
       const row = store.withStoreScope(tenant, storeId, () => recordProviderPaymentEvent(tenant, `provider-webhook:${event.provider}`, event));
       return rep.code(202).send({ accepted: true, eventId: event.eventId, rowId: row.id, idempotent: true });
     } catch (error: any) {
