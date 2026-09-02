@@ -21,6 +21,6 @@ The page query plan selected `entity_rows_laundry_order_page_sort`, added by mig
 
 ## Scope limits
 
-This fixture uses minimal synthetic entity rows. It does not prove startup time, tag scanning, garment traceability, reports, PDF/printing, React virtualization, cloud catch-up, or hardware performance. Those remain `NEEDS_VERIFICATION`; no cloud-scale or hardware performance claim is made.
+This fixture uses minimal synthetic entity rows. It does not prove startup time, tag scanning, garment traceability, reports, PDF/printing, React virtualization, cloud catch-up, or hardware performance. Global search now avoids full collection materialization, but its end-to-end multi-entity timing is not included in this fixture. Those remain `NEEDS_VERIFICATION`; no cloud-scale or hardware performance claim is made.
 
 V4 performance status: **NEEDS_VERIFICATION**.

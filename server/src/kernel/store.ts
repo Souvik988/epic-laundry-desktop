@@ -594,6 +594,7 @@ export class Store {
       { version: 31, name: 'laundry-order-customer-reference', sql: "CREATE INDEX IF NOT EXISTS entity_rows_laundry_order_customer ON entity_rows(tenant, store_id, entity, json_extract(data_json, '$.customer'));" },
       { version: 32, name: 'laundry-order-search-fts', sql: "CREATE VIRTUAL TABLE IF NOT EXISTS laundry_order_search_fts USING fts5(tenant UNINDEXED, store_id UNINDEXED, order_id UNINDEXED, order_ref, order_name, invoice, customer_name, customer_phone, tokenize='unicode61 remove_diacritics 2'); INSERT INTO laundry_order_search_fts(tenant, store_id, order_id, order_ref, order_name, invoice, customer_name, customer_phone) SELECT r.tenant, r.store_id, r.id, r.id, COALESCE(json_extract(r.data_json, '$.name'), ''), COALESCE(json_extract(r.data_json, '$.invoice'), ''), COALESCE(json_extract(p.data_json, '$.name'), ''), COALESCE(json_extract(p.data_json, '$.phone'), '') FROM entity_rows r LEFT JOIN entity_rows p ON p.tenant = r.tenant AND p.store_id = r.store_id AND p.entity = 'party' AND p.id = json_extract(r.data_json, '$.customer') WHERE r.entity = 'laundry_order';" },
       { version: 33, name: 'laundry-order-search-row-map', sql: "CREATE TABLE IF NOT EXISTS laundry_order_search_map (fts_rowid INTEGER PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, UNIQUE(tenant, store_id, order_id)); INSERT OR IGNORE INTO laundry_order_search_map(fts_rowid, tenant, store_id, order_id) SELECT rowid, tenant, store_id, order_id FROM laundry_order_search_fts; CREATE INDEX IF NOT EXISTS laundry_order_search_map_scope_order ON laundry_order_search_map(tenant, store_id, order_id);" },
+      { version: 34, name: 'laundry-order-search-invoice-names', sql: "DELETE FROM laundry_order_search_map; DELETE FROM laundry_order_search_fts; INSERT INTO laundry_order_search_fts(tenant, store_id, order_id, order_ref, order_name, invoice, customer_name, customer_phone) SELECT r.tenant, r.store_id, r.id, r.id, COALESCE(json_extract(r.data_json, '$.name'), ''), trim(COALESCE(json_extract(r.data_json, '$.invoice'), '') || ' ' || COALESCE(json_extract(i.data_json, '$.name'), '')), COALESCE(json_extract(p.data_json, '$.name'), ''), COALESCE(json_extract(p.data_json, '$.phone'), '') FROM entity_rows r LEFT JOIN entity_rows p ON p.tenant = r.tenant AND p.store_id = r.store_id AND p.entity = 'party' AND p.id = json_extract(r.data_json, '$.customer') LEFT JOIN entity_rows i ON i.tenant = r.tenant AND i.store_id = r.store_id AND i.entity = 'sales_invoice' AND i.id = json_extract(r.data_json, '$.invoice') WHERE r.entity = 'laundry_order'; INSERT OR IGNORE INTO laundry_order_search_map(fts_rowid, tenant, store_id, order_id) SELECT rowid, tenant, store_id, order_id FROM laundry_order_search_fts;" },
     ];
     this.db.transaction(() => {
       for (const migration of migrations) {
@@ -906,8 +907,11 @@ export class Store {
     const customerId = String(data.customer || '');
     const customer = customerId ? this.db.prepare("SELECT data_json FROM entity_rows WHERE tenant = ? AND store_id = ? AND id = ? AND entity = 'party'").get(tenant, storeId, customerId) as { data_json: string } | undefined : undefined;
     const customerData = customer ? decode<Record<string, unknown>>(customer.data_json) : {};
+    const invoiceId = String(data.invoice || '');
+    const invoice = invoiceId ? this.db.prepare("SELECT data_json FROM entity_rows WHERE tenant = ? AND store_id = ? AND id = ? AND entity = 'sales_invoice'").get(tenant, storeId, invoiceId) as { data_json: string } | undefined : undefined;
+    const invoiceData = invoice ? decode<Record<string, unknown>>(invoice.data_json) : {};
     const inserted = this.db.prepare('INSERT INTO laundry_order_search_fts(tenant, store_id, order_id, order_ref, order_name, invoice, customer_name, customer_phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
-      tenant, storeId, order.id, order.id, String(data.name || ''), String(data.invoice || ''), String(customerData.name || ''), String(customerData.phone || ''),
+      tenant, storeId, order.id, order.id, String(data.name || ''), `${String(data.invoice || '')} ${String(invoiceData.name || '')}`.trim(), String(customerData.name || ''), String(customerData.phone || ''),
     );
     this.db.prepare('INSERT INTO laundry_order_search_map(fts_rowid, tenant, store_id, order_id) VALUES (?, ?, ?, ?)').run(Number(inserted.lastInsertRowid), tenant, storeId, order.id);
   }
@@ -960,6 +964,23 @@ export class Store {
     const total = Number((this.db.prepare(`SELECT COUNT(*) AS count FROM entity_rows r WHERE ${where}`).get(...countParams, ...(cursor ? [cursor.createdAt, cursor.createdAt, cursor.id] : []) ) as { count: number }).count);
     const rows = this.readRows(`SELECT r.* FROM entity_rows r WHERE ${where} ORDER BY r.created_at DESC, r.id DESC LIMIT ? OFFSET ?`, [...params, pageSize, offset]);
     return { rows, total, page, pageSize, nextCursor: rows.length === pageSize ? encodeLaundryOrderPageCursor(rows[rows.length - 1]) : undefined, hasMore: rows.length === pageSize };
+  }
+  searchLaundryCustomerRows(tenant: string, search: string, limit = 30) {
+    const value = String(search || '').trim().toLowerCase();
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const pattern = `%${value}%`;
+    return this.readRows("SELECT * FROM entity_rows WHERE tenant = ? AND store_id = ? AND entity = 'party' AND json_extract(data_json, '$.is_customer') = 1 AND (lower(COALESCE(json_extract(data_json, '$.name'), '')) LIKE ? OR lower(COALESCE(json_extract(data_json, '$.phone'), '')) LIKE ? OR lower(COALESCE(json_extract(data_json, '$.email'), '')) LIKE ?) ORDER BY created_at DESC, id DESC LIMIT ?", [tenant, this.currentStore(tenant), pattern, pattern, pattern, boundedLimit]);
+  }
+  searchLaundryOrderRowsForWorkspace(tenant: string, search: string, limit = 30) {
+    const value = String(search || '').trim().toLowerCase();
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const ftsQuery = ftsSearchQuery(value);
+    if (!ftsQuery) return [];
+    const storeId = this.currentStore(tenant);
+    const rows = this.readRows("SELECT r.* FROM entity_rows r WHERE r.tenant = ? AND r.store_id = ? AND r.entity = 'laundry_order' AND r.id IN (SELECT order_id FROM laundry_order_search_fts WHERE laundry_order_search_fts MATCH ? AND tenant = ? AND store_id = ?) ORDER BY r.created_at DESC, r.id DESC LIMIT ?", [tenant, storeId, ftsQuery, tenant, storeId, boundedLimit]);
+    const invoiceRows = this.readRows("SELECT r.* FROM entity_rows r JOIN entity_rows i ON i.tenant = r.tenant AND i.store_id = r.store_id AND i.entity = 'sales_invoice' AND i.id = json_extract(r.data_json, '$.invoice') WHERE r.tenant = ? AND r.store_id = ? AND r.entity = 'laundry_order' AND lower(COALESCE(json_extract(i.data_json, '$.name'), '')) LIKE ? ORDER BY r.created_at DESC, r.id DESC LIMIT ?", [tenant, storeId, `%${value}%`, boundedLimit]);
+    const byId = new Map([...rows, ...invoiceRows].map((row) => [row.id, row]));
+    return [...byId.values()].sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id)).slice(0, boundedLimit);
   }
   private reportDateExpression(field: 'order_date' | 'posting_date' | 'expense_date' | 'created_at') { return field === 'created_at' ? 'created_at' : `json_extract(data_json, '$.${field}')`; }
   rowsOfReportDate(tenant: string, entity: string, field: 'order_date' | 'posting_date' | 'expense_date' | 'created_at', from?: string, to?: string) {
@@ -1328,6 +1349,13 @@ export class Store {
     const search = String(filters.search || '').trim().toLowerCase();
     return rows.map((row) => this.garmentUnitFromRow(row)).filter((unit) => (!filters.orderId || unit.orderId === filters.orderId) && (!filters.state || unit.state === filters.state) && (!search || `${unit.id} ${unit.code} ${unit.activeTagCode} ${unit.orderId}`.toLowerCase().includes(search)));
   }
+  searchGarmentUnitsForWorkspace(tenant: string, search: string, limit = 30) {
+    const value = String(search || '').trim().toLowerCase();
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const pattern = `%${value}%`;
+    const rows = this.db.prepare('SELECT * FROM garment_units WHERE tenant = ? AND store_id = ? AND (lower(id) LIKE ? OR lower(code) LIKE ? OR lower(active_tag_code) LIKE ? OR lower(order_id) LIKE ?) ORDER BY updated_at DESC, created_at DESC LIMIT ?').all(tenant, this.currentStore(tenant), pattern, pattern, pattern, pattern, boundedLimit) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.garmentUnitFromRow(row));
+  }
   updateGarmentUnit(unit: GarmentUnitRecord) {
     this.db.prepare('UPDATE garment_units SET state=@state, location=@location, active_tag_code=@activeTagCode, condition=@condition, updated_at=@updatedAt WHERE tenant=@tenant AND store_id=@storeId AND id=@id').run(unit);
     return unit;
@@ -1405,6 +1433,13 @@ export class Store {
   listLaundryContainers(tenant: string, orderId?: string) {
     const rows = this.db.prepare('SELECT * FROM laundry_containers WHERE tenant = ? AND store_id = ? ORDER BY order_id, sequence').all(tenant, this.currentStore(tenant)) as Array<Record<string, unknown>>;
     return rows.map((row) => this.laundryContainerFromRow(row)).filter((row) => !orderId || row.orderId === orderId);
+  }
+  searchLaundryContainersForWorkspace(tenant: string, search: string, limit = 30) {
+    const value = String(search || '').trim().toLowerCase();
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const pattern = `%${value}%`;
+    const rows = this.db.prepare('SELECT * FROM laundry_containers WHERE tenant = ? AND store_id = ? AND (lower(id) LIKE ? OR lower(tag_code) LIKE ? OR lower(order_id) LIKE ?) ORDER BY updated_at DESC, created_at DESC LIMIT ?').all(tenant, this.currentStore(tenant), pattern, pattern, pattern, boundedLimit) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.laundryContainerFromRow(row));
   }
   updateLaundryContainer(container: LaundryContainerRecord) {
     this.db.prepare('UPDATE laundry_containers SET state=@state,location=@location,condition=@condition,updated_at=@updatedAt,delivered_at=@deliveredAt WHERE tenant=@tenant AND store_id=@storeId AND id=@id').run({ ...container, deliveredAt: container.deliveredAt || null });
