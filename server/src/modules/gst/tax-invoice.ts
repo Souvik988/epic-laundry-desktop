@@ -1,5 +1,5 @@
-// GST tax-invoice print renderer (HTML). Includes the IRN/QR zone placeholder required for
-// e-invoiced documents (docs/05-india-compliance/01-gst.md §print). Phase 0 = static HTML;
+// GST tax-invoice print renderer (HTML). A signed IRP QR is rendered only when provider
+// evidence is present; the not-yet-generated state never resembles a valid QR artifact.
 // later a visual template designer (platform-core §7) replaces this.
 import type { GstBreakdown } from './engine.js';
 
@@ -38,7 +38,7 @@ export function renderTaxInvoice(
     <div class="box" style="display:flex;gap:16px;align-items:center">
       ${einvoice?.signedQr
         ? `<img class="qr" src="${einvoice.signedQr}" alt="IRN QR"/>`
-        : `<div class="qr">IRN / QR<br>(post to GSP)</div>`}
+        : `<div class="qr" aria-label="Signed e-invoice QR is not available">No signed IRP QR<br>(not generated)</div>`}
       <div>IRN: <b>${einvoice?.irn || '(not generated)'}</b>${einvoice?.status ? ` [${einvoice.status}]` : ''}<br>
       Place of Supply: ${gst.posState} &nbsp;|&nbsp; ${gst.intraState ? 'Intra-state (CGST+SGST)' : 'Inter-state (IGST)'}<br>
       Total tax: ₹${gst.totalTax.toFixed(2)}</div>
