@@ -37,6 +37,11 @@ try {
   const orders = await app.inject({ method: 'GET', url: '/api/marketplace/orders?state=AwaitingAcceptance&limit=20', headers });
   assert.equal(orders.statusCode, 200, 'authenticated operator can load the online order queue');
   assert.equal(orders.json().items.length, 1, 'queue returns the store-scoped external order once');
+  const customerStatusBefore = await app.inject({ method: 'GET', url: '/api/marketplace/orders/EXT-API-001/customer-status', headers });
+  assert.equal(customerStatusBefore.statusCode, 200, 'operator can inspect the evidence-backed customer status projection');
+  assert.equal(customerStatusBefore.json().status, 'AwaitingAcceptance', 'customer status starts from the real marketplace request state');
+  const statusMapping = await app.inject({ method: 'GET', url: '/api/marketplace/customer-status-mapping', headers });
+  assert.equal(statusMapping.statusCode, 200, 'operator can inspect the configured customer status mapping');
   store.withStoreScope(tenant, storeId, () => store.insertRow({ id: 'LOCAL-API-ORDER-001', entity: 'laundry_order', tenant, status: 'Booked', version: 1, created_by: 'marketplace-owner', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), data: { name: 'LOCAL-API-ORDER-001', state: 'Booked' } }));
   const link = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/link', headers: { ...headers, 'idempotency-key': 'marketplace-api-link-001' }, payload: { localOrderId: 'LOCAL-API-ORDER-001' } });
   assert.equal(link.statusCode, 200, 'operator can explicitly bind an online projection to a physical local order');
@@ -45,6 +50,8 @@ try {
   assert.equal(intake.statusCode, 200, 'operator can record physical intake separately from the online request');
   const reassessment = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/reassessment', headers: { ...headers, 'idempotency-key': 'marketplace-api-reassessment-001' }, payload: { previousAmountPaise: 10000, revisedAmountPaise: 12500, tolerancePaise: 100, reason: 'actual pieces differ from estimate' } });
   assert.equal(reassessment.json().data.state, 'PendingApproval', 'material reassessment is blocked pending customer approval');
+  const customerStatusApproval = await app.inject({ method: 'GET', url: '/api/marketplace/orders/EXT-API-001/customer-status', headers });
+  assert.equal(customerStatusApproval.json().status, 'ApprovalRequired', 'customer status exposes an actual reassessment approval requirement');
   const approval = await app.inject({ method: 'POST', url: `/api/marketplace/reassessments/${reassessment.json().id}/approve`, headers: { ...headers, 'idempotency-key': 'marketplace-api-approval-001' }, payload: {} });
   assert.equal(approval.json().data.state, 'Approved', 'approval route records the final reassessment decision');
   const accept = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/accept', headers: { ...headers, 'idempotency-key': 'marketplace-api-accept-001' }, payload: {} });
