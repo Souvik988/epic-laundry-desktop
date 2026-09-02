@@ -1,6 +1,21 @@
 // GSTR-1 projection + e-way bill helper (docs/05-india-compliance/01-gst.md).
 import type { GstBreakdown } from './engine.js';
 
+/** Translate the immutable paise-based snapshot into the legacy export shape.
+ * The division is presentation-only; the canonical snapshot remains the
+ * accounting authority and is carried alongside the export record by callers.
+ */
+export function gstFromCanonicalSnapshot(snapshot: any): GstBreakdown {
+  const tax = snapshot?.tax;
+  if (!tax?.totals || !Array.isArray(tax.lines)) throw new Error('TAX_RECONCILIATION_FAILED');
+  return {
+    intraState: Boolean(tax.intraState), supplierState: String(tax.supplierStateCode), posState: String(tax.placeOfSupplyStateCode),
+    lines: tax.lines.map((line: any) => ({ hsn: String(line.classificationCode), qty: Number(line.quantityMilli) / 1000, unit: String(line.unit), taxable: Number(line.taxablePaise) / 100, gstRate: Number(line.taxRateBps) / 100, cgst: Number(line.cgstPaise) / 100, sgst: Number(line.sgstPaise) / 100, igst: Number(line.igstPaise) / 100, total: Number(line.totalPaise) / 100 })),
+    totalTaxable: Number(tax.totals.taxablePaise) / 100, totalCgst: Number(tax.totals.cgstPaise) / 100, totalSgst: Number(tax.totals.sgstPaise) / 100, totalIgst: Number(tax.totals.igstPaise) / 100,
+    totalTax: (Number(tax.totals.cgstPaise) + Number(tax.totals.sgstPaise) + Number(tax.totals.igstPaise)) / 100, grandTotal: Number(tax.totals.totalPaise) / 100,
+  };
+}
+
 const EWAY_THRESHOLD = 50000; // ₹50,000 consignment value triggers e-way
 
 export function needsEway(gst: GstBreakdown): boolean {

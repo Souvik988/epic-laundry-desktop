@@ -13,6 +13,7 @@ try {
   const { approveTaxPolicyRule, createTaxPolicyRule, saveSupplierTaxProfile } = await import('./modules/gst/tax-policy.js');
   const { ensureCanonicalInvoiceForLegacy } = await import('./modules/gst/legacy-invoice-bridge.js'); const { bookLaundryOrder, cancelLaundryOrder, laundryCatalogue, seedLaundryDefaults } = await import('./modules/laundry/domain.js');
   const { generateIrnForInvoice } = await import('./modules/gst/irn-service.js');
+  const { gstFromCanonicalSnapshot } = await import('./modules/gst/gstr1.js');
   const tax = calculateCanonicalTax({ supplierStateCode: '29', placeOfSupplyStateCode: '29', lines: [{ id: 'svc', description: 'Laundry service', classificationType: 'SAC', classificationCode: '9997', quantityMilli: 1_000, unit: 'piece', unitPricePaise: 10_000, taxRateBps: 1800 }] });
   const input = { sourceOrderId: 'ORDER-INV-1', issuedAt: '2026-04-01T08:00:00.000Z', supplier: { legalName: 'Epic Laundry Private Limited', tradeName: 'Epic Laundry', address: 'Kolkata, West Bengal', stateCode: '29', pincode: '700001', registrationStatus: 'Registered' as const, gstin: '29ABCDE1234F1Z5', invoiceSeries: 'EL' }, customer: { name: 'Riya & Sen', stateCode: '29' }, tax, paidPaise: 5_000 };
   const row = store.withStoreScope('INV', 'STORE-DEFAULT', () => createCanonicalInvoiceSnapshot('INV', 'owner', input));
@@ -34,6 +35,8 @@ try {
   assert.equal(bridged.snapshot.data.sourceOrderId, 'BRIDGE-ORDER-1', 'legacy invoice bridge preserves the explicit operational order identity');
   assert.equal(bridged.snapshot.data.invoiceNumber, 'BR/FY2026-27/00001', 'configured booking bridge issues the configured financial-year invoice series');
   assert.equal(bridged.snapshot.data.tax.totals.totalPaise, 11_800, 'legacy invoice bridge preserves fixed-scale tax totals');
+  const exportShape = gstFromCanonicalSnapshot(bridged.snapshot.data);
+  assert.equal(Math.round(exportShape.grandTotal * 100), bridged.snapshot.data.tax.totals.totalPaise, 'GSTR export projection preserves canonical paise total');
   assert.equal(bridged.invoice.data.canonical_snapshot_id, bridged.snapshot.id, 'legacy invoice records its immutable canonical snapshot link');
   assert.match(String(bridged.booked.order.invoiceNumber), /^BR\/FY2026-27\/00002$/, 'configured laundry booking exposes the canonical financial-year invoice number');
   const bookedRow = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => store.getRow('BRIDGE', bridged.booked.order.id)!);
