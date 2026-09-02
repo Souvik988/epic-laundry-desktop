@@ -81,6 +81,7 @@ import { createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.j
 import { marketplaceSettlement, recordMarketplaceCashCollection, recordMarketplaceSettlement } from './modules/marketplace/settlements.js';
 import { recordProviderPaymentEvent, verifyProviderWebhook, type ProviderPaymentEvent } from './modules/marketplace/provider-events.js';
 import { queueMarketplaceNotification, recordMarketplaceNotificationDelivery, type NotificationChannel, type NotificationState } from './modules/marketplace/notifications.js';
+import { renderCanonicalTaxInvoice } from './modules/gst/canonical-invoice-print.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -1054,6 +1055,12 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/gst/canonical-invoices/:sourceOrderId', { schema: { params: { type: 'object', required: ['sourceOrderId'], properties: { sourceOrderId: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false } }, preHandler: [guard, allow('orders.read')] }, async (req: any, rep: any) => {
     const row = inStore(req, () => store.rowsOf(req.auth!.tenant, 'canonical_invoice_snapshot').find((candidate) => candidate.data.sourceOrderId === req.params.sourceOrderId));
     return row || rep.code(404).send({ error: 'canonical invoice not found' });
+  });
+  app.get('/api/gst/canonical-invoices/:sourceOrderId/print', { schema: { params: { type: 'object', required: ['sourceOrderId'], properties: { sourceOrderId: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false } }, preHandler: [guard, allow('orders.read')] }, async (req: any, rep: any) => {
+    const row = inStore(req, () => store.rowsOf(req.auth!.tenant, 'canonical_invoice_snapshot').find((candidate) => candidate.data.sourceOrderId === req.params.sourceOrderId));
+    if (!row) return rep.code(404).send({ error: 'canonical invoice not found' });
+    rep.header('Content-Type', 'text/html; charset=utf-8');
+    return renderCanonicalTaxInvoice(row.data as any);
   });
   app.get('/api/gst/einvoice/:id', { preHandler: guard }, async (req: any, rep: any) => {
     const row = store.getRow(requestTenant(req), req.params.id);
