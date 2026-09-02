@@ -28,6 +28,8 @@
     "test:customer": "tsx src/_selftest-customer.ts",
     "test:package": "tsx src/_selftest-package.ts",
     "test:catalogue": "tsx src/_selftest-catalogue.ts",
+    "audit:garment-assets": "tsx src/_audit-garment-assets.ts",
+    "test:garment-assets": "tsx src/_selftest-garment-assets.ts",
     "test:payment": "tsx src/_selftest-payment.ts",
     "test:ops": "tsx src/_selftest18.ts",
     "test:restart": "npm run build && tsx src/_selftest-restart.ts",
