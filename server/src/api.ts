@@ -77,6 +77,7 @@ import { actOnMarketplaceOrder, marketplaceSyncStatus, replayHeldMarketplaceOrde
 import { marketplaceAvailability, saveMarketplaceAvailability } from './modules/marketplace/availability.js';
 import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMarketplaceReassessment, marketplaceOrderTruth, recordMarketplaceIntake } from './modules/marketplace/order-truth.js';
 import { createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
+import { marketplaceSettlement, recordMarketplaceSettlement } from './modules/marketplace/settlements.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -542,6 +543,11 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/marketplace/orders/:externalOrderId/truth', { schema: { params: marketplaceOrderParams }, preHandler: [guard, allow('orders.read')] }, async (req: any) =>
     inStore(req, () => marketplaceOrderTruth(req.auth!.tenant, req.params.externalOrderId)),
   );
+  app.post('/api/marketplace/settlements', { schema: { body: { type: 'object', required: ['externalOrderId', 'policyVersion', 'customerCollectedPaise', 'vendorServiceGrossPaise', 'commissionBps'], properties: { externalOrderId: { type: 'string', minLength: 1, maxLength: 160 }, policyVersion: { type: 'string', minLength: 1, maxLength: 80 }, customerCollectedPaise: { type: 'integer', minimum: 0 }, refundPaise: { type: 'integer', minimum: 0 }, vendorServiceGrossPaise: { type: 'integer', minimum: 0 }, vendorFundedDiscountPaise: { type: 'integer', minimum: 0 }, platformFundedPromotionPaise: { type: 'integer', minimum: 0 }, commissionBps: { type: 'integer', minimum: 0, maximum: 10000 }, paymentFeePaise: { type: 'integer', minimum: 0 }, withholdingPaise: { type: 'integer', minimum: 0 }, adjustmentsPaise: { type: 'integer' } }, additionalProperties: false } }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.settlement:${req.body.externalOrderId}:${req.body.policyVersion}`, () => recordMarketplaceSettlement(req.auth!.tenant, req.auth!.actor, req.body)))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/marketplace/settlements/:externalOrderId', { schema: { params: marketplaceOrderParams }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => inStore(req, () => marketplaceSettlement(req.auth!.tenant, req.params.externalOrderId) || rep.code(404).send({ error: 'marketplace settlement not found' })));
   app.post('/api/marketplace/orders/:externalOrderId/intake', { schema: { params: marketplaceOrderParams, body: marketplaceIntakeBody }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => idempotent(req, `marketplace.intake:${req.params.externalOrderId}`, () => recordMarketplaceIntake(req.auth!.tenant, req.auth!.actor, { externalOrderId: req.params.externalOrderId, actual: req.body.actual, reason: req.body.reason }))); }
     catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
