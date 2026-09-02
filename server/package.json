@@ -30,6 +30,8 @@
     "test:marketplace-notifications-api": "tsx src/_selftest-marketplace-notifications-api.ts",
     "test:marketplace-cash": "tsx src/_selftest-marketplace-cash.ts",
     "test:customer": "tsx src/_selftest-customer.ts",
+    "test:customer-privacy": "tsx src/_selftest-customer-privacy.ts",
+    "test:customer-privacy-api": "tsx src/_selftest-customer-privacy-api.ts",
     "test:package": "tsx src/_selftest-package.ts",
     "test:catalogue": "tsx src/_selftest-catalogue.ts",
     "audit:garment-assets": "tsx src/_audit-garment-assets.ts",

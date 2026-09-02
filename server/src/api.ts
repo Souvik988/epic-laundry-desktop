@@ -89,6 +89,7 @@ import { approveTaxPolicyRule, createTaxPolicyRule, listTaxPolicyRules, retireTa
 import { auditGarmentAssets } from './modules/laundry/garment-assets.js';
 import { ensureCanonicalInvoiceForLegacy } from './modules/gst/legacy-invoice-bridge.js';
 import { renderCanonicalReceipt } from './modules/gst/canonical-receipts.js';
+import { completeCustomerPrivacyRequest, createCustomerPrivacyRequest, exportCustomerPrivacyData, listCustomerPrivacyRequests } from './modules/laundry/customer-privacy.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -229,6 +230,15 @@ const marketplacePickupScheduleBody = {
 } as const;
 const marketplacePickupOutcomeBody = {
   type: 'object', required: ['state'], properties: { state: { type: 'string', enum: ['Collected', 'Failed', 'Cancelled'] }, reason: { type: 'string', maxLength: 500 } }, additionalProperties: false,
+} as const;
+const customerPrivacyRequestBody = {
+  type: 'object', required: ['type'], properties: {
+    type: { type: 'string', enum: ['Export', 'Correction', 'Erasure'] },
+    details: { type: 'object', additionalProperties: true },
+  }, additionalProperties: false,
+} as const;
+const customerPrivacyQuery = {
+  type: 'object', properties: { customerId: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false,
 } as const;
 const marketplacePaymentWebhookParams = {
   type: 'object', required: ['provider'],
@@ -568,6 +578,16 @@ export function registerApi(app: FastifyInstance) {
   app.patch('/api/laundry/customers/:id', { preHandler: [guard, allow('customers.edit')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => updateLaundryCustomer(req.auth!.tenant, req.auth!.actor, req.params.id, req.body as any)); }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
+  });
+  app.get('/api/laundry/customers/:id/privacy-export', { preHandler: [guard, allow('customers.read')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => exportCustomerPrivacyData(req.auth!.tenant, req.auth!.actor, req.params.id)); } catch (error: any) { return rep.code(404).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/laundry/privacy-requests', { schema: { querystring: customerPrivacyQuery }, preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listCustomerPrivacyRequests(req.auth!.tenant, String((req.query as any)?.customerId || ''))));
+  app.post('/api/laundry/customers/:id/privacy-requests', { schema: { params: laundryIdParams, body: customerPrivacyRequestBody }, preHandler: [guard, allow('customers.edit')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `privacy-request:${req.params.id}:${req.body?.type}`, () => createCustomerPrivacyRequest(req.auth!.tenant, req.auth!.actor, { customerId: req.params.id, type: req.body?.type, details: req.body?.details })))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/laundry/privacy-requests/:id/complete', { schema: { params: laundryIdParams, body: { type: 'object', properties: { legalHold: { type: 'boolean' }, outcome: { type: 'string', maxLength: 500 } }, additionalProperties: false } }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `privacy-request-complete:${req.params.id}`, () => completeCustomerPrivacyRequest(req.auth!.tenant, req.auth!.actor, req.params.id, req.body || {}))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/laundry/customers/:id/addresses', { preHandler: [guard, allow('customers.read')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => listLaundryCustomerAddresses(req.auth!.tenant, req.params.id)); } catch (error: any) { return rep.code(404).send({ error: error.message }); }
