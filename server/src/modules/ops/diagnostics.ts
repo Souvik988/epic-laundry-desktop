@@ -1,5 +1,6 @@
 import { store } from '../../kernel/store.js';
 import { hardwareCapabilities } from '../laundry/hardware.js';
+import { marketplaceSyncStatus } from '../marketplace/edge-sync.js';
 
 const VERSION = process.env.EPIC_APP_VERSION || '0.1.0';
 
@@ -15,6 +16,7 @@ export function buildDiagnostics(tenant: string, storeId: string) {
     health: { status: 'ok' },
     migrations: store.migrationStatus(),
     counts: store.diagnosticsFor(tenant, storeId),
+    marketplace: marketplaceSyncStatus(tenant),
     hardware: hardwareCapabilities().map(({ kind, adapter, status }) => ({ kind, adapter, status })),
     redaction: { customerData: 'excluded', credentials: 'excluded', sessionTokens: 'excluded', databasePath: 'excluded', financialAmounts: 'excluded' },
   };
