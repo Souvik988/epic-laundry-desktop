@@ -103,6 +103,7 @@ try {
   assert.equal(store.withStoreScope(tenant, storeId, () => store.getSyncCheckpoint(tenant, device.id, 'marketplace.orders')?.cursor), 'cursor-42', 'sync stream cursors are durable per store/device');
   const status = store.withStoreScope(tenant, storeId, () => marketplaceSyncStatus(tenant));
   assert.equal(status.configured, true, 'operator diagnostics distinguish configured marketplace sync');
+  assert.equal(status.inbox.conflicts, 0, 'replayed version conflicts leave no actionable conflict count');
   assert.equal(status.inbox.held, 0, 'replayed ordered events clear the actionable held count');
   assert.equal(store.withStoreScope(tenant, 'STORE-B', () => store.listMarketplaceOrderProjections(tenant).length), 0, 'a second store cannot query this store’s marketplace projections');
 

@@ -2,6 +2,8 @@
 
 Status: **PARTIAL / EPIC_EXTENSION — local edge implementation verified; real cloud transport remains external.**
 
+The operator status contract distinguishes retry/dead-letter delivery backlog from held version or target conflicts, so a store can identify lifecycle review work without inspecting raw logs.
+
 V4 has separate normalized `sync_outbox`, `sync_inbox`, and checkpoint structures. The legacy generic outbox cannot be reused because it transitions to published before durable remote receipt.
 
 - Delivery: at least once, with idempotent receivers.
