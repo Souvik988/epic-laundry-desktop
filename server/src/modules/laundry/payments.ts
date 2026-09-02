@@ -7,6 +7,8 @@ import { notify } from '../crm/engagement.js';
 import { laundryBusinessDate } from './dates.js';
 import { parseMoney, moneyNumber } from '../../kernel/money.js';
 import { cashShiftForTransaction } from './cash.js';
+import { createCanonicalReceiptSnapshot } from '../gst/canonical-receipts.js';
+import type { CanonicalInvoiceSnapshot } from '../gst/invoice-snapshot.js';
 
 export type LaundryPaymentMode = 'Cash' | 'UPI' | 'Card' | 'Bank';
 export type LaundryPaymentInput = { amount: number | string; mode: LaundryPaymentMode; register?: string; reference?: string; note?: string; providerStatus?: 'Manual' | 'Confirmed' };
@@ -34,6 +36,10 @@ function normalizedAmount(tenant: string, documentType: string, sourceEntity: st
 function invoiceAmount(tenant: string, invoice: EntityRow, order: EntityRow) { return round(normalizedAmount(tenant, 'invoice', invoice.entity, invoice.id, invoice.data.grand_total || order.data.grand_total, `invoice ${invoice.id} total`)); }
 function paymentAmount(tenant: string, payment: EntityRow, documentType = 'payment') { return round(normalizedAmount(tenant, documentType, payment.entity, payment.id, payment.data.amount, `${documentType} ${payment.id}`)); }
 function paidAmount(tenant: string, invoiceId: string) { return round(validPayments(tenant, invoiceId).reduce((sum, payment) => sum + paymentAmount(tenant, payment), 0)); }
+function canonicalInvoiceFor(tenant: string, invoice: EntityRow): CanonicalInvoiceSnapshot | undefined {
+  const linked = invoice.data.canonical_snapshot_id ? store.getRow(tenant, String(invoice.data.canonical_snapshot_id)) : undefined;
+  return linked?.entity === 'canonical_invoice_snapshot' ? linked.data as CanonicalInvoiceSnapshot : undefined;
+}
 
 function paymentStatus(total: number, paid: number) { return paid >= total && total > 0 ? 'Paid' : paid > 0 ? 'Part Paid' : 'Unpaid'; }
 
@@ -69,6 +75,8 @@ export function collectLaundryPayment(tenant: string, actor: string, orderId: st
     submitRow(tenant, actor, 'payment_entry', payment.id);
     store.appendFinancialEntry({ id: `money:${payment.id}:collection`, tenant, storeId: store.currentStore(tenant), kind: 'collection', sourceEntity: 'payment_entry', sourceId: payment.id, direction: 'IN', amountPaise: parseMoney(amount, 'payment amount'), currency: 'INR', occurredAt: payment.created_at, actor, metadata: { mode: input.mode, invoiceId: invoice.id, orderId: order.id } });
     store.appendFinancialDocument({ id: `doc:${payment.id}`, tenant, storeId: store.currentStore(tenant), documentType: 'payment', sourceEntity: 'payment_entry', sourceId: payment.id, amountPaise: parseMoney(amount, 'payment amount'), currency: 'INR', status: payment.status, occurredAt: payment.created_at, actor, metadata: { mode: input.mode, invoiceId: invoice.id, orderId: order.id } });
+    const canonicalInvoice = canonicalInvoiceFor(tenant, invoice);
+    if (canonicalInvoice) createCanonicalReceiptSnapshot(tenant, actor, { documentType: 'PaymentReceipt', sourcePaymentId: payment.id, issuedAt: payment.created_at, invoice: canonicalInvoice, amountPaise: parseMoney(amount, 'payment amount'), method: input.mode, reference });
     const paid = round(currentPaid + amount);
     syncOrderPaymentState(order, total, paid, payment.id);
     appendCustomerLedger(tenant, actor, { customer: String(order.data.customer), entryType: 'Payment Credit', credit: amount, referenceType: 'payment_entry', referenceId: payment.id, reason: remarks });
@@ -98,6 +106,8 @@ export function reverseLaundryPayment(tenant: string, actor: string, paymentId: 
     const amount = paymentAmount(tenant, payment);
     store.appendFinancialEntry({ id: `money:${payment.id}:refund`, tenant, storeId: store.currentStore(tenant), kind: 'refund', sourceEntity: 'payment_entry', sourceId: payment.id, direction: 'OUT', amountPaise: parseMoney(amount, 'refund amount'), currency: 'INR', occurredAt: cancelled.updated_at, actor, metadata: { invoiceId: invoice.id, orderId: order.id, reason: note } });
     store.appendFinancialDocument({ id: `doc:${payment.id}:refund`, tenant, storeId: store.currentStore(tenant), documentType: 'refund', sourceEntity: 'payment_entry', sourceId: payment.id, amountPaise: parseMoney(amount, 'refund amount'), currency: 'INR', status: 'Posted', occurredAt: cancelled.updated_at, actor, metadata: { invoiceId: invoice.id, orderId: order.id, reason: note } });
+    const canonicalInvoice = canonicalInvoiceFor(tenant, invoice);
+    if (canonicalInvoice) createCanonicalReceiptSnapshot(tenant, actor, { documentType: 'RefundReceipt', sourcePaymentId: payment.id, issuedAt: cancelled.updated_at, invoice: canonicalInvoice, amountPaise: parseMoney(amount, 'refund amount'), method: String(payment.data.mode || 'Cash'), reference: String(payment.data.reference || ''), reason: note });
     appendCustomerLedger(tenant, actor, { customer: String(order.data.customer), entryType: 'Refund', debit: amount, referenceType: 'payment_entry', referenceId: payment.id, reason: note });
     const total = invoiceAmount(tenant, invoice, order);
     syncOrderPaymentState(order, total, paidAmount(tenant, invoice.id));

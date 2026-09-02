@@ -13,6 +13,8 @@ try {
   const { approveTaxPolicyRule, createTaxPolicyRule, saveSupplierTaxProfile } = await import('./modules/gst/tax-policy.js');
   const { ensureCanonicalInvoiceForLegacy } = await import('./modules/gst/legacy-invoice-bridge.js'); const { bookLaundryOrder, cancelLaundryOrder, laundryCatalogue, seedLaundryDefaults } = await import('./modules/laundry/domain.js');
   const { generateIrnForInvoice } = await import('./modules/gst/irn-service.js');
+  const { collectLaundryPayment, reverseLaundryPayment } = await import('./modules/laundry/payments.js');
+  const { renderCanonicalReceipt } = await import('./modules/gst/canonical-receipts.js');
   const { gstFromCanonicalSnapshot } = await import('./modules/gst/gstr1.js');
   const tax = calculateCanonicalTax({ supplierStateCode: '29', placeOfSupplyStateCode: '29', lines: [{ id: 'svc', description: 'Laundry service', classificationType: 'SAC', classificationCode: '9997', quantityMilli: 1_000, unit: 'piece', unitPricePaise: 10_000, taxRateBps: 1800 }] });
   const input = { sourceOrderId: 'ORDER-INV-1', issuedAt: '2026-04-01T08:00:00.000Z', supplier: { legalName: 'Epic Laundry Private Limited', tradeName: 'Epic Laundry', address: 'Kolkata, West Bengal', stateCode: '29', pincode: '700001', registrationStatus: 'Registered' as const, gstin: '29ABCDE1234F1Z5', invoiceSeries: 'EL' }, customer: { name: 'Riya & Sen', stateCode: '29' }, tax, paidPaise: 5_000 };
@@ -51,6 +53,16 @@ try {
   assert.match(String(bridged.booked.order.invoiceNumber), /^BR\/FY2026-27\/00003$/, 'configured laundry booking exposes the canonical financial-year invoice number');
   const bookedRow = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => store.getRow('BRIDGE', bridged.booked.order.id)!);
   assert.ok(bookedRow.data.canonical_invoice_snapshot_id, 'configured laundry booking links its order to the canonical snapshot');
+  const collected = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => collectLaundryPayment('BRIDGE', 'owner', bridged.booked.order.id, { amount: bridged.booked.receipt.grandTotal, mode: 'UPI', reference: 'upi-local-001' }));
+  const paymentReceipt = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => store.rowsOf('BRIDGE', 'canonical_receipt_snapshot').find((candidate) => candidate.data.sourcePaymentId === collected.payment.id && candidate.data.documentType === 'PaymentReceipt'));
+  assert.equal(paymentReceipt?.data.amountPaise, Math.round(bridged.booked.receipt.grandTotal * 100), 'payment receipt records the immutable paise collection amount');
+  assert.equal(paymentReceipt?.data.referenceInvoiceNumber, 'BR/FY2026-27/00003', 'payment receipt points to the canonical invoice number');
+  assert.match(renderCanonicalReceipt(paymentReceipt?.data as any), /PAYMENT RECEIPT/);
+  assert.doesNotMatch(renderCanonicalReceipt(paymentReceipt?.data as any), /<script>/i, 'payment receipt renderer escapes document content');
+  const refundSummary = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => reverseLaundryPayment('BRIDGE', 'owner', collected.payment.id, 'Customer requested refund'));
+  const refundReceipt = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => store.rowsOf('BRIDGE', 'canonical_receipt_snapshot').find((candidate) => candidate.data.sourcePaymentId === collected.payment.id && candidate.data.documentType === 'RefundReceipt'));
+  assert.equal(refundReceipt?.data.reason, 'Customer requested refund', 'refund receipt preserves the controlled reversal reason');
+  assert.equal(refundSummary.status, 'Unpaid', 'payment reversal keeps the operational payment state reconciled');
   const bookedLegacyInvoiceId = String(bookedRow.data.invoice);
   const cancelled = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => cancelLaundryOrder('BRIDGE', 'owner', bridged.booked.order.id, 'Customer requested cancellation'));
   assert.equal(cancelled.state, 'Cancelled', 'configured order cancellation remains operational');

@@ -84,6 +84,7 @@ import { renderCanonicalTaxInvoice } from './modules/gst/canonical-invoice-print
 import { approveTaxPolicyRule, createTaxPolicyRule, listTaxPolicyRules, retireTaxPolicyRule, saveSupplierTaxProfile, supplierTaxProfile, taxReadiness } from './modules/gst/tax-policy.js';
 import { auditGarmentAssets } from './modules/laundry/garment-assets.js';
 import { ensureCanonicalInvoiceForLegacy } from './modules/gst/legacy-invoice-bridge.js';
+import { renderCanonicalReceipt } from './modules/gst/canonical-receipts.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -1128,6 +1129,13 @@ export function registerApi(app: FastifyInstance) {
       rep.header('Content-Type', 'text/html; charset=utf-8');
       return renderCanonicalTaxInvoice(canonical.data as any);
     } catch (error: any) { return rep.code(error.message === 'TAX_PROFILE_INCOMPLETE' ? 409 : 422).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/gst/receipt/:paymentId/print', { preHandler: guard }, async (req: any, rep: any) => {
+    const tenant = requestTenant(req); const paymentId = String(req.params.paymentId || '').trim(); const type = String((req.query as any)?.type || 'PaymentReceipt');
+    if (!['PaymentReceipt', 'RefundReceipt'].includes(type)) return rep.code(400).send({ code: 'RECEIPT_TYPE_INVALID', error: 'unsupported receipt type' });
+    const row = store.rowsOf(tenant, 'canonical_receipt_snapshot').find((candidate) => candidate.data.sourcePaymentId === paymentId && candidate.data.documentType === type);
+    if (!row) return rep.code(404).send({ error: 'canonical receipt not found' });
+    rep.header('Content-Type', 'text/html; charset=utf-8'); return renderCanonicalReceipt(row.data as any);
   });
   app.get('/api/gst/gstr1', { preHandler: guard }, async (req: any) => {
     const tenant = requestTenant(req);
