@@ -1,6 +1,7 @@
 import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { store, type MarketplaceChannel, type MarketplaceDeviceRecord, type MarketplaceOrderProjectionRecord, type MarketplaceOrderState, type SyncInboxRecord, type SyncOutboxRecord } from '../../kernel/store.js';
 import { audit } from '../../kernel/audit.js';
+import { createMarketplaceOrderRequest } from './order-truth.js';
 
 export const SYNC_VERSION = 1;
 export const MARKETPLACE_ORDER_STATES = ['AwaitingAcceptance', 'Accepted', 'Rejected', 'Expired', 'PickupScheduled', 'IntakeRequired', 'CustomerApprovalRequired', 'Processing', 'Ready', 'DeliveryScheduled', 'Completed', 'Cancelled'] as const;
@@ -126,6 +127,7 @@ function applyMarketplaceOrderEnvelope(tenant: string, actor: string, envelope: 
   }
   const projection: MarketplaceOrderProjectionRecord = { id: current?.id || `mko_${randomUUID()}`, tenant, storeId: store.currentStore(tenant), vendorId: envelope.vendorId, channel, externalOrderId, sourceVersion: envelope.aggregateVersion, state, orderNumber: clean(payload.orderNumber || current?.orderNumber || externalOrderId, 120), customer: object(payload.customer), pickup: object(payload.pickup), request: object(payload.request), paymentState: clean(payload.paymentState || current?.paymentState || 'Unknown', 80), assignmentAt: clean(payload.assignmentAt || current?.assignmentAt, 40) || undefined, acceptanceDeadline: clean(payload.acceptanceDeadline || current?.acceptanceDeadline, 40) || undefined, preferences: clean(payload.preferences || current?.preferences, 2_000), notes: clean(payload.notes || current?.notes, 4_000), syncState: 'Current', localOrderId: current?.localOrderId, createdAt: current?.createdAt || now, updatedAt: now };
   const saved = store.saveMarketplaceOrderProjection(projection);
+  createMarketplaceOrderRequest(tenant, actor, { externalOrderId, channel, estimate: projection.request, customer: projection.customer, requestedAt: envelope.occurredAt });
   store.saveOrderExternalLink({ id: current ? store.getOrderExternalLink(tenant, channel, externalOrderId)?.id || `oel_${randomUUID()}` : `oel_${randomUUID()}`, tenant, storeId: store.currentStore(tenant), localOrderId: saved.localOrderId, channel, externalOrderId, externalCustomerId: clean(payload.externalCustomerId, 160) || undefined, externalStoreId: envelope.storeId, externalVendorId: envelope.vendorId, sourceRevision: envelope.aggregateVersion, createdAt: now, lastSyncedAt: now });
   store.updateSyncInbox(tenant, envelope.eventId, { applyStatus: 'Applied', appliedAt: now, localAggregateType: 'marketplace_order_projection', localId: saved.id });
   audit(tenant, actor, 'marketplace:order-projected', { entity: 'marketplace_order_projection', row_id: saved.id, after: { externalOrderId, sourceVersion: saved.sourceVersion, state: saved.state } });

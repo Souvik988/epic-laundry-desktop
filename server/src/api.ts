@@ -75,6 +75,7 @@ import { createLaundryReportExportJob, getLaundryReportExportJob, readLaundryRep
 import { createSavedReportView, deleteSavedReportView, listSavedReportViews } from './modules/laundry/report-views.js';
 import { actOnMarketplaceOrder, marketplaceSyncStatus, replayHeldMarketplaceOrder } from './modules/marketplace/edge-sync.js';
 import { marketplaceAvailability, saveMarketplaceAvailability } from './modules/marketplace/availability.js';
+import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMarketplaceReassessment, marketplaceOrderTruth, recordMarketplaceIntake } from './modules/marketplace/order-truth.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -162,6 +163,12 @@ const marketplaceOrderQuery = {
 } as const;
 const marketplaceRejectBody = {
   type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 3, maxLength: 500 } }, additionalProperties: false,
+} as const;
+const marketplaceIntakeBody = {
+  type: 'object', required: ['actual'], properties: { actual: { type: 'object', additionalProperties: true }, reason: { type: 'string', maxLength: 500 } }, additionalProperties: false,
+} as const;
+const marketplaceReassessmentBody = {
+  type: 'object', required: ['previousAmountPaise', 'revisedAmountPaise', 'reason'], properties: { previousAmountPaise: { type: 'integer', minimum: 0 }, revisedAmountPaise: { type: 'integer', minimum: 0 }, reason: { type: 'string', minLength: 3, maxLength: 500 }, tolerancePaise: { type: 'integer', minimum: 0 } }, additionalProperties: false,
 } as const;
 
 function sessionCookie(token: string, maxAgeSeconds: number) {
@@ -531,6 +538,25 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/marketplace/orders', { schema: { querystring: marketplaceOrderQuery }, preHandler: [guard, allow('orders.read')] }, async (req: any) =>
     inStore(req, () => store.listMarketplaceOrderProjectionPage(req.auth!.tenant, req.query as any)),
   );
+  app.get('/api/marketplace/orders/:externalOrderId/truth', { schema: { params: marketplaceOrderParams }, preHandler: [guard, allow('orders.read')] }, async (req: any) =>
+    inStore(req, () => marketplaceOrderTruth(req.auth!.tenant, req.params.externalOrderId)),
+  );
+  app.post('/api/marketplace/orders/:externalOrderId/intake', { schema: { params: marketplaceOrderParams, body: marketplaceIntakeBody }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `marketplace.intake:${req.params.externalOrderId}`, () => recordMarketplaceIntake(req.auth!.tenant, req.auth!.actor, { externalOrderId: req.params.externalOrderId, actual: req.body.actual, reason: req.body.reason }))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/marketplace/orders/:externalOrderId/reassessment', { schema: { params: marketplaceOrderParams, body: marketplaceReassessmentBody }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `marketplace.reassessment:${req.params.externalOrderId}`, () => createMarketplaceReassessment(req.auth!.tenant, req.auth!.actor, { ...req.body, externalOrderId: req.params.externalOrderId }))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/marketplace/reassessments/:id/approve', { schema: { params: laundryIdParams, body: { type: 'object', additionalProperties: false } }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `marketplace.reassessment-approve:${req.params.id}`, () => decideMarketplaceReassessment(req.auth!.tenant, req.auth!.actor, req.params.id, 'approve'))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/marketplace/reassessments/:id/reject', { schema: { params: laundryIdParams, body: { type: 'object', additionalProperties: false } }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `marketplace.reassessment-reject:${req.params.id}`, () => decideMarketplaceReassessment(req.auth!.tenant, req.auth!.actor, req.params.id, 'reject'))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
   app.post('/api/marketplace/orders/:externalOrderId/accept', { schema: { params: marketplaceOrderParams, body: { type: 'object', additionalProperties: false } }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => idempotent(req, `marketplace.order-accept:${req.params.externalOrderId}`, () => actOnMarketplaceOrder(req.auth!.tenant, req.auth!.actor, req.params.externalOrderId, { action: 'accept' }))); }
     catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
