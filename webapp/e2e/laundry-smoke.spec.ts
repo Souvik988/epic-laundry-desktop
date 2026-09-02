@@ -38,7 +38,10 @@ test('operator can complete the core laundry desk journeys in a disposable works
   await expect(sidebarNav.getByRole('link', { name: 'Store settings' })).toBeVisible();
 
   await page.goto('/ui/app/#/laundry/print-centre');
-  const order = page.getByRole('button', { name: /INV-\d+-\d+/ }).first();
+  // The first "Today" demo order is weight-based and intentionally has no
+  // garment-piece tags. Select the seeded piece-based order for tag/PDF QA.
+  await page.getByRole('button', { name: 'All', exact: true }).click();
+  const order = page.getByRole('button', { name: /INV-\d+-\d+/ }).filter({ hasText: 'Demo Nisha' }).first();
   await expect(order).toBeVisible();
   const invoice = (await order.innerText()).match(/INV-\d+-\d+/)?.[0] || '';
   await order.click();
