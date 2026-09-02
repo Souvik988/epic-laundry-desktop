@@ -1,6 +1,6 @@
 # V4 current production gap audit
 
-Audit date: 2026-09-03. Current local baseline inspected: `726d027` on local `main`. Remote `origin/main` remains `72767269e83d905c7f484d8ce08ae7d32a27b1bc`; no remote write has been performed.
+Audit date: 2026-09-03. Current local baseline inspected: `954c6ad` on local `main`. Remote `origin/main` remains `72767269e83d905c7f484d8ce08ae7d32a27b1bc`; no remote write has been performed.
 
 | Area | Classification | Evidence / decision |
 | --- | --- | --- |
@@ -12,7 +12,7 @@ Audit date: 2026-09-03. Current local baseline inspected: `726d027` on local `ma
 | Fixed-scale financial normalization | VERIFIED_CURRENT | Existing money/reconciliation/normalization tests pass. Preserve and extend rather than replace. |
 | Tax / invoice compliance | PARTIAL / NEEDS_LEGAL_VALIDATION | Fixed-scale line-level tax, effective-dated policy, supplier profile/readiness, immutable canonical invoice/credit-note snapshots and no-fake-QR print routes exist. Configured-store laundry bookings and full cancellation/supersession reversals now create/link canonical evidence with a submitted credit note and no double reversal. Remaining ERP document paths, provider evidence and legal approval for production GST/e-invoice claims remain incomplete. Marketplace materialization now fails explicitly when the supplier profile is incomplete. |
 | Catalogue imagery | BUG → partially fixed | Booking previously inferred visuals from free-text names and defaulted unknown garments to a shirt. V4 now uses explicit visual keys, corrected thirteen wrong active mappings, generated a complete contact sheet, and ships every active runtime image as a 256px WebP derivative (zero asset-budget warnings). Six closely related generic/shared mappings still require visual-owner review. |
-| Online Orders operator surface | EPIC_EXTENSION / PARTIAL | Runtime-inspected queue cockpit now exposes source, request, payment, sync, acceptance/rejection, physical intake entry and materialization controls. Queue visibility is available to `orders.read`; mutations remain `orders.edit`-protected with a clear read-only state. Customer timeline, pickup scheduling and richer work-card integration remain. |
+| Online Orders operator surface | EPIC_EXTENSION / PARTIAL | Runtime-inspected queue cockpit now exposes source, request, payment, sync, acceptance/rejection, physical intake entry and materialization controls. Queue visibility is available to `orders.read`; mutations remain `orders.edit`-protected with a clear read-only state. Main store-order search now uses bounded SQL-backed pages with deterministic ordering. Customer timeline, pickup scheduling and richer work-card integration remain. |
 | Production signing / updates | EXTERNAL_BLOCKER | Windows signing remains disabled for current internal builds; no trusted update feed or production certificate evidence is present. |
 
 The product is **not production-certified**. This document is an evidence record, not a release approval.
