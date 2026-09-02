@@ -15,6 +15,7 @@
     "test:clean-db-bootstrap": "tsx src/_selftest-clean-db-bootstrap.ts",
     "test:marketplace-sync": "tsx src/_selftest-marketplace-sync.ts",
     "test:marketplace-api": "tsx src/_selftest-marketplace-api.ts",
+    "test:marketplace-order-truth": "tsx src/_selftest-marketplace-order-truth.ts",
     "test:customer": "tsx src/_selftest-customer.ts",
     "test:package": "tsx src/_selftest-package.ts",
     "test:catalogue": "tsx src/_selftest-catalogue.ts",
