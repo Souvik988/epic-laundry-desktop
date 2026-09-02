@@ -90,6 +90,7 @@ import { auditGarmentAssets } from './modules/laundry/garment-assets.js';
 import { ensureCanonicalInvoiceForLegacy } from './modules/gst/legacy-invoice-bridge.js';
 import { renderCanonicalReceipt } from './modules/gst/canonical-receipts.js';
 import { completeCustomerPrivacyRequest, createCustomerPrivacyRequest, exportCustomerPrivacyData, listCustomerPrivacyRequests } from './modules/laundry/customer-privacy.js';
+import { issueCustomerPortalToken, verifyCustomerPortalToken } from './modules/laundry/customer-portal.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -239,6 +240,12 @@ const customerPrivacyRequestBody = {
 } as const;
 const customerPrivacyQuery = {
   type: 'object', properties: { customerId: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false,
+} as const;
+const customerPortalTokenBody = {
+  type: 'object', required: ['customerId'], properties: { customerId: { type: 'string', minLength: 1, maxLength: 160 }, ttlSeconds: { type: 'integer', minimum: 300, maximum: 86400 } }, additionalProperties: false,
+} as const;
+const customerPortalQuery = {
+  type: 'object', properties: { token: { type: 'string', minLength: 1, maxLength: 4000 } }, additionalProperties: false,
 } as const;
 const marketplacePaymentWebhookParams = {
   type: 'object', required: ['provider'],
@@ -1846,28 +1853,33 @@ export function registerApi(app: FastifyInstance) {
     } catch (error: any) { return rep.code(400).send({ error: error.message || 'encrypted backup restore failed' }); }
   });
 
-  // ---- Distribution: read-only customer portal (self-serve invoices + pay link) ----
-  // Public by design (customer-facing); returns ONLY the requested party's own data and never mutates.
-  app.get('/api/portal/:customer', async (req: any, rep: any) => {
-    const cid = String(req.params.customer);
-    const party = store.getRow(TENANT, cid);
-    if (!party || party.entity !== 'party') return rep.code(404).send({ error: 'customer not found' });
-    const paidFor = (invId: string) =>
-      store.rowsOf(TENANT, 'payment_entry').filter((p) => p.status === 'Submitted' && p.data.against_sales === invId)
-        .reduce((a, p) => a + ((store.financialDocumentAmountPaise(TENANT, 'payment', p.entity, p.id) ?? Math.round((Number(p.data.amount) || 0) * 100)) / 100), 0);
-    const invs = store.rowsOf(TENANT, 'sales_invoice')
-      .filter((r) => r.status === 'Submitted' && r.data.customer === cid)
-      .map((r) => {
-        const gt = (store.financialDocumentAmountPaise(TENANT, 'invoice', r.entity, r.id) ?? Math.round((Number(r.data.grand_total) || 0) * 100)) / 100;
-        const paid = Math.round(paidFor(r.id) * 100) / 100;
-        return { name: r.data.name, date: r.data.posting_date, grand_total: gt, paid, balance: Math.max(0, Math.round((gt - paid) * 100) / 100) };
-      })
-      .filter((x) => x.balance > 0);
-    return {
-      customer: { name: party.data.name, gstin: party.data.gstin },
-      invoices: invs,
-      total_outstanding: Math.round(invs.reduce((a, x) => a + x.balance, 0) * 100) / 100,
-    };
+  // ---- Distribution: scoped read-only customer portal (self-serve invoices + pay link) ----
+  // A customer ID is not an access credential. Tokens are short-lived, signed, and bound to one store/customer.
+  app.post('/api/portal/access-token', { schema: { body: customerPortalTokenBody }, preHandler: [guard, allow('customers.read')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => issueCustomerPortalToken(req.auth!.tenant, req.body.customerId, req.body.ttlSeconds)); }
+    catch (error: any) { return rep.code(error.message === 'PORTAL_NOT_CONFIGURED' ? 503 : 400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/portal/:customer', { schema: { querystring: customerPortalQuery } }, async (req: any, rep: any) => {
+    const cid = String(req.params.customer || '');
+    try {
+      const claims = verifyCustomerPortalToken(req.query?.token, cid);
+      return store.withStoreScope(claims.tenant, claims.storeId, () => {
+        const party = store.getRow(claims.tenant, cid);
+        if (!party || party.entity !== 'party' || party.data.is_customer !== true) throw new Error('customer not found');
+        const paidFor = (invId: string) =>
+          store.rowsOf(claims.tenant, 'payment_entry').filter((p) => p.status === 'Submitted' && p.data.against_sales === invId)
+            .reduce((a, p) => a + ((store.financialDocumentAmountPaise(claims.tenant, 'payment', p.entity, p.id) ?? Math.round((Number(p.data.amount) || 0) * 100)) / 100), 0);
+        const invs = store.rowsOf(claims.tenant, 'sales_invoice')
+          .filter((r) => r.status === 'Submitted' && r.data.customer === cid)
+          .map((r) => {
+            const gt = (store.financialDocumentAmountPaise(claims.tenant, 'invoice', r.entity, r.id) ?? Math.round((Number(r.data.grand_total) || 0) * 100)) / 100;
+            const paid = Math.round(paidFor(r.id) * 100) / 100;
+            return { name: r.data.name, date: r.data.posting_date, grand_total: gt, paid, balance: Math.max(0, Math.round((gt - paid) * 100) / 100) };
+          })
+          .filter((x) => x.balance > 0);
+        return { customer: { name: party.data.name, gstin: party.data.gstin }, invoices: invs, total_outstanding: Math.round(invs.reduce((a, x) => a + x.balance, 0) * 100) / 100 };
+      });
+    } catch (error: any) { return rep.code(error.message === 'customer not found' ? 404 : 401).send({ code: error.message, error: error.message }); }
   });
 
   // ---- Epic AI & Analytics ----

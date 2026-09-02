@@ -32,6 +32,7 @@
     "test:customer": "tsx src/_selftest-customer.ts",
     "test:customer-privacy": "tsx src/_selftest-customer-privacy.ts",
     "test:customer-privacy-api": "tsx src/_selftest-customer-privacy-api.ts",
+    "test:customer-portal": "tsx src/_selftest17.ts",
     "test:package": "tsx src/_selftest-package.ts",
     "test:catalogue": "tsx src/_selftest-catalogue.ts",
     "audit:garment-assets": "tsx src/_audit-garment-assets.ts",
