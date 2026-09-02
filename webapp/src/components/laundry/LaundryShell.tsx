@@ -61,7 +61,7 @@ export function LaundryShell() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const session = useQuery({ queryKey: ['auth-session'], queryFn: () => apiGet<Session>('/auth/session') })
-  const workspace = useQuery({ queryKey: ['workspace-mode'], queryFn: () => window.epic?.workspaceStatus?.() || Promise.resolve({ mode: 'production' as const }) })
+  const workspace = useQuery({ queryKey: ['workspace-mode'], queryFn: () => window.epic?.workspaceStatus?.() || apiGet<{ mode: 'production' | 'demo' }>('/workspace/status') })
   const notifications = useQuery({ queryKey: ['notifications'], queryFn: () => apiGet<NotificationItem[]>('/notifications') })
   const markRead = useMutation({ mutationFn: (id: string) => apiPost(`/notifications/${id}/read`, { read: true }), onSuccess: () => notifications.refetch() })
   const signOut = useMutation({ mutationFn: () => apiPost('/auth/sign-out'), onSuccess: () => window.location.assign('/ui/app/') })

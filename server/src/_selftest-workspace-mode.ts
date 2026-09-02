@@ -49,6 +49,8 @@ let demo: ChildProcess | undefined;
 try {
   production = start('production', 3251);
   await waitForHealth(3251);
+  const productionWorkspace = await fetch('http://127.0.0.1:3251/api/workspace/status').then((response) => response.json() as Promise<{ mode: string }>);
+  assert.equal(productionWorkspace.mode, 'production', 'server reports production workspace mode');
   const productionStatus = await fetch('http://127.0.0.1:3251/api/auth/bootstrap-status').then((response) => response.json() as Promise<{ needsBootstrap: boolean }>);
   assert.equal(productionStatus.needsBootstrap, true, 'new production workspace has no silent owner');
   const productionOrders = await orders(3251, await bootstrap(3251, 'production-owner'));
@@ -57,6 +59,8 @@ try {
 
   demo = start('demo', 3252);
   await waitForHealth(3252);
+  const demoWorkspace = await fetch('http://127.0.0.1:3252/api/workspace/status').then((response) => response.json() as Promise<{ mode: string }>);
+  assert.equal(demoWorkspace.mode, 'demo', 'server reports demo workspace mode');
   const demoOrders = await orders(3252, await bootstrap(3252, 'demo-owner'));
   assert.ok(demoOrders.length > 0, 'explicit demo workspace receives sample orders');
   await stop(demo); demo = undefined;

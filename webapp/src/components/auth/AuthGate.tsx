@@ -44,7 +44,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }, [state])
 
   useEffect(() => {
-    const workspaceStatus = window.epic?.workspaceStatus?.() || Promise.resolve({ mode: 'production' as WorkspaceMode })
+    const workspaceStatus = window.epic?.workspaceStatus?.() || apiGet<{ mode: WorkspaceMode }>('/workspace/status').catch(() => ({ mode: 'production' as WorkspaceMode }))
     Promise.all([apiGet<Session>('/auth/session').catch(() => null), apiGet<{ needsBootstrap: boolean }>('/auth/bootstrap-status'), workspaceStatus])
       .then(([session, bootstrap, desktopWorkspace]) => { setWorkspace(desktopWorkspace.mode); setState(session?.user ? 'ready' : bootstrap.needsBootstrap ? 'bootstrap' : 'signin') })
       .catch(() => { setError('The local Epic server is unavailable. Check that the desktop application is running.'); setState('signin') })

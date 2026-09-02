@@ -244,6 +244,9 @@ function validateRestorePayload(input: any, tenant: string, storeId: string) {
 export function registerApi(app: FastifyInstance) {
   // ---- health / meta ----
   app.get('/api/health', async () => ({ status: 'ok', ts: new Date().toISOString() }));
+  app.get('/api/workspace/status', async () => ({
+    mode: process.env.EPIC_WORKSPACE_MODE === 'demo' ? 'demo' : 'production',
+  }));
   app.get('/api/entities', async () => listDefs().map((d) => ({
     name: d.name, label: d.label, kind: d.kind, module: d.module,
     fields: d.fields, lifecycle: d.lifecycle,
