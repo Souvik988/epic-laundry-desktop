@@ -76,7 +76,7 @@ import { createSavedReportView, deleteSavedReportView, listSavedReportViews } fr
 import { actOnMarketplaceOrder, linkMarketplaceOrderToLocalOrder, marketplaceSyncStatus, materializeMarketplaceOrder, replayHeldMarketplaceOrder } from './modules/marketplace/edge-sync.js';
 import { marketplaceAvailability, saveMarketplaceAvailability } from './modules/marketplace/availability.js';
 import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMarketplaceReassessment, marketplaceOrderTruth, recordMarketplaceIntake } from './modules/marketplace/order-truth.js';
-import { createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
+import { createCanonicalDebitNoteSnapshot, createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
 import { marketplaceSettlement, recordMarketplaceCashCollection, recordMarketplaceSettlement } from './modules/marketplace/settlements.js';
 import { marketplaceSettlementStatement, renderCanonicalSettlementStatement, type CanonicalSettlementStatement } from './modules/marketplace/settlement-statement.js';
 import { recordProviderPaymentEvent, verifyProviderWebhook, type ProviderPaymentEvent } from './modules/marketplace/provider-events.js';
@@ -1067,6 +1067,10 @@ export function registerApi(app: FastifyInstance) {
   }
   app.post('/api/gst/canonical-invoices', { schema: { body: { type: 'object', required: ['sourceOrderId', 'supplier', 'customer', 'tax'], properties: { sourceOrderId: { type: 'string', minLength: 1, maxLength: 160 }, issuedAt: { type: 'string', maxLength: 40 }, supplier: { type: 'object', additionalProperties: true }, customer: { type: 'object', additionalProperties: true }, tax: { type: 'object', additionalProperties: true }, paidPaise: { type: 'integer', minimum: 0 } }, additionalProperties: false } }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `gst.canonical-invoice:${req.body.sourceOrderId}`, () => createCanonicalInvoiceSnapshot(req.auth!.tenant, req.auth!.actor, req.body)))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/gst/canonical-debit-notes', { schema: { body: { type: 'object', required: ['sourceOrderId', 'supplier', 'customer', 'tax', 'referenceInvoiceNumber', 'reason', 'applicabilityApproved'], properties: { sourceOrderId: { type: 'string', minLength: 1, maxLength: 160 }, issuedAt: { type: 'string', maxLength: 40 }, supplier: { type: 'object', additionalProperties: true }, customer: { type: 'object', additionalProperties: true }, tax: { type: 'object', additionalProperties: true }, referenceInvoiceNumber: { type: 'string', minLength: 1, maxLength: 80 }, reason: { type: 'string', minLength: 1, maxLength: 500 }, applicabilityApproved: { type: 'boolean' } }, additionalProperties: false } }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `gst.canonical-debit-note:${req.body.sourceOrderId}`, () => createCanonicalDebitNoteSnapshot(req.auth!.tenant, req.auth!.actor, req.body)))); }
     catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/gst/canonical-invoices/:sourceOrderId', { schema: { params: { type: 'object', required: ['sourceOrderId'], properties: { sourceOrderId: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false } }, preHandler: [guard, allow('orders.read')] }, async (req: any, rep: any) => {
