@@ -10,7 +10,6 @@ import { audit } from './kernel/audit.js';
 import { ShotlinXchatAdapter } from './integrations/whatsapp/shotlinxchat.js';
 import { buildEinvoicePayload } from './modules/gst/einvoice.js';
 import { buildGstr1, buildCdnr } from './modules/gst/gstr1.js';
-import { renderTaxInvoice } from './modules/gst/tax-invoice.js';
 import {
   generateIrnForInvoice, cancelIrnForInvoice, generateEwbForInvoice,
   getImsSupplies, recordImsAction,
@@ -84,6 +83,7 @@ import { queueMarketplaceNotification, recordMarketplaceNotificationDelivery, ty
 import { renderCanonicalTaxInvoice } from './modules/gst/canonical-invoice-print.js';
 import { approveTaxPolicyRule, createTaxPolicyRule, listTaxPolicyRules, retireTaxPolicyRule, saveSupplierTaxProfile, supplierTaxProfile, taxReadiness } from './modules/gst/tax-policy.js';
 import { auditGarmentAssets } from './modules/laundry/garment-assets.js';
+import { ensureCanonicalInvoiceForLegacy } from './modules/gst/legacy-invoice-bridge.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -1057,13 +1057,10 @@ export function registerApi(app: FastifyInstance) {
 
   // ---- GST compliance engine (the moat) ----
   const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-  function company() {
-    return {
-      gstin: process.env.EPIC_SUPPLIER_GSTIN || '',
-      name: process.env.EPIC_COMPANY_NAME || 'Epic BOS Demo',
-      addr: process.env.EPIC_COMPANY_ADDR || '',
-      state: process.env.EPIC_SUPPLIER_STATE || '29',
-    };
+  function companyForTenant(tenant: string) {
+    const profile = supplierTaxProfile(tenant);
+    if (!profile) throw new Error('TAX_PROFILE_INCOMPLETE');
+    return { gstin: profile.gstin || '', name: profile.legalName, addr: profile.address, state: profile.stateCode };
   }
   app.post('/api/gst/canonical-invoices', { schema: { body: { type: 'object', required: ['sourceOrderId', 'supplier', 'customer', 'tax'], properties: { sourceOrderId: { type: 'string', minLength: 1, maxLength: 160 }, issuedAt: { type: 'string', maxLength: 40 }, supplier: { type: 'object', additionalProperties: true }, customer: { type: 'object', additionalProperties: true }, tax: { type: 'object', additionalProperties: true }, paidPaise: { type: 'integer', minimum: 0 } }, additionalProperties: false } }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `gst.canonical-invoice:${req.body.sourceOrderId}`, () => createCanonicalInvoiceSnapshot(req.auth!.tenant, req.auth!.actor, req.body)))); }
@@ -1099,27 +1096,31 @@ export function registerApi(app: FastifyInstance) {
     catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/gst/einvoice/:id', { preHandler: guard }, async (req: any, rep: any) => {
-    const row = store.getRow(requestTenant(req), req.params.id);
+    const tenant = requestTenant(req);
+    const row = store.getRow(tenant, req.params.id);
     if (!row || !['sales_invoice', 'pos_invoice'].includes(row.entity)) return rep.code(404).send({ error: 'not found' });
     const gst = row.data.__gst;
     if (!gst) return rep.code(400).send({ error: 'invoice not submitted' });
-    const p = store.getRow(requestTenant(req), row.data.customer);
-    return buildEinvoicePayload({ name: row.data.name, posting_date: row.data.posting_date, data: row.data }, company(), {
+    try {
+      const configured = supplierTaxProfile(tenant);
+      if (!configured) return rep.code(409).send({ code: 'TAX_PROFILE_INCOMPLETE', error: 'configure the supplier tax profile before creating e-invoice data' });
+      if (configured.registrationStatus !== 'Registered') return rep.code(409).send({ code: 'EINVOICE_NOT_APPLICABLE', error: 'e-invoice data is not applicable to an unregistered supplier' });
+      const p = store.getRow(tenant, row.data.customer);
+      return buildEinvoicePayload({ name: row.data.name, posting_date: row.data.posting_date, data: row.data }, companyForTenant(tenant), {
       name: p?.data?.name || (row.entity === 'pos_invoice' ? 'Walk-in Customer' : ''), gstin: p?.data?.gstin, addr: p?.data?.addr,
       state: p?.data?.state, pos: row.data.place_of_supply,
-    }, gst);
+      }, gst);
+    } catch (error: any) { return rep.code(409).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/gst/print/:id', { preHandler: guard }, async (req: any, rep: any) => {
-    const row = store.getRow(requestTenant(req), req.params.id);
-    const gst = row?.data?.__gst;
-    if (!gst) return rep.code(400).send({ error: 'no GST computed' });
-    const p = store.getRow(requestTenant(req), row.data.customer);
-    rep.header('Content-Type', 'text/html');
-    return renderTaxInvoice(
-      { name: row.data.name, posting_date: row.data.posting_date, data: row.data },
-      { name: p?.data?.name || (row.entity === 'pos_invoice' ? 'Walk-in Customer' : ''), gstin: p?.data?.gstin, addr: p?.data?.addr }, company(), gst,
-      row.data.__einvoice,
-    );
+    const tenant = requestTenant(req);
+    const row = store.getRow(tenant, req.params.id);
+    if (!row || row.entity !== 'sales_invoice' || row.status !== 'Submitted') return rep.code(404).send({ error: 'submitted sales invoice not found' });
+    try {
+      const canonical = store.transaction(() => ensureCanonicalInvoiceForLegacy(tenant, requestActor(req), row.id));
+      rep.header('Content-Type', 'text/html; charset=utf-8');
+      return renderCanonicalTaxInvoice(canonical.data as any);
+    } catch (error: any) { return rep.code(error.message === 'TAX_PROFILE_INCOMPLETE' ? 409 : 422).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/gst/gstr1', { preHandler: guard }, async (req: any) => {
     const tenant = requestTenant(req);

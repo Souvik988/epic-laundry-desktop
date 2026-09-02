@@ -11,6 +11,8 @@ import type { GarmentUnitRecord, LaundryContainerEventRecord, LaundryContainerRe
 import { parseMoney, moneyNumber, optionalMoney } from '../../kernel/money.js';
 import { completeOpenTask, createProductionTask, productionStateCreatesTask } from './production.js';
 import { cashShiftForTransaction } from './cash.js';
+import { ensureCanonicalInvoiceForLegacy } from '../gst/legacy-invoice-bridge.js';
+import { supplierTaxProfile } from '../gst/tax-policy.js';
 
 export const LAUNDRY_STATES = ['Booked', 'Picked Up', 'In Process', 'Ready', 'Out for Delivery', 'Delivered', 'Cancelled'] as const;
 export type LaundryState = typeof LAUNDRY_STATES[number];
@@ -491,6 +493,11 @@ export function bookLaundryOrder(tenant: string, actor: string, input: BookInput
   });
   const invoiceDocument = store.listFinancialDocuments(tenant, { sourceId: submittedInvoice.id }).find((document) => document.documentType === 'invoice');
   if (invoiceDocument) store.appendFinancialDocument({ ...invoiceDocument, metadata: { ...(invoiceDocument.metadata || {}), orderId: order.id } });
+  if (supplierTaxProfile(tenant)) {
+    const canonical = ensureCanonicalInvoiceForLegacy(tenant, actor, submittedInvoice.id, order.id);
+    order.data.canonical_invoice_snapshot_id = canonical.id;
+    store.updateRow(order);
+  }
   order.status = 'Booked';
   order.updated_at = new Date().toISOString();
   store.updateRow(order);
@@ -654,6 +661,11 @@ export function editLaundryOrder(tenant: string, actor: string, id: string, inpu
     order.data.last_edit_by = actor;
     order.updated_at = new Date().toISOString();
     store.updateRow(order);
+    if (supplierTaxProfile(tenant)) {
+      const canonical = ensureCanonicalInvoiceForLegacy(tenant, actor, submittedReplacement.id, order.id);
+      order.data.canonical_invoice_snapshot_id = canonical.id;
+      store.updateRow(order);
+    }
     for (const unit of existingUnits) {
       const fromState = unit.state;
       unit.state = 'Cancelled';
@@ -911,6 +923,7 @@ export function listLaundryPrintJobs(tenant: string, orderId?: string) { return 
 export function presentOrder(tenant: string, order: EntityRow) {
   const customer = store.getRow(tenant, order.data.customer);
   const invoice = store.getRow(tenant, order.data.invoice);
+  const canonicalInvoice = order.data.canonical_invoice_snapshot_id ? store.getRow(tenant, String(order.data.canonical_invoice_snapshot_id)) : undefined;
   const normalizedGrandTotalPaise = invoice?.entity === 'sales_invoice' ? store.financialDocumentAmountPaise(tenant, 'invoice', invoice.entity, invoice.id) : undefined;
   const pickupRider = store.getRow(tenant, order.data.pickup_rider);
   const deliveryRider = store.getRow(tenant, order.data.delivery_rider);
@@ -929,7 +942,7 @@ export function presentOrder(tenant: string, order: EntityRow) {
   return {
     id: order.id,
     orderNumber: order.data.name || order.id,
-    invoiceNumber: invoice?.data.name || order.data.invoice,
+    invoiceNumber: canonicalInvoice?.entity === 'canonical_invoice_snapshot' ? canonicalInvoice.data.invoiceNumber : invoice?.data.name || order.data.invoice,
     customer: { id: customer?.id, name: customer?.data.name || 'Unknown customer', phone: customer?.data.phone || '' },
     orderDate: order.data.order_date,
     expectedDeliveryDate: order.data.expected_delivery_date,
