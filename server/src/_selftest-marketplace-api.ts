@@ -58,6 +58,13 @@ try {
   assert.equal(statement.statusCode, 200, 'operator can print the canonical marketplace settlement statement');
   assert.match(statement.body, /Marketplace Settlement Statement/, 'settlement statement renderer is exposed through the operator API');
   assert.match(statement.body, /not a customer tax invoice/, 'settlement statement clearly disclaims tax-invoice/provider-success semantics');
+  const batch = await app.inject({ method: 'POST', url: '/api/marketplace/settlement-batches', headers: { ...headers, 'idempotency-key': 'marketplace-api-batch-001' }, payload: { batchId: 'BATCH-API-001', policyVersion: 'policy-api-2026-01', settlementIds: [settlement.json().id] } });
+  assert.equal(batch.statusCode, 201, 'operator can prepare a settlement batch from immutable settlement records');
+  const payout = await app.inject({ method: 'POST', url: '/api/marketplace/settlement-batches/BATCH-API-001/payout-attempts', headers: { ...headers, 'idempotency-key': 'marketplace-api-payout-001' }, payload: { attemptId: 'PAYOUT-API-001', provider: 'configured-provider', amountPaise: settlement.json().data.vendorSettlementPaise, idempotencyKey: 'provider-payout-idem-001' } });
+  assert.equal(payout.statusCode, 201, 'operator can create a provider-pending payout attempt');
+  assert.equal(payout.json().data.state, 'PendingProvider', 'payout attempt remains pending until verified provider evidence arrives');
+  const payoutRead = await app.inject({ method: 'GET', url: '/api/marketplace/payout-attempts/PAYOUT-API-001', headers });
+  assert.equal(payoutRead.statusCode, 200, 'operator can inspect payout attempt evidence state');
   const noAuth = await app.inject({ method: 'GET', url: '/api/marketplace/orders' });
   assert.equal(noAuth.statusCode, 401, 'online order queue is never exposed without an authenticated local session');
   await app.close();

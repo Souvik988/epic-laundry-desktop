@@ -79,6 +79,7 @@ import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMar
 import { createCanonicalDebitNoteSnapshot, createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
 import { marketplaceSettlement, recordMarketplaceCashCollection, recordMarketplaceSettlement } from './modules/marketplace/settlements.js';
 import { marketplaceSettlementStatement, renderCanonicalSettlementStatement, type CanonicalSettlementStatement } from './modules/marketplace/settlement-statement.js';
+import { createPayoutAttempt, createSettlementBatch, payoutAttempt, settlementBatch } from './modules/marketplace/settlement-batches.js';
 import { recordProviderPaymentEvent, verifyProviderWebhook, type ProviderPaymentEvent } from './modules/marketplace/provider-events.js';
 import { queueMarketplaceNotification, recordMarketplaceNotificationDelivery, type NotificationChannel, type NotificationState } from './modules/marketplace/notifications.js';
 import { renderCanonicalTaxInvoice } from './modules/gst/canonical-invoice-print.js';
@@ -165,6 +166,8 @@ const marketplaceOrderParams = {
   type: 'object', required: ['externalOrderId'],
   properties: { externalOrderId: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false,
 } as const;
+const settlementBatchParams = { type: 'object', required: ['batchId'], properties: { batchId: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false } as const;
+const payoutAttemptParams = { type: 'object', required: ['attemptId'], properties: { attemptId: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false } as const;
 const marketplaceOrderQuery = {
   type: 'object', properties: {
     state: { type: 'string', enum: ['AwaitingAcceptance', 'Accepted', 'Rejected', 'Expired', 'PickupScheduled', 'IntakeRequired', 'CustomerApprovalRequired', 'Processing', 'Ready', 'DeliveryScheduled', 'Completed', 'Cancelled'] },
@@ -607,6 +610,16 @@ export function registerApi(app: FastifyInstance) {
   });
   app.get('/api/marketplace/settlements/:externalOrderId', { schema: { params: marketplaceOrderParams }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => inStore(req, () => marketplaceSettlement(req.auth!.tenant, req.params.externalOrderId) || rep.code(404).send({ error: 'marketplace settlement not found' })));
   app.get('/api/marketplace/settlements/:externalOrderId/statement/print', { schema: { params: marketplaceOrderParams }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => inStore(req, () => { const statement = marketplaceSettlementStatement(req.auth!.tenant, req.params.externalOrderId); if (!statement || statement.entity !== 'canonical_settlement_statement' || statement.status !== 'Submitted') return rep.code(404).send({ error: 'marketplace settlement statement not found' }); rep.type('text/html; charset=utf-8'); return rep.send(renderCanonicalSettlementStatement(statement.data as CanonicalSettlementStatement)); }));
+  app.post('/api/marketplace/settlement-batches', { schema: { body: { type: 'object', required: ['batchId', 'policyVersion', 'settlementIds'], properties: { batchId: { type: 'string', minLength: 1, maxLength: 160 }, policyVersion: { type: 'string', minLength: 1, maxLength: 80 }, settlementIds: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string', minLength: 1, maxLength: 160 } }, issuedAt: { type: 'string', maxLength: 40 } }, additionalProperties: false } }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.settlement-batch:${req.body.batchId}`, () => createSettlementBatch(req.auth!.tenant, req.auth!.actor, req.body)))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/marketplace/settlement-batches/:batchId', { schema: { params: settlementBatchParams }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => inStore(req, () => settlementBatch(req.auth!.tenant, req.params.batchId) || rep.code(404).send({ error: 'settlement batch not found' })));
+  app.post('/api/marketplace/settlement-batches/:batchId/payout-attempts', { schema: { params: settlementBatchParams, body: { type: 'object', required: ['attemptId', 'provider', 'amountPaise', 'idempotencyKey'], properties: { attemptId: { type: 'string', minLength: 1, maxLength: 160 }, provider: { type: 'string', minLength: 1, maxLength: 80 }, amountPaise: { type: 'integer', minimum: 1 }, idempotencyKey: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false } }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.payout-attempt:${req.body.attemptId}`, () => createPayoutAttempt(req.auth!.tenant, req.auth!.actor, { ...req.body, batchId: req.params.batchId })))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/marketplace/payout-attempts/:attemptId', { schema: { params: payoutAttemptParams }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => inStore(req, () => payoutAttempt(req.auth!.tenant, req.params.attemptId) || rep.code(404).send({ error: 'payout attempt not found' })));
   app.post('/api/marketplace/cash-collections', { schema: { body: { type: 'object', required: ['collectionId', 'externalOrderId', 'amountPaise', 'method', 'collectedBy', 'evidence'], properties: { collectionId: { type: 'string', minLength: 1, maxLength: 160 }, externalOrderId: { type: 'string', minLength: 1, maxLength: 160 }, amountPaise: { type: 'integer', minimum: 0 }, method: { type: 'string', enum: ['CashOnPickup', 'CashOnDelivery'] }, collectedBy: { type: 'string', minLength: 1, maxLength: 160 }, evidence: { type: 'string', minLength: 1, maxLength: 500 } }, additionalProperties: false } }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.cash-collection:${req.body.collectionId}`, () => recordMarketplaceCashCollection(req.auth!.tenant, req.auth!.actor, req.body)))); }
     catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
