@@ -122,7 +122,7 @@ type AdjustmentRuleInput = { name?: string; type?: 'Flat' | 'Percentage'; amount
 type TaxRuleInput = { name?: string; rate?: number; active?: boolean };
 
 const SERVICE_UNITS = ['Piece', 'Kilogram', 'Pair', 'Square Foot'] as const;
-const GARMENT_VISUAL_KEYS = ['foldedShirt', 'foldedTrouser', 'foldedSaree', 'foldedKurti', 'foldedBlanket', 'foldedBedsheet', 'mixedClothes', 'shoePair', 'foldedBlazer', 'foldedDress', 'foldedJeans', 'foldedHoodie', 'foldedKurta', 'handbag', 'towel', 'curtain', 'carpetRug', 'softToy', 'socksPair'] as const;
+const GARMENT_VISUAL_KEYS = ['foldedShirt', 'foldedTrouser', 'foldedSaree', 'foldedKurti', 'foldedBlanket', 'foldedBedsheet', 'mixedClothes', 'shoePair', 'foldedBlazer', 'foldedDress', 'foldedJeans', 'foldedHoodie', 'foldedKurta', 'sherwani', 'blouse', 'salwarSuit', 'lehenga', 'tieScarf', 'handbag', 'towel', 'curtain', 'carpetRug', 'softToy', 'socksPair'] as const;
 const CONTAINER_TRANSITIONS: Record<LaundryContainerState, LaundryContainerState[]> = {
   Intake: ['Processing', 'Cancelled'], Processing: ['Ready', 'Cancelled'], Ready: ['Dispatched', 'Delivered', 'Cancelled'], Dispatched: ['Delivered'],
   Delivered: [], Missing: [], Damaged: [], Cancelled: [],
@@ -1929,11 +1929,11 @@ export function seedLaundryDefaults(tenant: string) {
     'Formal shirt': '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp',
     'Jacket / Coat': '/ui/app/garments/optimized/lndry-folded-blazer-v1.webp',
     'Kurta pyjama': '/ui/app/garments/optimized/lndry-folded-kurta-v1.webp',
-    Sherwani: '/ui/app/garments/optimized/lndry-folded-kurta-v1.webp',
-    Blouse: '/ui/app/garments/optimized/lndry-folded-saree-v1.webp',
-    'Salwar suit': '/ui/app/garments/optimized/lndry-folded-kurti-v1.webp',
-    Lehenga: '/ui/app/garments/optimized/lndry-folded-saree-v1.webp',
-    'Tie / Scarf': '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp',
+    Sherwani: '/ui/app/garments/optimized/lndry-sherwani-v1.webp',
+    Blouse: '/ui/app/garments/optimized/lndry-blouse-v1.webp',
+    'Salwar suit': '/ui/app/garments/optimized/lndry-salwar-suit-v1.webp',
+    Lehenga: '/ui/app/garments/optimized/lndry-lehenga-v1.webp',
+    'Tie / Scarf': '/ui/app/garments/optimized/lndry-tie-scarf-v1.webp',
     'Socks pair': '/ui/app/garments/optimized/lndry-socks-pair-v1.webp',
     Towel: '/ui/app/garments/optimized/lndry-towel-v1.webp',
     'Pillow cover': '/ui/app/garments/optimized/lndry-folded-bedsheet-v1.webp',
@@ -1946,7 +1946,7 @@ export function seedLaundryDefaults(tenant: string) {
     'Uniform set': '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp',
   };
   const visualKeyByPath: Record<string, string> = {
-    '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp': 'foldedShirt', '/ui/app/garments/optimized/lndry-folded-trouser-v1.webp': 'foldedTrouser', '/ui/app/garments/optimized/lndry-folded-saree-v1.webp': 'foldedSaree', '/ui/app/garments/optimized/lndry-folded-kurti-v1.webp': 'foldedKurti', '/ui/app/garments/optimized/lndry-folded-blanket-v1.webp': 'foldedBlanket', '/ui/app/garments/optimized/lndry-folded-bedsheet-v1.webp': 'foldedBedsheet', '/ui/app/garments/optimized/lndry-mixed-clothes-v1.webp': 'mixedClothes', '/ui/app/garments/optimized/lndry-shoe-pair-v1.webp': 'shoePair', '/ui/app/garments/optimized/lndry-folded-blazer-v1.webp': 'foldedBlazer', '/ui/app/garments/optimized/lndry-folded-dress-v1.webp': 'foldedDress', '/ui/app/garments/optimized/lndry-folded-jeans-v1.webp': 'foldedJeans', '/ui/app/garments/optimized/lndry-folded-hoodie-v1.webp': 'foldedHoodie', '/ui/app/garments/optimized/lndry-folded-kurta-v1.webp': 'foldedKurta', '/ui/app/garments/optimized/lndry-handbag-v1.webp': 'handbag', '/ui/app/garments/optimized/lndry-towel-v1.webp': 'towel', '/ui/app/garments/optimized/lndry-curtain-v1.webp': 'curtain', '/ui/app/garments/optimized/lndry-carpet-rug-v1.webp': 'carpetRug', '/ui/app/garments/optimized/lndry-soft-toy-v1.webp': 'softToy', '/ui/app/garments/optimized/lndry-socks-pair-v1.webp': 'socksPair',
+    '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp': 'foldedShirt', '/ui/app/garments/optimized/lndry-folded-trouser-v1.webp': 'foldedTrouser', '/ui/app/garments/optimized/lndry-folded-saree-v1.webp': 'foldedSaree', '/ui/app/garments/optimized/lndry-folded-kurti-v1.webp': 'foldedKurti', '/ui/app/garments/optimized/lndry-folded-blanket-v1.webp': 'foldedBlanket', '/ui/app/garments/optimized/lndry-folded-bedsheet-v1.webp': 'foldedBedsheet', '/ui/app/garments/optimized/lndry-mixed-clothes-v1.webp': 'mixedClothes', '/ui/app/garments/optimized/lndry-shoe-pair-v1.webp': 'shoePair', '/ui/app/garments/optimized/lndry-folded-blazer-v1.webp': 'foldedBlazer', '/ui/app/garments/optimized/lndry-folded-dress-v1.webp': 'foldedDress', '/ui/app/garments/optimized/lndry-folded-jeans-v1.webp': 'foldedJeans', '/ui/app/garments/optimized/lndry-folded-hoodie-v1.webp': 'foldedHoodie', '/ui/app/garments/optimized/lndry-folded-kurta-v1.webp': 'foldedKurta', '/ui/app/garments/optimized/lndry-sherwani-v1.webp': 'sherwani', '/ui/app/garments/optimized/lndry-blouse-v1.webp': 'blouse', '/ui/app/garments/optimized/lndry-salwar-suit-v1.webp': 'salwarSuit', '/ui/app/garments/optimized/lndry-lehenga-v1.webp': 'lehenga', '/ui/app/garments/optimized/lndry-tie-scarf-v1.webp': 'tieScarf', '/ui/app/garments/optimized/lndry-handbag-v1.webp': 'handbag', '/ui/app/garments/optimized/lndry-towel-v1.webp': 'towel', '/ui/app/garments/optimized/lndry-curtain-v1.webp': 'curtain', '/ui/app/garments/optimized/lndry-carpet-rug-v1.webp': 'carpetRug', '/ui/app/garments/optimized/lndry-soft-toy-v1.webp': 'softToy', '/ui/app/garments/optimized/lndry-socks-pair-v1.webp': 'socksPair',
   };
   for (const [name, category, unit, prices] of defaults) {
     const garment = store.rowsOf(tenant, 'laundry_garment').find((row) => String(row.data.name || '').trim().toLowerCase() === name.toLowerCase()) || createRow(tenant, actor, 'laundry_garment', {

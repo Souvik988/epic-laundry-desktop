@@ -42,6 +42,15 @@ uses a distinct non-white colorway, visibly carries the purple Lndry care-tag
 treatment, and was checked for genuine RGBA alpha before inclusion. The full
 selection is exposed through the owner catalogue visual picker.
 
+The V4 catalogue-correction pass adds dedicated, original master visuals for
+`lndry-sherwani-v1.png`, `lndry-blouse-v1.png`, `lndry-salwar-suit-v1.png`,
+`lndry-lehenga-v1.png`, and `lndry-tie-scarf-v1.png`. These are intentionally
+unbranded garment and accessory products: a product thumbnail has no suitable
+surface for a logo, so the visual treatment relies on the approved studio,
+transparent-background asset family instead. Each has been visually reviewed,
+is retained under `assets/garments/masters/`, and ships only through a 256px
+WebP derivative.
+
 ## Current approved visual review
 
 - Regenerated 28 August 2026 with the supplied Lndry mark as the identity reference.
