@@ -85,7 +85,7 @@ try {
   assert.equal(materializedAfterApproval.created, true, 'approved reassessment unlocks materialization from actual intake');
   assert.ok(intake.id, 'intake evidence remains addressable');
 
-  const outOfOrderV3 = { ...estimateOnly, eventId: 'cross-order-2-v3', aggregateVersion: 3, eventType: 'marketplace.order.status.v1', payload: { ...estimateOnly.payload, state: 'Ready' } };
+  const outOfOrderV3 = { ...estimateOnly, eventId: 'cross-order-2-v3', aggregateVersion: 4, eventType: 'marketplace.order.status.v1', payload: { ...estimateOnly.payload, state: 'Ready' } };
   assert.equal(store.withStoreScope(tenant, storeId, () => receiveMarketplaceOrder(tenant, actor, outOfOrderV3)).held, true, 'aggregate version gaps are held');
   const rejectEnvelope = simulator.enqueueOrder(device.id, {
     tenantId: tenant, vendorId, storeId, aggregateVersion: 1, eventVersion: 1, correlationId: 'cross-order-3', externalOrderId: 'APP-ORDER-003', eventType: 'marketplace.order.assigned.v1', payload: { channel: 'MARKETPLACE', state: 'AwaitingAcceptance', orderNumber: 'APP-ORDER-003', customer: { name: 'Reject Me', phone: '9000000103' }, request: { estimatedBags: 1, expectedDeliveryDate: '2026-09-12' } },

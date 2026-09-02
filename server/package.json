@@ -18,6 +18,7 @@
     "test:marketplace-api": "tsx src/_selftest-marketplace-api.ts",
     "test:marketplace-order-truth": "tsx src/_selftest-marketplace-order-truth.ts",
     "test:marketplace-customer-status": "tsx src/_selftest-marketplace-customer-status.ts",
+    "test:marketplace-pickup": "tsx src/_selftest-marketplace-pickup.ts",
     "test:marketplace-settlement": "tsx src/_selftest-marketplace-settlement.ts",
     "test:marketplace-settlement-batches": "tsx src/_selftest-marketplace-settlement-batches.ts",
     "test:canonical-tax": "tsx src/_selftest-canonical-tax.ts",

@@ -5,3 +5,5 @@ An online request, intake assessment, operational order, and final invoice are d
 Customer-facing states are derived projections such as Received, Cleaning, Quality Check, Ready, and Out for Delivery. They are not a direct dump of internal sorting/QC/rewash/rack states. The local status read model uses an explicit, store-configurable mapping, gives a pending reassessment an `ApprovalRequired` override, and returns only a sanitized timeline derived from recorded events. It does not expose internal actors, notes, private customer profile data, or a status with no supporting evidence.
 
 After intake, a marketplace order uses the existing production, garment, bag, QC, assembly, rack, route, and delivery workflows. Source, payment, approval, and settlement rules remain attached rather than creating a separate production path.
+
+Before intake, pickup is a separate local `marketplace_pickup_task` with explicit schedule, optional rider assignment, collection outcome, and failure/cancellation reason. Scheduling and collection advance the versioned order projection and queue an outbound event; they do not create a fake laundry order or claim cloud acknowledgement.

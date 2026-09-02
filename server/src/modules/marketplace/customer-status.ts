@@ -122,6 +122,9 @@ function deriveTimeline(tenant: string, externalOrderId: string, mapping: Custom
     if (entry.action === 'marketplace:order-accepted' && entry.after && typeof entry.after === 'object' && (entry.after as Record<string, unknown>).externalOrderId === externalOrderId) addEvent(events, entry.id, entry.ts, mapping.Accepted, 'marketplace');
     if (entry.action === 'marketplace:order-rejected' && entry.after && typeof entry.after === 'object' && (entry.after as Record<string, unknown>).externalOrderId === externalOrderId) addEvent(events, entry.id, entry.ts, mapping.Rejected, 'marketplace');
     if (entry.action === 'marketplace:intake-assessed' && entry.after && typeof entry.after === 'object' && (entry.after as Record<string, unknown>).externalOrderId === externalOrderId) addEvent(events, entry.id, entry.ts, mapping.IntakeRequired, 'store');
+    if (entry.action === 'marketplace:pickup-scheduled' && entry.after && typeof entry.after === 'object' && (entry.after as Record<string, unknown>).externalOrderId === externalOrderId) addEvent(events, entry.id, entry.ts, mapping.PickupScheduled, 'store');
+    if (entry.action === 'marketplace:pickup-collected' && entry.after && typeof entry.after === 'object' && (entry.after as Record<string, unknown>).externalOrderId === externalOrderId) addEvent(events, entry.id, entry.ts, mapping.IntakeRequired, 'store');
+    if (entry.action === 'marketplace:pickup-cancelled' && entry.after && typeof entry.after === 'object' && (entry.after as Record<string, unknown>).externalOrderId === externalOrderId) addEvent(events, entry.id, entry.ts, mapping.Cancelled, 'store');
     if (entry.action === 'marketplace:reassessment-created' && entry.after && typeof entry.after === 'object' && (entry.after as Record<string, unknown>).externalOrderId === externalOrderId) {
       const state = String((entry.after as Record<string, unknown>).state || 'PendingApproval');
       addEvent(events, entry.id, entry.ts, state === 'PendingApproval' ? 'ApprovalRequired' : mapping.IntakeRequired, 'customer-approval');
@@ -152,7 +155,10 @@ export function customerFacingOrderStatus(tenant: string, externalOrderId: strin
   const pendingApproval = latestReassessment?.data.state === 'PendingApproval';
   const local = projection?.localOrderId ? store.getRow(tenant, projection.localOrderId) : undefined;
   const localState = local?.entity === 'laundry_order' ? LOCAL_STATUS_MAP[String(local.data.state || '')] : undefined;
-  const currentStatus = pendingApproval ? 'ApprovalRequired' : localState || (projection ? config.mapping[projection.state] : undefined);
+  const pickupTask = store.rowsOf(tenant, 'marketplace_pickup_task').find((candidate) => candidate.status === 'Active' && candidate.data.externalOrderId === id);
+  const pickupState = String(pickupTask?.data.state || '');
+  const pickupStatus = pickupState === 'Collected' ? config.mapping.IntakeRequired : ['Scheduled', 'Assigned', 'Failed'].includes(pickupState) ? config.mapping.PickupScheduled : pickupState === 'Cancelled' ? config.mapping.Cancelled : undefined;
+  const currentStatus = pendingApproval ? 'ApprovalRequired' : pickupStatus || localState || (projection ? config.mapping[projection.state] : undefined);
   if (!currentStatus) throw new Error('CUSTOMER_STATUS_NOT_AVAILABLE');
   return {
     externalOrderId: id,

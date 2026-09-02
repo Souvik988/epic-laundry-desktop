@@ -23,7 +23,7 @@ try {
   const incoming = {
     eventId: 'marketplace-api-order-001', source: 'simulator', tenantId: tenant, vendorId: 'VENDOR-API', storeId, deviceId: device.id,
     aggregateType: 'marketplace_order', aggregateId: 'EXT-API-001', aggregateVersion: 1, eventType: 'marketplace.order.assigned.v1', eventVersion: 1, occurredAt: new Date().toISOString(),
-    payload: { externalOrderId: 'EXT-API-001', channel: 'CUSTOMER_APP', state: 'AwaitingAcceptance', orderNumber: 'APP-001', customer: { name: 'Kavya Nair' } },
+    payload: { externalOrderId: 'EXT-API-001', channel: 'CUSTOMER_APP', state: 'AwaitingAcceptance', orderNumber: 'APP-001', customer: { name: 'Kavya Nair' }, pickup: { address: '12 API Lane', requestedSlot: '10:00-12:00' } },
   };
   store.withStoreScope(tenant, storeId, () => receiveMarketplaceOrder(tenant, 'marketplace-owner', incoming));
   const status = await app.inject({ method: 'GET', url: '/api/marketplace/sync/status', headers });
@@ -57,6 +57,11 @@ try {
   const accept = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/accept', headers: { ...headers, 'idempotency-key': 'marketplace-api-accept-001' }, payload: {} });
   assert.equal(accept.statusCode, 200, 'operator can accept an awaiting marketplace order');
   assert.equal(accept.json().order.state, 'Accepted', 'accepted action updates the local operational projection');
+  const pickup = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/pickup/schedule', headers: { ...headers, 'idempotency-key': 'marketplace-api-pickup-001' }, payload: { scheduledDate: '2026-09-04', window: '10:00-12:00', riderId: 'rider-api-1', serviceZone: 'Central' } });
+  assert.equal(pickup.statusCode, 201, 'operator can schedule an online-order pickup with a local rider assignment');
+  assert.equal(pickup.json().projection.state, 'PickupScheduled', 'pickup scheduling advances the versioned order projection');
+  const pickupStatus = await app.inject({ method: 'GET', url: '/api/marketplace/orders/EXT-API-001/customer-status', headers });
+  assert.equal(pickupStatus.json().status, 'PickupScheduled', 'customer status gives explicit pickup evidence precedence over a linked booked order');
   const acceptedRetry = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/accept', headers: { ...headers, 'idempotency-key': 'marketplace-api-accept-001' }, payload: {} });
   assert.equal(acceptedRetry.json().event.eventId, accept.json().event.eventId, 'operator command retry returns the original durable outbound event');
   const settlement = await app.inject({ method: 'POST', url: '/api/marketplace/settlements', headers: { ...headers, 'idempotency-key': 'marketplace-api-settlement-001' }, payload: { externalOrderId: 'EXT-API-001', policyVersion: 'policy-api-2026-01', customerCollectedPaise: 10000, vendorServiceGrossPaise: 9000, commissionBps: 1000 } });

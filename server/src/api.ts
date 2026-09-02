@@ -83,6 +83,7 @@ import { createPayoutAttempt, createSettlementBatch, payoutAttempt, settlementBa
 import { recordProviderPaymentEvent, verifyProviderWebhook, type ProviderPaymentEvent } from './modules/marketplace/provider-events.js';
 import { queueMarketplaceNotification, recordMarketplaceNotificationDelivery, type NotificationChannel, type NotificationState } from './modules/marketplace/notifications.js';
 import { customerFacingOrderStatus, customerStatusMapping, saveCustomerStatusMapping } from './modules/marketplace/customer-status.js';
+import { completeMarketplacePickup, marketplacePickupTask, scheduleMarketplacePickup } from './modules/marketplace/pickup.js';
 import { renderCanonicalTaxInvoice } from './modules/gst/canonical-invoice-print.js';
 import { approveTaxPolicyRule, createTaxPolicyRule, listTaxPolicyRules, retireTaxPolicyRule, saveSupplierTaxProfile, supplierTaxProfile, taxReadiness } from './modules/gst/tax-policy.js';
 import { auditGarmentAssets } from './modules/laundry/garment-assets.js';
@@ -220,6 +221,14 @@ const customerStatusMappingBody = {
     Completed: { type: 'string', enum: ['AwaitingAcceptance', 'Accepted', 'PickupScheduled', 'Received', 'Cleaning', 'QualityCheck', 'Ready', 'OutForDelivery', 'Delivered', 'ApprovalRequired', 'Cancelled'] },
     Cancelled: { type: 'string', enum: ['AwaitingAcceptance', 'Accepted', 'PickupScheduled', 'Received', 'Cleaning', 'QualityCheck', 'Ready', 'OutForDelivery', 'Delivered', 'ApprovalRequired', 'Cancelled'] },
   },
+} as const;
+const marketplacePickupScheduleBody = {
+  type: 'object', required: ['scheduledDate'], properties: {
+    scheduledDate: { type: 'string', minLength: 10, maxLength: 10 }, window: { type: 'string', maxLength: 80 }, riderId: { type: 'string', maxLength: 160 }, serviceZone: { type: 'string', maxLength: 120 },
+  }, additionalProperties: false,
+} as const;
+const marketplacePickupOutcomeBody = {
+  type: 'object', required: ['state'], properties: { state: { type: 'string', enum: ['Collected', 'Failed', 'Cancelled'] }, reason: { type: 'string', maxLength: 500 } }, additionalProperties: false,
 } as const;
 const marketplacePaymentWebhookParams = {
   type: 'object', required: ['provider'],
@@ -629,6 +638,15 @@ export function registerApi(app: FastifyInstance) {
   app.put('/api/marketplace/customer-status-mapping', { schema: { body: customerStatusMappingBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => saveCustomerStatusMapping(req.auth!.tenant, req.auth!.actor, req.body || {})); }
     catch (error) { return rep.code(422).send({ error: error instanceof Error ? error.message : 'customer status mapping invalid' }); }
+  });
+  app.get('/api/marketplace/orders/:externalOrderId/pickup', { schema: { params: marketplaceOrderParams }, preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => marketplacePickupTask(req.auth!.tenant, req.params.externalOrderId)));
+  app.post('/api/marketplace/orders/:externalOrderId/pickup/schedule', { schema: { params: marketplaceOrderParams, body: marketplacePickupScheduleBody }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.pickup-schedule:${req.params.externalOrderId}`, () => scheduleMarketplacePickup(req.auth!.tenant, req.auth!.actor, { ...req.body, externalOrderId: req.params.externalOrderId })))); }
+    catch (error) { return rep.code(error instanceof Error && error.message === 'marketplace order not found' ? 404 : 422).send({ code: error instanceof Error ? error.message : 'PICKUP_SCHEDULE_FAILED', error: error instanceof Error ? error.message : 'pickup scheduling failed' }); }
+  });
+  app.post('/api/marketplace/orders/:externalOrderId/pickup/outcome', { schema: { params: marketplaceOrderParams, body: marketplacePickupOutcomeBody }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `marketplace.pickup-outcome:${req.params.externalOrderId}:${req.body.state}`, () => completeMarketplacePickup(req.auth!.tenant, req.auth!.actor, { ...req.body, externalOrderId: req.params.externalOrderId }))); }
+    catch (error) { return rep.code(422).send({ code: error instanceof Error ? error.message : 'PICKUP_OUTCOME_FAILED', error: error instanceof Error ? error.message : 'pickup outcome failed' }); }
   });
   app.post('/api/marketplace/settlements', { schema: { body: { type: 'object', required: ['externalOrderId', 'policyVersion', 'customerCollectedPaise', 'vendorServiceGrossPaise', 'commissionBps'], properties: { externalOrderId: { type: 'string', minLength: 1, maxLength: 160 }, policyVersion: { type: 'string', minLength: 1, maxLength: 80 }, customerCollectedPaise: { type: 'integer', minimum: 0 }, refundPaise: { type: 'integer', minimum: 0 }, refundAllocations: { type: 'array', maxItems: 100, items: { type: 'object', required: ['allocationId', 'amountPaise', 'responsibility', 'reason'], properties: { allocationId: { type: 'string', minLength: 1, maxLength: 160 }, amountPaise: { type: 'integer', minimum: 0 }, responsibility: { type: 'string', enum: ['Vendor', 'Platform', 'Shared', 'PendingPolicy'] }, reason: { type: 'string', minLength: 3, maxLength: 500 } }, additionalProperties: false } }, vendorServiceGrossPaise: { type: 'integer', minimum: 0 }, vendorFundedDiscountPaise: { type: 'integer', minimum: 0 }, platformFundedPromotionPaise: { type: 'integer', minimum: 0 }, commissionBps: { type: 'integer', minimum: 0, maximum: 10000 }, paymentFeePaise: { type: 'integer', minimum: 0 }, withholdingPaise: { type: 'integer', minimum: 0 }, adjustmentsPaise: { type: 'integer' } }, additionalProperties: false } }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.settlement:${req.body.externalOrderId}:${req.body.policyVersion}`, () => recordMarketplaceSettlement(req.auth!.tenant, req.auth!.actor, req.body)))); }
