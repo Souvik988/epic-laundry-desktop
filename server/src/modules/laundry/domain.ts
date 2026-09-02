@@ -997,6 +997,12 @@ export function listLaundryOrders(tenant: string, query: { search?: string; stat
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
+export function listLaundryOrderPage(tenant: string, query: { search?: string; state?: string; from?: string; to?: string; page?: number; pageSize?: number } = {}) {
+  const result = store.listLaundryOrderPage(tenant, query);
+  const items = result.rows.map((order) => presentOrder(tenant, order));
+  return { items, total: result.total, page: result.page, pageSize: result.pageSize, totalPages: Math.max(1, Math.ceil(result.total / result.pageSize)) };
+}
+
 export function getLaundryOrder(tenant: string, id: string) {
   const order = store.getRow(tenant, id);
   if (!order || order.entity !== 'laundry_order') throw new Error('laundry order not found');

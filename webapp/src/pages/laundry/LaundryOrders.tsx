@@ -41,6 +41,8 @@ const states: Array<LaundryState | "all"> = [
   "Cancelled",
 ];
 
+type OrderPage = { items: LaundryOrder[]; total: number; page: number; pageSize: number; totalPages: number };
+
 export default function LaundryOrders() {
   const client = useQueryClient();
   const [search, setSearch] = useState("");
@@ -48,11 +50,13 @@ export default function LaundryOrders() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
   const [searchParams] = useSearchParams();
   useEffect(() => {
     const order = searchParams.get("order");
     if (order) setSelected(order);
   }, [searchParams]);
+  useEffect(() => setPage(1), [search, state, from, to]);
   const filters = new URLSearchParams({
     search,
     ...(state === "all" ? {} : { state }),
@@ -60,9 +64,9 @@ export default function LaundryOrders() {
     ...(to ? { to } : {}),
   });
   const orders = useQuery({
-    queryKey: ["laundry-orders", search, state, from, to],
+    queryKey: ["laundry-orders", search, state, from, to, page],
     queryFn: () =>
-      apiGet<LaundryOrder[]>(`/laundry/orders?${filters.toString()}`),
+      apiGet<OrderPage>(`/laundry/orders?${filters.toString()}&page=${page}&pageSize=50`),
   });
   const detail = useQuery({
     queryKey: ["laundry-order", selected],
@@ -96,7 +100,7 @@ export default function LaundryOrders() {
       client.invalidateQueries({ queryKey: ["laundry-dispatch"] });
     },
   });
-  const rows = orders.data || [];
+  const rows = orders.data?.items || [];
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-end 2xl:justify-between">
@@ -168,7 +172,7 @@ export default function LaundryOrders() {
           </div>
           <div className="flex items-center justify-between border-b border-[#263f44]/8 px-5 py-2.5 text-xs text-[#617178]">
             <span>
-              <strong className="text-[#315d57]">{rows.length}</strong> matching
+              <strong className="text-[#315d57]">{orders.data?.total ?? rows.length}</strong> matching
               order{rows.length === 1 ? "" : "s"}
             </span>
             <span>
@@ -185,6 +189,11 @@ export default function LaundryOrders() {
               transition.mutate({ id, next, expectedVersion })
             }
           />
+          <div className="flex items-center justify-between border-t border-[#263f44]/8 px-5 py-3 text-xs text-[#617178]">
+            <button type="button" disabled={page <= 1 || orders.isFetching} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-lg border border-[#263f44]/15 bg-white px-3 py-1.5 font-bold text-[#315d57] disabled:cursor-not-allowed disabled:opacity-40">Previous</button>
+            <span>Page {orders.data?.page || page} of {orders.data?.totalPages || 1}</span>
+            <button type="button" disabled={page >= (orders.data?.totalPages || 1) || orders.isFetching} onClick={() => setPage((value) => value + 1)} className="rounded-lg border border-[#263f44]/15 bg-white px-3 py-1.5 font-bold text-[#315d57] disabled:cursor-not-allowed disabled:opacity-40">Next</button>
+          </div>
         </section>
         <OrderDetail
           order={detail.data}

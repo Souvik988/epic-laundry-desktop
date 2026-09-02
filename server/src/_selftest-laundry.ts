@@ -13,7 +13,7 @@ try {
   const { createLaundryRegressionFixture } = await import('./testing/laundry-regression-fixture.js');
   const { laundryBusinessDate } = await import('./modules/laundry/dates.js');
   const {
-    assignLaundryOrder, bookLaundryOrder, cancelLaundryExpense, cancelLaundryOrder, createLaundryExpense, createLaundryRider, editLaundryExpense, editLaundryOrder, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard, laundryDispatch, laundryReportDetail, laundryReports, laundryStatistics, listLaundryRiderSettlements, quoteLaundryOrder, recordLaundryFulfillment, saveLaundryRiderSettlement, scanLaundryGarment, seedLaundryDefaults, transitionLaundryOrder,
+    assignLaundryOrder, bookLaundryOrder, cancelLaundryExpense, cancelLaundryOrder, createLaundryExpense, createLaundryRider, editLaundryExpense, editLaundryOrder, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard, laundryDispatch, laundryReportDetail, laundryReports, laundryStatistics, listLaundryOrderPage, listLaundryRiderSettlements, quoteLaundryOrder, recordLaundryFulfillment, saveLaundryRiderSettlement, scanLaundryGarment, seedLaundryDefaults, transitionLaundryOrder,
   } = await import('./modules/laundry/domain.js');
 
   const tenant = 'TEST';
@@ -52,6 +52,9 @@ try {
   assert.equal(result.tags[0].orderDate, result.order.orderDate, 'tags carry the order date');
   assert.equal(store.rowsOf(tenant, 'sales_invoice').length, 1, 'booking posts a real sales invoice');
   assert.equal(store.rowsOf(tenant, 'payment_entry').length, 1, 'booking persists payment evidence');
+  const pagedOrders = listLaundryOrderPage(tenant, { search: 'Asha Verma', page: 1, pageSize: 1 });
+  assert.equal(pagedOrders.total, 1, 'SQL-backed order search counts the matching customer without loading a full response');
+  assert.equal(pagedOrders.items.length, 1, 'SQL-backed order pagination returns the bounded page size');
 
   transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'In Process');
   assert.throws(() => transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'Ready'), /assembly incomplete/, 'final Ready transition blocks incomplete tracked-piece assembly');

@@ -884,6 +884,26 @@ export class Store {
   }
   getRow(tenant: string, id: string) { return this.readRows('SELECT * FROM entity_rows WHERE tenant = ? AND store_id = ? AND id = ?', [tenant, this.currentStore(tenant), id])[0]; }
   rowsOf(tenant: string, entity: string) { return this.readRows('SELECT * FROM entity_rows WHERE tenant = ? AND store_id = ? AND entity = ? ORDER BY created_at', [tenant, this.currentStore(tenant), entity]); }
+  listLaundryOrderPage(tenant: string, input: { search?: string; state?: string; from?: string; to?: string; page?: number; pageSize?: number } = {}) {
+    const pageSize = Math.max(1, Math.min(200, Math.floor(Number(input.pageSize) || 50)));
+    const page = Math.max(1, Math.floor(Number(input.page) || 1));
+    const offset = (page - 1) * pageSize;
+    const params: unknown[] = [tenant, this.currentStore(tenant)];
+    const clauses = ["r.tenant = ?", "r.store_id = ?", "r.entity = 'laundry_order'"];
+    if (input.state) { clauses.push("json_extract(r.data_json, '$.state') = ?"); params.push(input.state); }
+    if (input.from) { clauses.push("json_extract(r.data_json, '$.order_date') >= ?"); params.push(input.from); }
+    if (input.to) { clauses.push("json_extract(r.data_json, '$.order_date') <= ?"); params.push(input.to); }
+    const search = String(input.search || '').trim().toLowerCase();
+    if (search) {
+      const pattern = `%${search}%`;
+      clauses.push(`(lower(COALESCE(json_extract(r.data_json, '$.name'), '')) LIKE ? OR lower(COALESCE(json_extract(r.data_json, '$.invoice'), '')) LIKE ? OR lower(r.id) LIKE ? OR EXISTS (SELECT 1 FROM entity_rows p WHERE p.tenant = r.tenant AND p.store_id = r.store_id AND p.entity = 'party' AND p.id = json_extract(r.data_json, '$.customer') AND (lower(COALESCE(json_extract(p.data_json, '$.name'), '')) LIKE ? OR lower(COALESCE(json_extract(p.data_json, '$.phone'), '')) LIKE ?)) OR EXISTS (SELECT 1 FROM entity_rows i WHERE i.tenant = r.tenant AND i.store_id = r.store_id AND i.id = json_extract(r.data_json, '$.invoice') AND lower(COALESCE(json_extract(i.data_json, '$.name'), '')) LIKE ?))`);
+      params.push(pattern, pattern, pattern, pattern, pattern, pattern);
+    }
+    const where = clauses.join(' AND ');
+    const total = Number((this.db.prepare(`SELECT COUNT(*) AS count FROM entity_rows r WHERE ${where}`).get(...params) as { count: number }).count);
+    const rows = this.readRows(`SELECT r.* FROM entity_rows r WHERE ${where} ORDER BY r.created_at DESC, r.id DESC LIMIT ? OFFSET ?`, [...params, pageSize, offset]);
+    return { rows, total, page, pageSize };
+  }
   private reportDateExpression(field: 'order_date' | 'posting_date' | 'expense_date' | 'created_at') { return field === 'created_at' ? 'created_at' : `json_extract(data_json, '$.${field}')`; }
   rowsOfReportDate(tenant: string, entity: string, field: 'order_date' | 'posting_date' | 'expense_date' | 'created_at', from?: string, to?: string) {
     const expression = this.reportDateExpression(field); const params: unknown[] = [tenant, this.currentStore(tenant), entity]; const clauses = ['tenant = ?', 'store_id = ?', 'entity = ?'];
