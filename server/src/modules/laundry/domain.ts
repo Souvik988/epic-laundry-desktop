@@ -114,12 +114,13 @@ type ContainerScanInput = { tagCode?: string; nextState?: LaundryContainerState;
 type EditOrderInput = Pick<BookInput, 'items' | 'expectedDeliveryDate' | 'fulfillmentMode' | 'charges' | 'discounts' | 'taxRate' | 'chargeRuleIds' | 'discountRuleIds' | 'taxRuleId' | 'serviceZone'> & { notes?: string; deliveryAddress?: string; expectedVersion?: number };
 type CategoryInput = { name?: string; color?: string; image?: string; sortOrder?: number; active?: boolean };
 type ServiceInput = { name?: string; description?: string; units?: string[]; active?: boolean };
-type GarmentInput = { name?: string; code?: string; category?: string; unit?: string; hsn?: string; gstRate?: number; photo?: string; active?: boolean };
+type GarmentInput = { name?: string; code?: string; category?: string; unit?: string; hsn?: string; gstRate?: number; visualKey?: string; photo?: string; active?: boolean };
 type PriceInput = { garment?: string; service?: string; customer?: string; rate?: number; active?: boolean };
 type AdjustmentRuleInput = { name?: string; type?: 'Flat' | 'Percentage'; amount?: number; description?: string; active?: boolean };
 type TaxRuleInput = { name?: string; rate?: number; active?: boolean };
 
 const SERVICE_UNITS = ['Piece', 'Kilogram', 'Pair', 'Square Foot'] as const;
+const GARMENT_VISUAL_KEYS = ['foldedShirt', 'foldedTrouser', 'foldedSaree', 'foldedKurti', 'foldedBlanket', 'foldedBedsheet', 'mixedClothes', 'shoePair', 'foldedBlazer', 'foldedDress', 'foldedJeans', 'foldedHoodie', 'foldedKurta'] as const;
 const CONTAINER_TRANSITIONS: Record<LaundryContainerState, LaundryContainerState[]> = {
   Intake: ['Processing', 'Cancelled'], Processing: ['Ready', 'Cancelled'], Ready: ['Dispatched', 'Delivered', 'Cancelled'], Dispatched: ['Delivered'],
   Delivered: [], Missing: [], Damaged: [], Cancelled: [],
@@ -1020,6 +1021,12 @@ function cleanImagePath(value: unknown) {
   if (path.length > MAX_MASTER_IMAGE_PATH || !/^\/ui\/app\/(?:garments|brand)\/[a-z0-9._-]+\.(?:png|webp|jpe?g|svg)$/i.test(path)) throw new Error('garment image must be an approved local application asset');
   return path;
 }
+function cleanVisualKey(value: unknown) {
+  const visualKey = String(value || '').trim();
+  if (!visualKey) return '';
+  if (!GARMENT_VISUAL_KEYS.includes(visualKey as typeof GARMENT_VISUAL_KEYS[number])) throw new Error('garment visual key is not in the approved visual taxonomy');
+  return visualKey;
+}
 function uniqueNamed(tenant: string, entity: string, name: string, exceptId?: string) {
   const duplicate = store.rowsOf(tenant, entity).find((row) => row.id !== exceptId && String(row.data.name || '').trim().toLowerCase() === name.toLowerCase());
   if (duplicate) throw new Error(`a ${entity.replace('laundry_', '').replace(/_/g, ' ')} with this name already exists`);
@@ -1060,6 +1067,7 @@ export function saveLaundryService(tenant: string, actor: string, input: Service
 }
 
 export function saveLaundryGarment(tenant: string, actor: string, input: GarmentInput, id?: string) {
+  const existing = id ? getRequired(tenant, 'laundry_garment', id, 'garment') : undefined;
   const name = cleanName(input.name, 'garment name');
   const category = getRequired(tenant, 'laundry_category', String(input.category || ''), 'category');
   const unit = String(input.unit || 'Piece');
@@ -1068,7 +1076,11 @@ export function saveLaundryGarment(tenant: string, actor: string, input: Garment
   if (code.length < 2) throw new Error('garment code is required');
   const gstRate = round(Number(input.gstRate) || 0);
   if (gstRate < 0 || gstRate > 100) throw new Error('garment GST rate must be between 0 and 100');
-  const data = { name, code, category: category.id, unit, hsn: String(input.hsn || '9997').trim().slice(0, 32), gst_rate: gstRate, photo: cleanImagePath(input.photo), active: cleanActive(input.active) };
+  const active = cleanActive(input.active, existing?.data.active !== false);
+  const visualKey = cleanVisualKey(input.visualKey ?? existing?.data.visual_key);
+  if (active && !visualKey) throw new Error('an active garment requires an approved visual key or must be marked inactive until its visual is reviewed');
+  const photo = cleanImagePath(input.photo === undefined ? existing?.data.photo : input.photo);
+  const data = { name, code, category: category.id, unit, hsn: String(input.hsn || existing?.data.hsn || '9997').trim().slice(0, 32), gst_rate: gstRate, visual_key: visualKey, photo, active };
   return store.transaction(() => {
     uniqueNamed(tenant, 'laundry_garment', name, id);
     const duplicateCode = store.rowsOf(tenant, 'laundry_garment').find((row) => row.id !== id && String(row.data.code || '').toUpperCase() === code);
@@ -1929,10 +1941,13 @@ export function seedLaundryDefaults(tenant: string) {
     'Soft toy': '/ui/app/garments/lndry-mixed-clothes-v1.png',
     'Uniform set': '/ui/app/garments/lndry-folded-shirt-v3.png',
   };
+  const visualKeyByPath: Record<string, string> = {
+    '/ui/app/garments/lndry-folded-shirt-v3.png': 'foldedShirt', '/ui/app/garments/lndry-folded-trouser-v1.png': 'foldedTrouser', '/ui/app/garments/lndry-folded-saree-v1.png': 'foldedSaree', '/ui/app/garments/lndry-folded-kurti-v1.png': 'foldedKurti', '/ui/app/garments/lndry-folded-blanket-v1.png': 'foldedBlanket', '/ui/app/garments/lndry-folded-bedsheet-v1.png': 'foldedBedsheet', '/ui/app/garments/lndry-mixed-clothes-v1.png': 'mixedClothes', '/ui/app/garments/lndry-shoe-pair-v1.png': 'shoePair', '/ui/app/garments/lndry-folded-blazer-v1.png': 'foldedBlazer', '/ui/app/garments/lndry-folded-dress-v1.png': 'foldedDress', '/ui/app/garments/lndry-folded-jeans-v1.png': 'foldedJeans', '/ui/app/garments/lndry-folded-hoodie-v1.png': 'foldedHoodie', '/ui/app/garments/lndry-folded-kurta-v1.png': 'foldedKurta',
+  };
   for (const [name, category, unit, prices] of defaults) {
     const garment = store.rowsOf(tenant, 'laundry_garment').find((row) => String(row.data.name || '').trim().toLowerCase() === name.toLowerCase()) || createRow(tenant, actor, 'laundry_garment', {
       name, code: name.toUpperCase().replace(/[^A-Z0-9]+/g, '-'), category: categories.get(category)!.id,
-      unit, hsn: '9997', gst_rate: 0, photo: garmentVisualByName[name] || '', active: true,
+      unit, hsn: '9997', gst_rate: 0, visual_key: visualKeyByPath[garmentVisualByName[name]] || '', photo: garmentVisualByName[name] || '', active: true,
     });
     for (const [service, rate] of prices) {
       const serviceId = services.get(service)!.id;

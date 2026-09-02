@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
-import { existsSync, readFileSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, extname, join } from 'node:path';
+import { homedir } from 'node:os';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseMoney } from './money.js';
@@ -251,11 +252,26 @@ export type CompatibilityMigrationRun = {
   sourceHash: string; actor: string; startedAt: string; updatedAt: string; completedAt?: string; error?: string;
 };
 
-const legacyFile = process.env.EPIC_LEGACY_JSON_FILE || process.env.EPIC_DATA_FILE || './data/epic.json';
+// A standalone server must not derive persistent data from its current working directory.
+// Electron always supplies an explicit workspace path; this fallback is only for a deliberate
+// standalone invocation and keeps development/test data out of the repository and package.
+const legacyFile = process.env.EPIC_LEGACY_JSON_FILE || process.env.EPIC_DATA_FILE || join(homedir(), '.epic-laundry', 'epic.json');
 const databaseFile = process.env.EPIC_DB_FILE
   || (extname(legacyFile).toLowerCase() === '.json' ? `${legacyFile.slice(0, -5)}.sqlite` : join(legacyFile, 'epic.sqlite'));
 const empty = (): DbShape => ({ rows: [], gl: [], audit: [], outbox: [], stock: [], ims: [], seq: {} });
 const encode = (value: unknown) => JSON.stringify(value);
+
+/**
+ * better-sqlite3 creates a database file but intentionally does not create its parent directory.
+ * Workspace paths are supplied by Electron and may legitimately be brand-new on first run.
+ */
+function ensureDatabaseParentDirectory(path: string) {
+  const target = String(path || '').trim();
+  // SQLite's memory and URI targets do not have a filesystem parent to create.
+  if (!target || target === ':memory:' || target.startsWith('file:')) return;
+  const parent = dirname(target);
+  if (parent && parent !== '.') mkdirSync(parent, { recursive: true });
+}
 function normalizeStationCapacities(value: unknown) {
   const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const result: Record<string, number> = { ...DEFAULT_STATION_CAPACITIES };
@@ -304,6 +320,7 @@ export class Store {
   constructor(databaseFileOverride?: string, options: { skipLegacyImport?: boolean } = {}) {
     this.databasePath = databaseFileOverride || databaseFile;
     this.skipLegacyImport = Boolean(options.skipLegacyImport);
+    ensureDatabaseParentDirectory(this.databasePath);
     this.db = new Database(this.databasePath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
@@ -497,6 +514,7 @@ export class Store {
       { version: 17, name: 'durable-tag-history-and-print-jobs', sql: "CREATE TABLE IF NOT EXISTS tag_history (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, garment_unit_id TEXT NOT NULL, tag_code TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('Active','Retired','Lost','Damaged','Replaced')), issued_at TEXT NOT NULL, issued_by TEXT NOT NULL, retired_at TEXT, retired_by TEXT, retirement_reason TEXT, replacement_tag_id TEXT, version INTEGER NOT NULL CHECK(version > 0), created_at TEXT NOT NULL, UNIQUE(tenant, store_id, tag_code)); CREATE INDEX IF NOT EXISTS tag_history_unit ON tag_history(tenant, store_id, garment_unit_id, created_at); CREATE INDEX IF NOT EXISTS tag_history_lookup ON tag_history(tenant, store_id, tag_code, status); CREATE TABLE IF NOT EXISTS tag_print_jobs (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, template_id TEXT NOT NULL, template_version TEXT NOT NULL, printer_profile TEXT NOT NULL, tag_ids_json TEXT NOT NULL, document_type TEXT NOT NULL, requested_copies INTEGER NOT NULL CHECK(requested_copies > 0), requested_by TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT, completed_at TEXT, failure_reason TEXT, output_hash TEXT, evidence TEXT); CREATE INDEX IF NOT EXISTS tag_print_jobs_scope_time ON tag_print_jobs(tenant, store_id, created_at DESC); INSERT INTO tag_history(id,tenant,store_id,garment_unit_id,tag_code,status,issued_at,issued_by,version,created_at) SELECT 'th_legacy_' || id,tenant,store_id,id,active_tag_code,'Active',created_at,created_by,1,created_at FROM garment_units WHERE NOT EXISTS (SELECT 1 FROM tag_history h WHERE h.tenant = garment_units.tenant AND h.store_id = garment_units.store_id AND h.tag_code = garment_units.active_tag_code);" },
       { version: 18, name: 'hardened-print-job-state-and-document-constraints', sql: "CREATE TABLE tag_print_jobs_hardened (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, template_id TEXT NOT NULL, template_version TEXT NOT NULL, printer_profile TEXT NOT NULL, tag_ids_json TEXT NOT NULL, document_type TEXT NOT NULL CHECK(document_type IN ('invoice','mini-invoice','garment-tags','bag-tags','correction')), requested_copies INTEGER NOT NULL CHECK(typeof(requested_copies) = 'integer' AND requested_copies BETWEEN 1 AND 500), requested_by TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('Queued','Rendering','Printed','Downloaded','Failed','Cancelled')), started_at TEXT, completed_at TEXT, failure_reason TEXT, output_hash TEXT, evidence TEXT); INSERT INTO tag_print_jobs_hardened(id,tenant,store_id,order_id,template_id,template_version,printer_profile,tag_ids_json,document_type,requested_copies,requested_by,created_at,status,started_at,completed_at,failure_reason,output_hash,evidence) SELECT id,tenant,store_id,order_id,template_id,template_version,printer_profile,tag_ids_json,document_type,requested_copies,requested_by,created_at,status,started_at,completed_at,failure_reason,output_hash,evidence FROM tag_print_jobs; DROP TABLE tag_print_jobs; ALTER TABLE tag_print_jobs_hardened RENAME TO tag_print_jobs; CREATE INDEX tag_print_jobs_scope_time ON tag_print_jobs(tenant, store_id, created_at DESC);" },
       { version: 19, name: 'explicit-laundry-container-tags', sql: "CREATE TABLE IF NOT EXISTS laundry_containers (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, customer_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence > 0), total INTEGER NOT NULL CHECK(total > 0), weight_milli INTEGER, tag_code TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('Intake','Processing','Ready','Dispatched','Delivered','Missing','Damaged','Cancelled')), location TEXT NOT NULL DEFAULT 'Intake', condition TEXT NOT NULL DEFAULT 'Normal', created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, delivered_at TEXT, UNIQUE(tenant, store_id, tag_code), UNIQUE(tenant, store_id, order_id, sequence)); CREATE INDEX IF NOT EXISTS laundry_containers_scope_order ON laundry_containers(tenant, store_id, order_id, sequence); CREATE INDEX IF NOT EXISTS laundry_containers_tag_lookup ON laundry_containers(tenant, store_id, tag_code, state); CREATE TABLE IF NOT EXISTS laundry_container_events (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, container_id TEXT NOT NULL, event TEXT NOT NULL, from_state TEXT, to_state TEXT, location TEXT, actor TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS laundry_container_events_container ON laundry_container_events(tenant, store_id, container_id, created_at);" },
+      { version: 20, name: 'explicit-garment-visual-keys', sql: "UPDATE entity_rows SET data_json = json_set(data_json, '$.visual_key', CASE json_extract(data_json, '$.photo') WHEN '/ui/app/garments/lndry-folded-shirt-v3.png' THEN 'foldedShirt' WHEN '/ui/app/garments/lndry-folded-trouser-v1.png' THEN 'foldedTrouser' WHEN '/ui/app/garments/lndry-folded-saree-v1.png' THEN 'foldedSaree' WHEN '/ui/app/garments/lndry-folded-kurti-v1.png' THEN 'foldedKurti' WHEN '/ui/app/garments/lndry-folded-blanket-v1.png' THEN 'foldedBlanket' WHEN '/ui/app/garments/lndry-folded-bedsheet-v1.png' THEN 'foldedBedsheet' WHEN '/ui/app/garments/lndry-mixed-clothes-v1.png' THEN 'mixedClothes' WHEN '/ui/app/garments/lndry-shoe-pair-v1.png' THEN 'shoePair' WHEN '/ui/app/garments/lndry-folded-blazer-v1.png' THEN 'foldedBlazer' WHEN '/ui/app/garments/lndry-folded-dress-v1.png' THEN 'foldedDress' WHEN '/ui/app/garments/lndry-folded-jeans-v1.png' THEN 'foldedJeans' WHEN '/ui/app/garments/lndry-folded-hoodie-v1.png' THEN 'foldedHoodie' WHEN '/ui/app/garments/lndry-folded-kurta-v1.png' THEN 'foldedKurta' ELSE '' END) WHERE entity = 'laundry_garment' AND COALESCE(json_extract(data_json, '$.visual_key'), '') = '';" },
     ];
     this.db.transaction(() => {
       for (const migration of migrations) {

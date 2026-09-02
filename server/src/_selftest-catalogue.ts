@@ -29,11 +29,12 @@ try {
   assert.throws(() => saveLaundryCategory(tenant, actor, { name: 'delicate ITEMS' }), /already exists/, 'category names are constrained case-insensitively');
 
   const service = saveLaundryService(tenant, actor, { name: 'Premium Steam', description: 'Finishing for delicate fabrics', units: ['Piece', 'Pair'] });
-  const garment = saveLaundryGarment(tenant, actor, { name: 'Silk scarf', code: 'SILK-SCARF', category: category.id, unit: 'Piece', photo: '/ui/app/garments/lndry-folded-shirt-v3.png' });
+  const garment = saveLaundryGarment(tenant, actor, { name: 'Silk scarf', code: 'SILK-SCARF', category: category.id, unit: 'Piece', visualKey: 'foldedShirt', photo: '/ui/app/garments/lndry-folded-shirt-v3.png' });
   assert.equal((garment as any).photo, '/ui/app/garments/lndry-folded-shirt-v3.png', 'only approved local garment assets are accepted');
-  const uploadedGarment = saveLaundryGarment(tenant, actor, { name: 'Upload-safe tie', code: 'UPLOAD-TIE', category: category.id, unit: 'Piece', photo: 'data:image/png;base64,iVBORw0KGgo=' });
+  assert.equal((garment as any).visual_key, 'foldedShirt', 'catalogue garments persist an explicit visual identity');
+  const uploadedGarment = saveLaundryGarment(tenant, actor, { name: 'Upload-safe tie', code: 'UPLOAD-TIE', category: category.id, unit: 'Piece', visualKey: 'foldedShirt', photo: 'data:image/png;base64,iVBORw0KGgo=' });
   assert.match(String((uploadedGarment as any).photo), /^data:image\/png;base64,/, 'validated local image data can be stored with garment metadata');
-  assert.throws(() => saveLaundryGarment(tenant, actor, { name: 'Unsafe asset', category: category.id, unit: 'Piece', photo: 'https://example.test/image.png' }), /approved local application asset/, 'external image URLs cannot be stored as attachment metadata');
+  assert.throws(() => saveLaundryGarment(tenant, actor, { name: 'Unsafe asset', category: category.id, unit: 'Piece', visualKey: 'foldedShirt', photo: 'https://example.test/image.png' }), /approved local application asset/, 'external image URLs cannot be stored as attachment metadata');
 
   const generalPrice = saveLaundryPrice(tenant, actor, { garment: garment.id, service: service.id, rate: 89 });
   assert.equal((generalPrice as any).rate, 89, 'general price rule is persisted');
@@ -71,7 +72,7 @@ try {
   const importedCatalogue = importLaundryCatalogue(tenant, actor, {
     categories: [{ id: 'owner-category-1', name: 'Imported premium', color: '#123456' }],
     services: [{ id: 'owner-service-1', name: 'Imported care', description: 'Owner supplied care', units: ['Piece'] }],
-    garments: [{ id: 'owner-garment-1', name: 'Imported coat', code: 'IMPORTED-COAT', category: 'Imported premium', unit: 'Piece', hsn: '9997', gstRate: 5, photo: '/ui/app/garments/lndry-folded-blazer-v1.png' }],
+    garments: [{ id: 'owner-garment-1', name: 'Imported coat', code: 'IMPORTED-COAT', category: 'Imported premium', unit: 'Piece', hsn: '9997', gstRate: 5, visualKey: 'foldedBlazer', photo: '/ui/app/garments/lndry-folded-blazer-v1.png' }],
     prices: [{ id: 'owner-price-1', garment: 'Imported coat', service: 'Imported care', rate: 275 }],
     taxRules: [{ id: 'owner-tax-1', name: 'Imported GST', rate: 5 }],
   });

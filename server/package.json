@@ -12,6 +12,7 @@
     "test:laundry": "tsx src/_selftest-laundry.ts",
     "test:auth": "tsx src/_selftest-auth.ts",
     "test:store-migration": "tsx src/_selftest-store-migration.ts",
+    "test:clean-db-bootstrap": "tsx src/_selftest-clean-db-bootstrap.ts",
     "test:customer": "tsx src/_selftest-customer.ts",
     "test:package": "tsx src/_selftest-package.ts",
     "test:catalogue": "tsx src/_selftest-catalogue.ts",

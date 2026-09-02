@@ -1,13 +1,26 @@
 // Epic BOS self-test 18 — Phase-14 Ops pack: pricing rules, recurring invoices, reorder, alerts, backup.
-import { createRow, submitRow } from './kernel/entity-service.js';
-import { store } from './kernel/store.js';
-import { quoteRate, runRecurring, reorderSuggestions, getAlerts } from './modules/ops.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const tempDir = mkdtempSync(join(tmpdir(), 'epic-ops-'));
+process.env.EPIC_DATA_FILE = join(tempDir, 'legacy.json');
+process.env.EPIC_DB_FILE = join(tempDir, 'epic.sqlite');
+process.env.EPIC_LEGACY_JSON_FILE = process.env.EPIC_DATA_FILE;
 
 const T = 'TECO';
 let fails = 0;
 const assert = (c: boolean, m: string) => { console.log(`${c ? 'PASS' : 'FAIL'}  ${m}`); if (!c) fails++; };
 
 async function main() {
+  let closeStore: (() => void) | undefined;
+  try {
+    // These modules instantiate the singleton Store during evaluation, so imports must follow
+    // the isolated database configuration above.
+    const { store } = await import('./kernel/store.js');
+    closeStore = () => store.close();
+    const { createRow, submitRow } = await import('./kernel/entity-service.js');
+    const { quoteRate, runRecurring, reorderSuggestions, getAlerts } = await import('./modules/ops.js');
   // --- pricing engine ---
   const cust = createRow(T, 'test', 'party', { name: 'Sub Co', gstin: '33AAAAA0000A1Z5' });
   const item = createRow(T, 'test', 'item', { name: 'Widget', item_code: 'WID', rate: 100, gst_rate: 18, reorder_level: 5 });
@@ -55,7 +68,11 @@ async function main() {
   store.replaceScoped(T, 'STORE-DEFAULT', snap);
   assert(store.rowsOf(T, 'party').length === before, 'restore rolled back the extra row');
 
-  console.log(fails === 0 ? '\nALL PASS' : `\n${fails} FAIL`);
-  process.exit(fails === 0 ? 0 : 1);
+    console.log(fails === 0 ? '\nALL PASS' : `\n${fails} FAIL`);
+    return fails === 0 ? 0 : 1;
+  } finally {
+    closeStore?.();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
-main();
+main().then((exitCode) => { process.exitCode = exitCode; }).catch((error) => { console.error(error); process.exitCode = 1; });

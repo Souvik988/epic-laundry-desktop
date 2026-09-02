@@ -41,7 +41,7 @@ jobs:
         working-directory: server
       - name: Run full server regression and V3 tagging gates
         run: >-
-          npm run test:laundry && npm run test:auth && npm run test:store-migration &&
+          npm run test:laundry && npm run test:auth && npm run test:store-migration && npm run test:clean-db-bootstrap &&
           npm run test:customer && npm run test:package && npm run test:catalogue &&
           npm run test:payment && npm run test:ops && npm run test:restart &&
           npm run test:recovery-drill && npm run test:workspace-mode &&
@@ -101,3 +101,44 @@ jobs:
       - name: Verify release signature implementation
         run: npm run test:release-signature
         working-directory: desktop
+
+  windows-desktop:
+    # Internal CI artifacts are intentionally unsigned. Production signing is a protected-release concern.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            webapp/package-lock.json
+            desktop/package-lock.json
+      - name: Install server dependencies
+        run: npm ci
+        working-directory: server
+      - name: Verify clean server bootstrap and authenticated startup
+        run: npm run test:clean-db-bootstrap && npm run test:startup-handshake
+        working-directory: server
+      - name: Build server
+        run: npm run build
+        working-directory: server
+      - name: Install and build web application
+        run: npm ci && npm run build
+        working-directory: webapp
+      - name: Install desktop dependencies
+        run: npm ci
+        working-directory: desktop
+      - name: Verify desktop recovery and release controls
+        run: npm run test:workspace && npm run test:recovery-policy && npm run test:release-signature
+        working-directory: desktop
+      - name: Package unsigned Windows internal-build installer
+        run: npm run dist:win
+        working-directory: desktop
+      - name: Upload unsigned Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: epic-laundry-windows-unsigned
+          path: desktop/dist/*

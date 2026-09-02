@@ -31,6 +31,7 @@ export type LaundryCatalogue = {
     categoryName: string;
     unit: string;
     photo?: string;
+    visual_key?: string;
   }>;
   prices: Array<{
     id: string;
