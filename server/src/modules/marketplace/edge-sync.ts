@@ -6,6 +6,7 @@ import { createMarketplaceOrderRequest } from './order-truth.js';
 import { recordProviderPaymentEvent } from './provider-events.js';
 import { recordMarketplaceSettlement } from './settlements.js';
 import { bookLaundryOrder } from '../laundry/domain.js';
+import { taxReadiness } from '../gst/tax-policy.js';
 
 export const SYNC_VERSION = 1;
 export const MARKETPLACE_ORDER_STATES = ['AwaitingAcceptance', 'Accepted', 'Rejected', 'Expired', 'PickupScheduled', 'IntakeRequired', 'CustomerApprovalRequired', 'Processing', 'Ready', 'DeliveryScheduled', 'Completed', 'Cancelled'] as const;
@@ -163,6 +164,7 @@ export function materializeMarketplaceOrder(tenant: string, actor: string, exter
       return { created: false, reason: 'already_materialized' as const, projection, localOrder: existing };
     }
     if (!['Accepted', 'IntakeRequired'].includes(projection.state)) throw new Error('ONLINE_ORDER_NOT_ACCEPTED');
+    if (!taxReadiness(tenant).ready) throw new Error('TAX_PROFILE_INCOMPLETE');
 
     const request = projection.request || {};
     const intake = store.rowsOf(tenant, 'marketplace_intake_assessment')

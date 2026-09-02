@@ -16,6 +16,7 @@ try {
   const { bookLaundryOrder, laundryCatalogue, seedLaundryDefaults } = await import('./modules/laundry/domain.js');
   const { createDeviceEnrollment, actOnMarketplaceOrder, marketplaceSyncStatus, queueMarketplaceEvent, receiveMarketplaceOrder, receiveMarketplacePayment, registerMarketplaceDevice, relayMarketplaceOutbox, materializeMarketplaceOrder } = await import('./modules/marketplace/edge-sync.js');
   const { createMarketplaceReassessment, decideMarketplaceReassessment, recordMarketplaceIntake } = await import('./modules/marketplace/order-truth.js');
+  const { saveSupplierTaxProfile } = await import('./modules/gst/tax-policy.js');
   const { MarketplaceIntegrationSimulator } = await import('./modules/marketplace/simulator.js');
 
   const tenant = 'CROSS-CHANNEL';
@@ -24,6 +25,7 @@ try {
   const actor = 'cross-channel-owner';
   const simulator = new MarketplaceIntegrationSimulator();
   const catalogue = store.withStoreScope(tenant, storeId, () => { seedLaundryDefaults(tenant); return laundryCatalogue(tenant); });
+  store.withStoreScope(tenant, storeId, () => saveSupplierTaxProfile(tenant, actor, { legalName: 'Cross Channel Laundry Pvt Ltd', tradeName: 'Cross Channel Laundry', address: '12 Lake Road, Kolkata', stateCode: '19', pincode: '700001', registrationStatus: 'Unregistered', einvoiceState: 'NotApplicable' }));
   const garment = catalogue.garments.find((candidate: any) => candidate.unit === 'Piece')!;
   const service = catalogue.services[0]!;
   assert.ok(garment && service, 'the cross-channel fixture has a usable piece-priced catalogue entry');
