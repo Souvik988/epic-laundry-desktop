@@ -76,6 +76,7 @@ import { createSavedReportView, deleteSavedReportView, listSavedReportViews } fr
 import { actOnMarketplaceOrder, marketplaceSyncStatus, replayHeldMarketplaceOrder } from './modules/marketplace/edge-sync.js';
 import { marketplaceAvailability, saveMarketplaceAvailability } from './modules/marketplace/availability.js';
 import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMarketplaceReassessment, marketplaceOrderTruth, recordMarketplaceIntake } from './modules/marketplace/order-truth.js';
+import { createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -958,6 +959,14 @@ export function registerApi(app: FastifyInstance) {
       state: process.env.EPIC_SUPPLIER_STATE || '29',
     };
   }
+  app.post('/api/gst/canonical-invoices', { schema: { body: { type: 'object', required: ['sourceOrderId', 'supplier', 'customer', 'tax'], properties: { sourceOrderId: { type: 'string', minLength: 1, maxLength: 160 }, issuedAt: { type: 'string', maxLength: 40 }, supplier: { type: 'object', additionalProperties: true }, customer: { type: 'object', additionalProperties: true }, tax: { type: 'object', additionalProperties: true }, paidPaise: { type: 'integer', minimum: 0 } }, additionalProperties: false } }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `gst.canonical-invoice:${req.body.sourceOrderId}`, () => createCanonicalInvoiceSnapshot(req.auth!.tenant, req.auth!.actor, req.body)))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/gst/canonical-invoices/:sourceOrderId', { schema: { params: { type: 'object', required: ['sourceOrderId'], properties: { sourceOrderId: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false } }, preHandler: [guard, allow('orders.read')] }, async (req: any, rep: any) => {
+    const row = inStore(req, () => store.rowsOf(req.auth!.tenant, 'canonical_invoice_snapshot').find((candidate) => candidate.data.sourceOrderId === req.params.sourceOrderId));
+    return row || rep.code(404).send({ error: 'canonical invoice not found' });
+  });
   app.get('/api/gst/einvoice/:id', { preHandler: guard }, async (req: any, rep: any) => {
     const row = store.getRow(requestTenant(req), req.params.id);
     if (!row || !['sales_invoice', 'pos_invoice'].includes(row.entity)) return rep.code(404).send({ error: 'not found' });
