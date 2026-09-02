@@ -1,6 +1,6 @@
 # Final production audit
 
-This is an updated V4 audit record, not production certification. Current local source checkpoint: `b443807` on local `main` (2026-09-03). Runtime package was built from functional checkpoint `b532ba5` and includes the signed portal boundary plus the owner privacy controls in the customer work card.
+This is an updated V4 audit record, not production certification. Current local source checkpoint: `78bb6e4` on local `main` (2026-09-03). Runtime package was built from the current functional source and includes the signed portal boundary, owner privacy controls, and device lifecycle API.
 
 - Critical: a real marketplace cloud contract/transport, provider-backed payment/settlement integration, and production tax/legal policy are not available in this environment.
 - High: legacy debit-note export integration and provider-backed settlement-batch/payout documents remain outside the canonical evidence model; production signing/update trust is absent; six closely related generic/shared garment mappings need owner review; production-path FTS write cost and broader UI/report performance coverage remain; richer completed-order work-card linking and live cloud route assignment remain.
