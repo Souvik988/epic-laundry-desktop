@@ -21,6 +21,7 @@
     "test:invoice-snapshot": "tsx src/_selftest-invoice-snapshot.ts",
     "test:provider-events": "tsx src/_selftest-provider-events.ts",
     "test:marketplace-notifications": "tsx src/_selftest-marketplace-notifications.ts",
+    "test:marketplace-cash": "tsx src/_selftest-marketplace-cash.ts",
     "test:customer": "tsx src/_selftest-customer.ts",
     "test:package": "tsx src/_selftest-package.ts",
     "test:catalogue": "tsx src/_selftest-catalogue.ts",
