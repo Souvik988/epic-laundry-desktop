@@ -13,6 +13,10 @@ import { laundryBusinessDate } from './modules/laundry/dates.js';
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const PORT = Number(process.env.PORT || 3001);
 const WORKSPACE_MODE = process.env.EPIC_WORKSPACE_MODE === 'demo' ? 'demo' : 'production';
+// Make the entry-point mode explicit to downstream domain services. This is
+// what lets production tax paths fail closed while isolated self-tests and
+// demo data retain their compatibility behavior.
+process.env.EPIC_WORKSPACE_MODE = WORKSPACE_MODE;
 
 const app = Fastify({ logger: true });
 const configuredCorsOrigins = String(process.env.EPIC_CORS_ORIGIN || '').split(',').map((origin) => origin.trim()).filter(Boolean);

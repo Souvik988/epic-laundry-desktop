@@ -144,7 +144,10 @@ function startServer() {
     EPIC_STARTUP_NONCE: startupNonce,
     // In dev we want the same sandbox GSP + any user .env values to pass through.
     GSP_PROVIDER: process.env.GSP_PROVIDER || 'sandbox',
-    EPIC_SUPPLIER_STATE: process.env.EPIC_SUPPLIER_STATE || '29',
+    // Supplier state is persisted in the tenant tax profile. Do not inject a
+    // silent demo state into production; the server must fail closed until
+    // the store has completed tax setup.
+    ...(process.env.EPIC_SUPPLIER_STATE ? { EPIC_SUPPLIER_STATE: process.env.EPIC_SUPPLIER_STATE } : {}),
   };
   const stdio = ['ignore', 'pipe', 'pipe'];
   if (isDev) {

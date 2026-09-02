@@ -2,6 +2,7 @@
 // owner alerts center, and full-tenant backup/restore helpers.
 import { store } from '../kernel/store.js';
 import { createRow, submitRow, getRow } from '../kernel/entity-service.js';
+import { supplierStateCodeForTenant } from './gst/tax-policy.js';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -90,7 +91,7 @@ export function runRecurring(tenant: string, asOf?: string): string[] {
       const inv = createRow(tenant, 'scheduler', 'sales_invoice', {
         customer: sub.data.customer,
         posting_date: next,
-        place_of_supply: sub.data.place_of_supply || '29',
+        place_of_supply: sub.data.place_of_supply || supplierStateCodeForTenant(tenant),
         items: (sub.data.items || []).map((it: any) => ({
           item: it.item, qty: it.qty, rate: it.rate, gst_rate: it.gst_rate,
         })),

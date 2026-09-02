@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { store } from './store.js';
 import { computeGst } from '../modules/gst/engine.js';
+import { supplierStateCodeForTenant } from '../modules/gst/tax-policy.js';
 import { computePayroll } from '../modules/hr/payroll.js';
 import { docRate } from '../modules/multi-entity/fx.js';
 import type { EntityRow, GLEntry, StockLedgerEntry } from './types.js';
 
 function supplierStateForTenant(tenant: string) {
-  const configured = store.rowsOf(tenant, 'supplier_tax_profile')[0]?.data?.stateCode;
-  return String(configured || process.env.EPIC_SUPPLIER_STATE || '29');
+  return supplierStateCodeForTenant(tenant);
 }
 
 // Posting engine: a submitted document projects append-only ledger entries.

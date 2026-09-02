@@ -1,9 +1,10 @@
 // Projects & Services billing: convert unbilled timesheets into a draft sales invoice.
 import { store } from '../../kernel/store.js';
 import { createRow } from '../../kernel/entity-service.js';
+import { supplierStateCodeForTenant } from '../gst/tax-policy.js';
 
-function placeOfSupply(gstin?: string): string {
-  return (gstin && gstin.length >= 2) ? gstin.slice(0, 2) : (process.env.EPIC_SUPPLIER_STATE || '29');
+function placeOfSupply(tenant: string, gstin?: string): string {
+  return (gstin && gstin.length >= 2) ? gstin.slice(0, 2) : supplierStateCodeForTenant(tenant);
 }
 
 // Ensures a generic "Professional Services" item exists for time-based billing lines.
@@ -51,7 +52,7 @@ export function billProject(tenant: string, actor: string, projectId: string): B
   const inv = createRow(tenant, actor, 'sales_invoice', {
     customer: project.data.customer,
     posting_date: new Date().toISOString().slice(0, 10),
-    place_of_supply: placeOfSupply(cust?.data?.gstin),
+    place_of_supply: placeOfSupply(tenant, cust?.data?.gstin),
     items,
   });
   for (const t of ts) { t.data.billed = true; t.updated_at = new Date().toISOString(); store.updateRow(t); }

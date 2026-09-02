@@ -1159,13 +1159,16 @@ export function registerApi(app: FastifyInstance) {
     let cgst = 0, sgst = 0, igst = 0, taxable = 0;
     for (const r of invs) { const linked = r.data.canonical_snapshot_id ? store.getRow(cockpitTenant, String(r.data.canonical_snapshot_id)) : undefined; const g = linked?.entity === 'canonical_invoice_snapshot' ? gstFromCanonicalSnapshot(linked.data) : r.data.__gst; if (!g) continue; cgst += g.totalCgst; sgst += g.totalSgst; igst += g.totalIgst; taxable += g.totalTaxable; }
     const configuredProfile = supplierTaxProfile(cockpitTenant);
+    const readiness = taxReadiness(cockpitTenant);
     const threshold = Number(process.env.GST_EINVOICE_THRESHOLD || 5000000);
     return {
-      supplierState: configuredProfile?.stateCode || process.env.EPIC_SUPPLIER_STATE || '29',
+      supplierState: configuredProfile?.stateCode || null,
       periodInvoices: invs.length,
       outputTax: { cgst: round2(cgst), sgst: round2(sgst), igst: round2(igst), total: round2(cgst + sgst + igst) },
       taxable: round2(taxable),
-      einvoiceApplicable: true,
+      einvoiceApplicable: configuredProfile?.registrationStatus === 'Registered' && configuredProfile.einvoiceState !== 'NotApplicable',
+      einvoiceState: configuredProfile?.einvoiceState || 'NotConfigured',
+      taxReadiness: { ready: readiness.ready, code: readiness.code },
       thresholdNote: `E-invoicing mandated when aggregate turnover > ₹${threshold.toLocaleString('en-IN')}`,
       nextGstr1Due: '10th of next month',
       nextGstr3bDue: '20th of next month',

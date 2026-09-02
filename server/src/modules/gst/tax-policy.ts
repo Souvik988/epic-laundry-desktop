@@ -53,6 +53,22 @@ function normalizeProfile(input: Partial<SupplierTaxProfileRecord>) {
   return { legalName, tradeName: input.tradeName ? String(input.tradeName).trim().slice(0, 240) : undefined, address, stateCode, pincode, registrationStatus: registrationStatus as 'Registered' | 'Unregistered', gstin, invoiceSeries: input.invoiceSeries ? String(input.invoiceSeries).trim().slice(0, 80) : undefined, einvoiceState };
 }
 export function supplierTaxProfile(tenant: string) { const row = store.rowsOf(tenant, 'supplier_tax_profile')[0]; return row ? profileFromRow(row) : undefined; }
+
+/**
+ * Resolve the supplier state only from the tenant's persisted tax profile in
+ * production. Legacy environment/demo fallbacks remain available to direct
+ * test harnesses and the isolated demo workspace, but the production entry
+ * point sets EPIC_WORKSPACE_MODE explicitly so an incomplete tax setup fails
+ * closed instead of silently producing a document for state 29.
+ */
+export function supplierStateCodeForTenant(tenant: string): string {
+  const configured = supplierTaxProfile(tenant)?.stateCode;
+  if (configured && /^\d{2}$/.test(configured)) return configured;
+  if (process.env.EPIC_WORKSPACE_MODE === 'production') throw new Error('TAX_PROFILE_INCOMPLETE');
+  const compatibilityState = String(process.env.EPIC_SUPPLIER_STATE || '').trim();
+  return /^\d{2}$/.test(compatibilityState) ? compatibilityState : '29';
+}
+
 export function saveSupplierTaxProfile(tenant: string, actor: string, input: Partial<SupplierTaxProfileRecord>) {
   const normalized = normalizeProfile(input); const existing = store.rowsOf(tenant, 'supplier_tax_profile')[0]; const timestamp = new Date().toISOString(); const record: SupplierTaxProfileRecord = { id: existing?.id || `supplier_tax_profile_${store.currentStore(tenant)}`, ...normalized, updatedAt: timestamp, updatedBy: actor }; const row: EntityRow = existing ? { ...existing, status: 'Active', version: existing.version + 1, updated_at: timestamp, data: record } : { id: record.id, entity: 'supplier_tax_profile', tenant, status: 'Active', version: 1, created_by: actor, created_at: timestamp, updated_at: timestamp, data: record }; store.updateRow(row); audit(tenant, actor, 'gst:supplier-tax-profile-saved', { entity: row.entity, row_id: row.id, after: { legalName: record.legalName, stateCode: record.stateCode, registrationStatus: record.registrationStatus, gstinPresent: Boolean(record.gstin), einvoiceState: record.einvoiceState } }); return row;
 }

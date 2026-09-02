@@ -14,10 +14,11 @@ export function getGsp(): GspConnector {
 }
 
 export function company() {
+  const demo = process.env.EPIC_WORKSPACE_MODE === 'demo';
   return {
     gstin: process.env.EPIC_SUPPLIER_GSTIN || '',
-    name: process.env.EPIC_COMPANY_NAME || 'Epic BOS Demo',
+    name: process.env.EPIC_COMPANY_NAME || (demo ? 'Epic BOS Demo' : ''),
     addr: process.env.EPIC_COMPANY_ADDR || '',
-    state: process.env.EPIC_SUPPLIER_STATE || '29',
+    state: process.env.EPIC_SUPPLIER_STATE || (demo ? '29' : ''),
   };
 }
