@@ -19,6 +19,13 @@ test('operator can complete the core laundry desk journeys in a disposable works
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Finish secure setup' }).click();
   await expect(page.getByRole('heading', { name: /calm counter starts/ })).toBeVisible();
+  await page.goto('/ui/app/#/laundry/online-orders');
+  await expect(page.getByRole('heading', { name: 'Online orders' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Online order queue' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Search online orders' })).toBeVisible();
+  await expect(page.getByText('Not configured')).toBeVisible();
+  await page.goto('/ui/app/#/laundry/dashboard');
+  await expect(page.getByRole('heading', { name: /calm counter starts/ })).toBeVisible();
   const sidebarNav = page.locator('aside nav');
   await expect(sidebarNav.getByRole('button', { name: 'Counter' })).toBeVisible();
   await sidebarNav.getByRole('button', { name: 'Counter' }).click();

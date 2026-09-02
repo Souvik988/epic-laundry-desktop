@@ -1,27 +1,169 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Cloud, RefreshCw, X } from 'lucide-react'
-import { useState } from 'react'
+import { AlertTriangle, CalendarClock, Check, ChevronRight, ClipboardCheck, Cloud, Inbox, MapPin, PackageCheck, Phone, RefreshCw, Search, SlidersHorizontal, Truck, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { apiGet, apiPost, operatorErrorMessage } from '@/lib/api'
+import { cn, formatINR } from '@/lib/utils'
 
-type OnlineOrder = { id: string; externalOrderId: string; orderNumber: string; channel: string; state: string; sourceVersion: number; customer: Record<string, unknown>; pickup: Record<string, unknown>; request: Record<string, unknown>; paymentState: string; acceptanceDeadline?: string; preferences: string; notes: string; syncState: string; updatedAt: string }
+type OnlineOrder = { id: string; externalOrderId: string; orderNumber: string; channel: string; state: string; sourceVersion: number; customer: Record<string, unknown>; pickup: Record<string, unknown>; request: Record<string, unknown>; paymentState: string; acceptanceDeadline?: string; preferences: string; notes: string; syncState: string; localOrderId?: string; updatedAt: string }
 type QueuePage = { items: OnlineOrder[]; nextCursor?: string }
 type SyncStatus = { configured: boolean; version: number; device: { id: string; vendorId: string; storeId: string; station: string; status: string; rotationRequired: boolean } | null; checkpoint: { lastPullAt?: string; lastPushAt?: string; lastHeartbeatAt?: string; serverTimeOffsetMs?: number; error?: string } | null; outbox: { pending: number; inFlight: number; retry: number; deadLetter: number }; inbox: { held: number; failed: number }; onlineOrders: number }
+type Truth = { request?: { data?: { estimate?: Record<string, unknown>; customer?: Record<string, unknown> } }; intake?: { data?: { actual?: Record<string, unknown>; reason?: string; assessedAt?: string } }; reassessments: Array<{ id: string; data: { state: string; previousAmountPaise: number; revisedAmountPaise: number; deltaPaise: number; reason: string; decidedAt?: string } }> }
+type Catalogue = { garments: Array<{ id: string; name: string; unit?: string }>; services: Array<{ id: string; name: string; units?: string[] }> }
+type IntakeLine = { garmentId: string; serviceId: string; qty: number }
 
-const stateTone = (state: string) => state === 'AwaitingAcceptance' ? 'bg-amber-100 text-amber-800' : state === 'Accepted' ? 'bg-emerald-100 text-emerald-800' : state === 'Rejected' || state === 'Cancelled' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'
+const states = [
+  { key: 'all', label: 'All orders' },
+  { key: 'AwaitingAcceptance', label: 'Needs acceptance' },
+  { key: 'IntakeRequired', label: 'Intake pending' },
+  { key: 'CustomerApprovalRequired', label: 'Approval required' },
+  { key: 'active', label: 'In progress' },
+] as const
+
+const stateTone = (state: string) => state === 'AwaitingAcceptance' ? 'bg-[#fff2d7] text-[#8b5c1b]' : state === 'Accepted' || state === 'Processing' ? 'bg-[#e7f4ef] text-[#2e6a60]' : state === 'CustomerApprovalRequired' ? 'bg-[#f1eaff] text-[#6844a6]' : state === 'Rejected' || state === 'Cancelled' ? 'bg-[#fde9e6] text-[#a44036]' : 'bg-[#edf1f0] text-[#53676a]'
+const stateLabel = (state: string) => ({ AwaitingAcceptance: 'Awaiting acceptance', IntakeRequired: 'Intake required', CustomerApprovalRequired: 'Approval required', PickupScheduled: 'Pickup scheduled', DeliveryScheduled: 'Delivery scheduled', Completed: 'Completed', Rejected: 'Rejected', Cancelled: 'Cancelled' } as Record<string, string>)[state] || state
+const channelLabel = (channel: string) => channel.replace(/_/g, ' ')
+const text = (value: unknown, fallback = '') => String(value ?? fallback).trim()
+const dateLabel = (value?: string) => value ? new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Not scheduled'
+const timeLabel = (value?: string) => value ? new Date(value).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—'
+
+function deadline(order: OnlineOrder) {
+  if (!order.acceptanceDeadline) return { label: 'No deadline', tone: 'muted' as const }
+  const remaining = Date.parse(order.acceptanceDeadline) - Date.now()
+  if (remaining < 0) return { label: 'Past deadline', tone: 'danger' as const }
+  if (remaining < 2 * 60 * 60 * 1000) return { label: `Due in ${Math.max(1, Math.round(remaining / 60_000))}m`, tone: 'warn' as const }
+  return { label: `Due ${timeLabel(order.acceptanceDeadline)}`, tone: 'muted' as const }
+}
+
+function requestLabel(order: OnlineOrder) {
+  const request = order.request || {}
+  const items = Array.isArray(request.items) ? request.items.length : 0
+  const bags = text(request.estimatedBags)
+  const kg = text(request.estimatedKg || request.estimatedKgMilli)
+  if (items) return `${items} item${items === 1 ? '' : 's'} specified`
+  if (bags) return `${bags} bag${bags === '1' ? '' : 's'} estimated`
+  if (kg) return `${kg} kg estimated`
+  return 'Physical assessment pending'
+}
 
 export default function LaundryOnlineOrders() {
-  const client = useQueryClient(); const [cursor, setCursor] = useState<string | undefined>(); const [items, setItems] = useState<OnlineOrder[]>([])
+  const client = useQueryClient()
+  const [filter, setFilter] = useState<(typeof states)[number]['key']>('all')
+  const [search, setSearch] = useState('')
+  const [cursor, setCursor] = useState<string | undefined>()
+  const [loadedItems, setLoadedItems] = useState<OnlineOrder[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [intakeLines, setIntakeLines] = useState<IntakeLine[]>([])
+  const [intakeGarment, setIntakeGarment] = useState('')
+  const [intakeService, setIntakeService] = useState('')
+  const [intakeQty, setIntakeQty] = useState('1')
+  const [intakeBagCount, setIntakeBagCount] = useState('')
+  const [notice, setNotice] = useState('')
+
   const queue = useQuery({ queryKey: ['marketplace-online-orders', cursor], queryFn: () => apiGet<QueuePage>(`/marketplace/orders?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`), staleTime: 10_000 })
   const sync = useQuery({ queryKey: ['marketplace-sync-status'], queryFn: () => apiGet<SyncStatus>('/marketplace/sync/status'), staleTime: 10_000 })
-  const action = useMutation({ mutationFn: ({ id, action, reason }: { id: string; action: 'accept' | 'reject'; reason?: string }) => apiPost(`/marketplace/orders/${encodeURIComponent(id)}/${action}`, action === 'reject' ? { reason } : {}), onSuccess: () => { setCursor(undefined); setItems([]); void client.invalidateQueries({ queryKey: ['marketplace-online-orders'] }); void client.invalidateQueries({ queryKey: ['marketplace-sync-status'] }) } })
-  const shown = cursor ? [...items, ...(queue.data?.items || [])] : (queue.data?.items || [])
-  const reject = (order: OnlineOrder) => { const reason = window.prompt(`Reason for rejecting ${order.orderNumber}:`); if (reason?.trim()) action.mutate({ id: order.externalOrderId, action: 'reject', reason: reason.trim() }) }
-  const loadMore = () => { if (!queue.data?.nextCursor) return; setItems(shown); setCursor(queue.data.nextCursor) }
-  const refresh = () => { setCursor(undefined); setItems([]); void queue.refetch(); void sync.refetch() }
-  return <div className="animate-in fade-in slide-in-from-bottom-2 duration-500"><header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#4d8982]">Marketplace edge</p><h1 className="mt-1 font-serif text-3xl text-[#17353c]">Online orders</h1><p className="mt-1 max-w-2xl text-sm text-[#718087]">Cloud-originated requests projected into this store. Acceptance is a durable outbound command; it is not a claim of remote completion.</p></div><button type="button" onClick={refresh} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[#263f44]/15 bg-white px-3 text-xs font-bold text-[#315d57]"><RefreshCw className="h-3.5 w-3.5" />Refresh</button></header>
-    <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-7">{sync.isLoading ? <p className="col-span-full text-sm text-[#718087]">Checking local sync state…</p> : sync.isError || !sync.data ? <p className="col-span-full rounded-xl bg-amber-50 p-4 text-sm text-amber-900">Sync diagnostics are unavailable. No connection state is assumed.</p> : <><Metric label="Connection" value={sync.data.configured ? 'Configured' : 'Not configured'} /><Metric label="Online queue" value={String(sync.data.onlineOrders)} /><Metric label="Pending push" value={String(sync.data.outbox.pending + sync.data.outbox.inFlight + sync.data.outbox.retry)} /><Metric label="Dead letters" value={String(sync.data.outbox.deadLetter)} danger={sync.data.outbox.deadLetter > 0} /><Metric label="Held inbound" value={String(sync.data.inbox.held)} danger={sync.data.inbox.held > 0} /><Metric label="Last push" value={sync.data.checkpoint?.lastPushAt ? new Date(sync.data.checkpoint.lastPushAt).toLocaleTimeString('en-IN') : '—'} /><Metric label="Last pull" value={sync.data.checkpoint?.lastPullAt ? new Date(sync.data.checkpoint.lastPullAt).toLocaleTimeString('en-IN') : '—'} /></>}</section>
-    {sync.data?.checkpoint?.error ? <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs text-amber-900">Sync needs attention: {sync.data.checkpoint.error}</p> : null}
-    {action.isError ? <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-800">{operatorErrorMessage(action.error, 'Online order action failed.')}</p> : null}
-    <section className="mt-5 overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]"><div className="overflow-x-auto"><table className="min-w-[900px] w-full text-left text-sm"><thead className="bg-[#fbfbf8] text-[10px] font-bold uppercase tracking-[.13em] text-[#718087]"><tr><th className="px-4 py-3">Order</th><th className="px-4 py-3">Channel</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Request</th><th className="px-4 py-3">Payment</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Action</th></tr></thead><tbody>{queue.isLoading && !shown.length ? <tr><td colSpan={7} className="p-12 text-center text-[#718087]">Loading online order queue…</td></tr> : shown.map((order) => <tr key={order.id} className="border-t border-[#263f44]/8"><td className="px-4 py-3"><p className="font-bold text-[#27454c]">{order.orderNumber}</p><p className="mt-0.5 font-mono text-[10px] text-[#718087]">{order.externalOrderId}</p></td><td className="px-4 py-3 text-xs text-[#617178]">{order.channel.replace('_', ' ')}</td><td className="px-4 py-3"><p className="font-semibold text-[#40565a]">{String(order.customer.name || 'Customer')}</p><p className="mt-0.5 max-w-48 truncate text-xs text-[#718087]">{String(order.pickup.address || order.pickup.slot || '')}</p></td><td className="px-4 py-3 text-xs text-[#617178]">{String(order.request.estimatedBags || order.request.estimatedItems || 'Assessment pending')}</td><td className="px-4 py-3 text-xs text-[#617178]">{order.paymentState}</td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${stateTone(order.state)}`}>{order.state}</span></td><td className="px-4 py-3">{order.state === 'AwaitingAcceptance' ? <div className="flex gap-1"><button disabled={action.isPending} onClick={() => action.mutate({ id: order.externalOrderId, action: 'accept' })} className="inline-flex items-center gap-1 rounded-lg bg-[#39786f] px-2 py-1.5 text-[10px] font-bold text-white disabled:opacity-50"><Check className="h-3 w-3" />Accept</button><button disabled={action.isPending} onClick={() => reject(order)} className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1.5 text-[10px] font-bold text-rose-700 disabled:opacity-50"><X className="h-3 w-3" />Reject</button></div> : <span className="text-xs text-[#718087]">{order.syncState}</span>}</td></tr>)}{!queue.isLoading && !shown.length ? <tr><td colSpan={7} className="p-12 text-center text-[#718087]">No online orders are currently projected into this store.</td></tr> : null}</tbody></table></div>{queue.data?.nextCursor ? <div className="border-t border-[#263f44]/10 p-3 text-center"><button type="button" onClick={loadMore} disabled={queue.isFetching} className="rounded-lg border border-[#263f44]/15 px-3 py-2 text-xs font-bold text-[#315d57]">Load next page</button></div> : null}</section></div>
+  const pageItems = queue.data?.items || []
+  const orders = cursor ? [...loadedItems, ...pageItems] : pageItems
+  const visible = useMemo(() => orders.filter((order) => {
+    const matchesFilter = filter === 'all' || filter === 'active' ? filter === 'all' || !['Rejected', 'Cancelled', 'Completed'].includes(order.state) : order.state === filter
+    const needle = search.trim().toLowerCase()
+    const matchesSearch = !needle || [order.orderNumber, order.externalOrderId, order.channel, order.customer.name, order.customer.phone].map((value) => text(value).toLowerCase()).some((value) => value.includes(needle))
+    return matchesFilter && matchesSearch
+  }), [filter, orders, search])
+  const selected = visible.find((order) => order.id === selectedId) || orders.find((order) => order.id === selectedId) || visible[0]
+  const truth = useQuery({ queryKey: ['marketplace-order-truth', selected?.externalOrderId], queryFn: () => apiGet<Truth>(`/marketplace/orders/${encodeURIComponent(selected!.externalOrderId)}/truth`), enabled: Boolean(selected?.externalOrderId), staleTime: 10_000 })
+  const catalogue = useQuery({ queryKey: ['laundry-catalogue'], queryFn: () => apiGet<Catalogue>('/laundry/catalogue'), enabled: selected?.state === 'IntakeRequired' })
+
+  useEffect(() => { if (!selectedId && visible[0]) setSelectedId(visible[0].id) }, [selectedId, visible])
+  useEffect(() => { setRejectReason(''); setIntakeLines([]); setNotice(''); setIntakeGarment(''); setIntakeService(''); setIntakeQty('1'); setIntakeBagCount('') }, [selected?.id])
+
+  const invalidate = () => { void client.invalidateQueries({ queryKey: ['marketplace-online-orders'] }); void client.invalidateQueries({ queryKey: ['marketplace-sync-status'] }); void client.invalidateQueries({ queryKey: ['marketplace-order-truth'] }) }
+  const action = useMutation({ mutationFn: ({ id, kind, reason }: { id: string; kind: 'accept' | 'reject' | 'materialize'; reason?: string }) => kind === 'materialize' ? apiPost(`/marketplace/orders/${encodeURIComponent(id)}/materialize`, {}) : apiPost(`/marketplace/orders/${encodeURIComponent(id)}/${kind}`, kind === 'reject' ? { reason } : {}), onSuccess: (_, variables) => { setNotice(variables.kind === 'accept' ? 'Acceptance recorded locally. Remote completion still depends on sync acknowledgement.' : variables.kind === 'materialize' ? 'The accepted order is now linked to the local operational order.' : 'Rejection recorded with reason.'); invalidate() } })
+  const intake = useMutation({ mutationFn: ({ id, actual }: { id: string; actual: Record<string, unknown> }) => apiPost(`/marketplace/orders/${encodeURIComponent(id)}/intake`, actual), onSuccess: () => { setNotice('Physical intake recorded. Review any reassessment before materializing.'); invalidate() } })
+
+  const addIntakeLine = () => {
+    const qty = Number(intakeQty)
+    if (!intakeGarment || !intakeService || !Number.isFinite(qty) || qty <= 0) return
+    setIntakeLines((lines) => [...lines, { garmentId: intakeGarment, serviceId: intakeService, qty }])
+    setIntakeQty('1')
+  }
+  const submitIntake = () => {
+    if (!selected || !intakeLines.length) return
+    intake.mutate({ id: selected.externalOrderId, actual: { items: intakeLines, ...(intakeBagCount ? { bagCount: Number(intakeBagCount) } : {}) } })
+  }
+  const loadMore = () => { if (!queue.data?.nextCursor || queue.isFetching) return; setLoadedItems(orders); setCursor(queue.data.nextCursor) }
+  const refresh = () => { setCursor(undefined); setLoadedItems([]); void queue.refetch(); void sync.refetch() }
+  const awaiting = orders.filter((order) => order.state === 'AwaitingAcceptance').length
+  const needsIntake = orders.filter((order) => order.state === 'IntakeRequired').length
+  const needsApproval = orders.filter((order) => order.state === 'CustomerApprovalRequired').length
+
+  return <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+    <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+      <div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-[#4d8982]">Marketplace edge · operator cockpit</p><h1 className="mt-1 font-serif text-3xl tracking-[-.02em] text-[#17353c]">Online orders</h1><p className="mt-1 max-w-2xl text-sm leading-6 text-[#718087]">Every request arrives with its source and evidence. Accept the work, receive the physical laundry, then move it into the same floor workflow as a counter order.</p></div>
+      <button type="button" onClick={refresh} className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-xl border border-[#263f44]/15 bg-white px-3 text-xs font-bold text-[#315d57] shadow-sm lg:self-auto"><RefreshCw className={cn('h-3.5 w-3.5', queue.isFetching && 'animate-spin')} />Refresh queue</button>
+    </header>
+
+    <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <Metric icon={<Inbox />} label="Loaded queue" value={String(orders.length)} accent="teal" />
+      <Metric icon={<CalendarClock />} label="Awaiting acceptance" value={String(awaiting)} accent="amber" />
+      <Metric icon={<PackageCheck />} label="Intake pending" value={String(needsIntake)} accent="blue" />
+      <Metric icon={<ClipboardCheck />} label="Customer approval" value={String(needsApproval)} accent="violet" />
+      <Metric icon={<Cloud />} label="Sync state" value={sync.isError ? 'Unavailable' : sync.data?.configured ? 'Configured' : 'Not configured'} accent={sync.data?.outbox.deadLetter || sync.data?.inbox.held ? 'red' : 'slate'} />
+    </section>
+
+    <section className="mt-5 rounded-[22px] border border-[#263f44]/10 bg-[#fffdf8] p-3 shadow-[0_10px_30px_rgba(37,48,43,.035)]">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between"><div className="flex items-center gap-2 overflow-x-auto pb-1">{states.map((item) => <button key={item.key} type="button" onClick={() => setFilter(item.key)} className={cn('whitespace-nowrap rounded-full px-3 py-2 text-[11px] font-bold transition-colors', filter === item.key ? 'bg-[#173f46] text-white' : 'text-[#647478] hover:bg-[#edf3f0]')}>{item.label}</button>)}</div><label className="flex h-10 min-w-0 items-center gap-2 rounded-xl border border-[#263f44]/12 bg-white px-3 text-sm text-[#718087] xl:w-72"><Search className="h-4 w-4 shrink-0" /><span className="sr-only">Search online orders</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Order, customer, phone…" className="min-w-0 flex-1 bg-transparent text-sm text-[#27454c] outline-none placeholder:text-[#9ba7a7]" /></label></div>
+      {sync.data?.checkpoint?.error ? <div className="mt-3 flex items-start gap-2 rounded-xl bg-[#fff4de] px-3 py-2.5 text-xs font-semibold text-[#805b24]"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />Sync needs attention: {sync.data.checkpoint.error}</div> : null}
+    </section>
+
+    {action.isError || intake.isError ? <div role="alert" className="mt-4 flex items-start gap-2 rounded-xl bg-[#fde9e6] px-3 py-2.5 text-sm text-[#a44036]"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{operatorErrorMessage(action.error || intake.error, 'The online order action failed. Refresh and try again.')}</div> : null}
+    {notice ? <div role="status" className="mt-4 rounded-xl bg-[#e8f3ee] px-3 py-2.5 text-xs font-semibold text-[#2e6a60]">{notice}</div> : null}
+
+    <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.82fr)]">
+      <section className="overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_10px_30px_rgba(37,48,43,.035)]" aria-label="Online order queue">
+        <div className="flex items-center justify-between border-b border-[#263f44]/8 px-4 py-3"><div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#718087]">Store queue</p><p className="mt-0.5 text-sm font-semibold text-[#27454c]">{visible.length} visible request{visible.length === 1 ? '' : 's'}</p></div><SlidersHorizontal className="h-4 w-4 text-[#8b9a99]" /></div>
+        <div className="divide-y divide-[#263f44]/8">{queue.isLoading ? <div className="p-10 text-center text-sm text-[#718087]">Loading the local queue…</div> : visible.map((order) => <OrderRow key={order.id} order={order} selected={selected?.id === order.id} onSelect={() => setSelectedId(order.id)} />)}{!queue.isLoading && !visible.length ? <div className="p-12 text-center"><p className="font-serif text-xl text-[#27454c]">No matching requests</p><p className="mt-1 text-sm text-[#718087]">Try another filter or search term. The queue never fabricates cloud connectivity.</p></div> : null}</div>
+        {queue.data?.nextCursor ? <div className="border-t border-[#263f44]/8 p-3 text-center"><button type="button" onClick={loadMore} disabled={queue.isFetching} className="rounded-lg border border-[#263f44]/15 px-3 py-2 text-xs font-bold text-[#315d57] disabled:opacity-50">Load next page <ChevronRight className="ml-1 inline h-3 w-3" /></button></div> : null}
+      </section>
+
+      <aside className="rounded-[22px] border border-[#173f46]/12 bg-[#173f46] text-[#f8faf5] shadow-[0_18px_42px_rgba(23,63,70,.16)]" aria-label="Online order detail">
+        {!selected ? <div className="grid min-h-[420px] place-items-center p-8 text-center"><Inbox className="h-8 w-8 text-[#8fb2a8]" /><p className="mt-3 font-serif text-xl">Select a request</p><p className="mt-1 max-w-xs text-sm leading-6 text-[#b3c8c1]">The work card will keep request, intake, payment, sync, and action evidence together.</p></div> : <OrderDetail order={selected} truth={truth.data} catalogue={catalogue.data} intakeLines={intakeLines} setIntakeLines={setIntakeLines} intakeGarment={intakeGarment} setIntakeGarment={setIntakeGarment} intakeService={intakeService} setIntakeService={setIntakeService} intakeQty={intakeQty} setIntakeQty={setIntakeQty} intakeBagCount={intakeBagCount} setIntakeBagCount={setIntakeBagCount} onAddLine={addIntakeLine} onSubmitIntake={submitIntake} actionPending={action.isPending || intake.isPending} onAccept={() => action.mutate({ id: selected.externalOrderId, kind: 'accept' })} onMaterialize={() => action.mutate({ id: selected.externalOrderId, kind: 'materialize' })} onReject={() => { if (rejectReason.trim()) action.mutate({ id: selected.externalOrderId, kind: 'reject', reason: rejectReason.trim() }) }} rejectReason={rejectReason} setRejectReason={setRejectReason} />}
+      </aside>
+    </div>
+  </div>
 }
-function Metric({ label, value, danger = false }: { label: string; value: string; danger?: boolean }) { return <div className="rounded-xl border border-[#263f44]/10 bg-white p-4"><p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#718087]">{label}</p><p className={`mt-1 flex items-center gap-2 text-lg font-bold tabular-nums ${danger ? 'text-rose-700' : 'text-[#27454c]'}`}>{label === 'Connection' ? <Cloud className="h-4 w-4 text-[#39786f]" /> : null}{value}</p></div> }
+
+function Metric({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: string; accent: 'teal' | 'amber' | 'blue' | 'violet' | 'red' | 'slate' }) {
+  const colors = { teal: 'bg-[#e8f3ee] text-[#2e6a60]', amber: 'bg-[#fff2d7] text-[#8b5c1b]', blue: 'bg-[#e8f1f5] text-[#356477]', violet: 'bg-[#f1eaff] text-[#6844a6]', red: 'bg-[#fde9e6] text-[#a44036]', slate: 'bg-[#edf1f0] text-[#53676a]' }
+  return <div className="rounded-2xl border border-[#263f44]/10 bg-white p-3.5"><div className="flex items-start justify-between gap-3"><span className={cn('grid h-8 w-8 place-items-center rounded-xl', colors[accent])}>{icon && <span className="[&>svg]:h-4 [&>svg]:w-4">{icon}</span>}</span><p className="text-right text-[10px] font-bold uppercase tracking-[.12em] text-[#879493]">{label}</p></div><p className="mt-3 text-xl font-bold tabular-nums text-[#27454c]">{value}</p></div>
+}
+
+function OrderRow({ order, selected, onSelect }: { order: OnlineOrder; selected: boolean; onSelect: () => void }) {
+  const due = deadline(order)
+  return <button type="button" onClick={onSelect} className={cn('group block w-full px-4 py-4 text-left transition-colors hover:bg-[#fbfcf9]', selected ? 'bg-[#eef6f1]' : 'bg-white')}><div className="flex items-start gap-3"><span className={cn('mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full', order.state === 'AwaitingAcceptance' ? 'bg-[#e2a63e]' : order.state === 'CustomerApprovalRequired' ? 'bg-[#8c65c5]' : order.state === 'Rejected' || order.state === 'Cancelled' ? 'bg-[#c45b50]' : 'bg-[#62a796]')} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-bold text-[#27454c]">{order.orderNumber}</p><span className="rounded-full bg-[#f2f4f1] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[.1em] text-[#718087]">{channelLabel(order.channel)}</span></div><p className="mt-1 truncate text-xs text-[#718087]">{text(order.customer.name, 'Customer')} · {requestLabel(order)}</p><div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-semibold text-[#8a9897]"><span className={cn(due.tone === 'danger' && 'text-[#b14b40]', due.tone === 'warn' && 'text-[#9a6a22]')}>{due.label}</span><span>Updated {timeLabel(order.updatedAt)}</span></div></div><div className="flex shrink-0 flex-col items-end gap-2"><span className={cn('rounded-full px-2 py-1 text-[10px] font-bold', stateTone(order.state))}>{stateLabel(order.state)}</span><ChevronRight className={cn('h-4 w-4 text-[#a8b5b2] transition-transform group-hover:translate-x-0.5', selected && 'text-[#39786f]')} /></div></div></button>
+}
+
+function OrderDetail({ order, truth, catalogue, intakeLines, setIntakeLines, intakeGarment, setIntakeGarment, intakeService, setIntakeService, intakeQty, setIntakeQty, intakeBagCount, setIntakeBagCount, onAddLine, onSubmitIntake, actionPending, onAccept, onMaterialize, onReject, rejectReason, setRejectReason }: { order: OnlineOrder; truth?: Truth; catalogue?: Catalogue; intakeLines: IntakeLine[]; setIntakeLines: React.Dispatch<React.SetStateAction<IntakeLine[]>>; intakeGarment: string; setIntakeGarment: (value: string) => void; intakeService: string; setIntakeService: (value: string) => void; intakeQty: string; setIntakeQty: (value: string) => void; intakeBagCount: string; setIntakeBagCount: (value: string) => void; onAddLine: () => void; onSubmitIntake: () => void; actionPending: boolean; onAccept: () => void; onMaterialize: () => void; onReject: () => void; rejectReason: string; setRejectReason: (value: string) => void }) {
+  const pickupAddress = text(order.pickup.address || order.pickup.pickupAddress, 'Address not shared')
+  const customerPhone = text(order.customer.phone || order.customer.mobile)
+  const latestReassessment = truth?.reassessments?.at(-1)
+  return <div className="min-h-[560px]">
+    <div className="border-b border-white/10 px-5 pb-4 pt-5"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#8fb2a8]">Work card · {channelLabel(order.channel)}</p><h2 className="mt-1 font-serif text-2xl">{order.orderNumber}</h2><p className="mt-1 break-all font-mono text-[10px] text-[#a9c2ba]">{order.externalOrderId}</p></div><span className={cn('rounded-full px-2.5 py-1.5 text-[10px] font-bold', stateTone(order.state))}>{stateLabel(order.state)}</span></div><div className="mt-4 grid grid-cols-2 gap-2"><DetailStat label="Payment" value={order.paymentState} /><DetailStat label="Source version" value={`v${order.sourceVersion}`} /></div></div>
+    <div className="space-y-4 p-5"><div className="rounded-2xl border border-white/10 bg-white/[.06] p-3.5"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#8fb2a8]">Customer & collection</p><p className="mt-2 font-semibold">{text(order.customer.name, 'Customer')}</p>{customerPhone ? <p className="mt-1 flex items-center gap-2 text-xs text-[#c0d3cc]"><Phone className="h-3 w-3" />{customerPhone}</p> : null}<p className="mt-1 flex items-start gap-2 text-xs leading-5 text-[#c0d3cc]"><MapPin className="mt-1 h-3 w-3 shrink-0" />{pickupAddress}</p></div>
+      <div className="rounded-2xl border border-white/10 bg-white/[.06] p-3.5"><div className="flex items-center justify-between"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#8fb2a8]">Original request</p><span className="text-xs font-semibold text-[#d5e3dc]">{requestLabel(order)}</span></div><dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 text-xs"><Info label="Requested delivery" value={dateLabel(text(order.request.expectedDeliveryDate || order.request.deliveryDate))} /><Info label="Pickup slot" value={text(order.pickup.slot || order.pickup.requestedSlot, 'Not scheduled')} /><Info label="Preferences" value={text(order.preferences, 'None recorded')} /><Info label="Local order" value={order.localOrderId ? 'Materialized' : 'Not yet linked'} /></dl></div>
+      {order.notes ? <div className="rounded-2xl border border-[#d7c38e]/30 bg-[#5c4d2d]/35 p-3.5 text-xs leading-5 text-[#f4e7c4]"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#e8cc8c]">Marketplace notes</p><p className="mt-2 whitespace-pre-wrap">{order.notes}</p></div> : null}
+      {latestReassessment ? <div className="rounded-2xl border border-[#8f6fc0]/30 bg-[#6b4e92]/25 p-3.5"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#d6c2f0]">Latest reassessment · {latestReassessment.data.state}</p><div className="mt-2 flex items-end justify-between gap-3"><span className="text-xs text-[#d8cae9]">{latestReassessment.data.reason || 'Price changed after intake'}</span><span className="font-bold tabular-nums text-[#f1e5ff]">{formatINR(latestReassessment.data.revisedAmountPaise / 100)}</span></div></div> : null}
+      {order.state === 'AwaitingAcceptance' ? <div className="space-y-2 rounded-2xl border border-[#6ea994]/30 bg-[#286258]/35 p-3.5"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#bfe3d3]">Operator decision</p><p className="text-xs leading-5 text-[#d6ebe2]">Accepting records your decision locally and queues the next command for durable sync.</p><div className="flex gap-2"><button type="button" disabled={actionPending} onClick={onAccept} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#a8ddc6] px-3 py-2.5 text-xs font-bold text-[#173f46] disabled:opacity-50"><Check className="h-3.5 w-3.5" />Accept request</button></div><div className="flex gap-2"><input value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder="Reason required to reject" className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs text-white outline-none placeholder:text-[#a9c2ba]" /><button type="button" disabled={actionPending || !rejectReason.trim()} onClick={onReject} className="inline-flex items-center gap-1.5 rounded-xl border border-[#f0a19a]/35 px-3 py-2 text-xs font-bold text-[#ffd3ce] disabled:opacity-40"><X className="h-3.5 w-3.5" />Reject</button></div></div> : null}
+      {order.state === 'IntakeRequired' && !order.localOrderId ? <IntakePanel catalogue={catalogue} lines={intakeLines} setLines={setIntakeLines} garment={intakeGarment} setGarment={setIntakeGarment} service={intakeService} setService={setIntakeService} qty={intakeQty} setQty={setIntakeQty} bags={intakeBagCount} setBags={setIntakeBagCount} onAdd={onAddLine} onSubmit={onSubmitIntake} pending={actionPending} /> : null}
+      {order.state === 'IntakeRequired' && truth?.intake && !order.localOrderId ? <button type="button" disabled={actionPending} onClick={onMaterialize} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#a8ddc6] px-3 py-2.5 text-xs font-bold text-[#173f46] disabled:opacity-50"><Truck className="h-3.5 w-3.5" />Materialize local order</button> : null}
+      <div className="flex items-center justify-between border-t border-white/10 pt-3 text-[10px] text-[#9fc0b5]"><span>Sync {order.syncState}</span><span>Updated {timeLabel(order.updatedAt)}</span></div>
+    </div>
+  </div>
+}
+
+function IntakePanel({ catalogue, lines, setLines, garment, setGarment, service, setService, qty, setQty, bags, setBags, onAdd, onSubmit, pending }: { catalogue?: Catalogue; lines: IntakeLine[]; setLines: React.Dispatch<React.SetStateAction<IntakeLine[]>>; garment: string; setGarment: (value: string) => void; service: string; setService: (value: string) => void; qty: string; setQty: (value: string) => void; bags: string; setBags: (value: string) => void; onAdd: () => void; onSubmit: () => void; pending: boolean }) {
+  return <div className="rounded-2xl border border-white/10 bg-white/[.06] p-3.5"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#8fb2a8]">Physical intake</p><p className="mt-1 text-xs leading-5 text-[#c0d3cc]">Record what arrived. The original estimate stays preserved above.</p><div className="mt-3 grid gap-2 sm:grid-cols-[1.2fr_1.2fr_.55fr_auto]"><select aria-label="Intake garment" value={garment} onChange={(event) => setGarment(event.target.value)} className="rounded-xl border border-white/15 bg-[#1e4b51] px-2.5 py-2 text-xs text-white outline-none"><option value="">Garment</option>{(catalogue?.garments || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><select aria-label="Intake service" value={service} onChange={(event) => setService(event.target.value)} className="rounded-xl border border-white/15 bg-[#1e4b51] px-2.5 py-2 text-xs text-white outline-none"><option value="">Service</option>{(catalogue?.services || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><input type="number" min=".1" step=".1" value={qty} onChange={(event) => setQty(event.target.value)} aria-label="Intake quantity" className="rounded-xl border border-white/15 bg-white/10 px-2.5 py-2 text-xs text-white outline-none" /><button type="button" onClick={onAdd} className="rounded-xl border border-[#a8ddc6]/45 px-2.5 py-2 text-xs font-bold text-[#bfe3d3]">Add</button></div>{lines.length ? <div className="mt-3 space-y-1.5">{lines.map((line, index) => <div key={`${line.garmentId}-${line.serviceId}-${index}`} className="flex items-center justify-between rounded-lg bg-black/10 px-2.5 py-2 text-xs text-[#dcebe4]"><span>{catalogue?.garments.find((item) => item.id === line.garmentId)?.name || line.garmentId} · {catalogue?.services.find((item) => item.id === line.serviceId)?.name || line.serviceId}</span><span className="flex items-center gap-2 font-bold">× {line.qty}<button type="button" aria-label="Remove intake line" onClick={() => setLines(lines.filter((_, current) => current !== index))}><X className="h-3.5 w-3.5 text-[#bfe3d3]" /></button></span></div>)}</div> : null}<div className="mt-3 flex gap-2"><input type="number" min="0" step="1" value={bags} onChange={(event) => setBags(event.target.value)} aria-label="Bag count" placeholder="Bags (optional)" className="w-32 rounded-xl border border-white/15 bg-white/10 px-2.5 py-2 text-xs text-white outline-none placeholder:text-[#a9c2ba]" /><button type="button" disabled={pending || !lines.length} onClick={onSubmit} className="flex-1 rounded-xl bg-white px-3 py-2.5 text-xs font-bold text-[#173f46] disabled:opacity-40">Save physical intake</button></div></div>
+}
+
+function DetailStat({ label, value }: { label: string; value: string }) { return <div className="rounded-xl bg-white/[.07] px-3 py-2"><p className="text-[9px] font-bold uppercase tracking-[.12em] text-[#8fb2a8]">{label}</p><p className="mt-1 text-xs font-semibold text-[#e4eee9]">{value}</p></div> }
+function Info({ label, value }: { label: string; value: string }) { return <div><dt className="text-[9px] font-bold uppercase tracking-[.1em] text-[#8fb2a8]">{label}</dt><dd className="mt-1 line-clamp-2 text-[#d4e2dc]">{value}</dd></div> }
