@@ -2,6 +2,7 @@
 // owner alerts center, and full-tenant backup/restore helpers.
 import { store } from '../kernel/store.js';
 import { createRow, submitRow, getRow } from '../kernel/entity-service.js';
+import { ensureCanonicalInvoiceForLegacy, shouldAttemptCanonicalInvoice } from './gst/legacy-invoice-bridge.js';
 import { supplierStateCodeForTenant } from './gst/tax-policy.js';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -97,6 +98,7 @@ export function runRecurring(tenant: string, asOf?: string): string[] {
         })),
       });
       submitRow(tenant, 'scheduler', 'sales_invoice', inv.id);
+      if (shouldAttemptCanonicalInvoice(tenant)) ensureCanonicalInvoiceForLegacy(tenant, 'scheduler', inv.id);
       created.push(inv.id);
       next = advance(next, sub.data.frequency);
       store.updateRow({ ...sub, data: { ...sub.data, next_date: next, last_invoice: inv.id } });

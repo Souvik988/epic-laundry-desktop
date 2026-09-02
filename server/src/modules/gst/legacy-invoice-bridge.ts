@@ -5,6 +5,10 @@ import { calculateCanonicalTax } from './canonical-tax.js';
 import { createCanonicalInvoiceSnapshot } from './invoice-snapshot.js';
 import { resolveTaxPolicyRule, supplierTaxProfile } from './tax-policy.js';
 
+export function shouldAttemptCanonicalInvoice(tenant: string) {
+  return Boolean(supplierTaxProfile(tenant) && store.rowsOf(tenant, 'tax_policy_rule').some((row) => row.status === 'Approved' && row.data?.approvalStatus === 'Approved'));
+}
+
 /**
  * Convert a submitted legacy sales invoice into the immutable V4 snapshot.
  *
@@ -29,19 +33,20 @@ export function ensureCanonicalInvoiceForLegacy(tenant: string, actor: string, i
   const rawItems = Array.isArray(invoice.data.items) ? invoice.data.items as Array<Record<string, unknown>> : [];
   if (!rawItems.length) throw new Error('TAX_CLASSIFICATION_MISSING');
   const lines = rawItems.map((item, index) => {
-    const classificationCode = String(item.hsn || '').trim();
+    const linkedItem = item.item ? store.getRow(tenant, String(item.item)) : undefined;
+    const classificationCode = String(item.hsn || linkedItem?.data?.hsn || '').trim();
     const rule = resolveTaxPolicyRule(tenant, { classificationType: 'SAC', classificationCode, supplyType: 'Service', asOf: String(invoice.data.posting_date) });
     if (!rule) throw new Error('TAX_CLASSIFICATION_MISSING');
     const quantity = Number(item.qty || 0);
     if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isSafeInteger(Math.round(quantity * 1000))) throw new Error('TAX_CLASSIFICATION_MISSING');
     return {
       id: `${invoice.id}:line:${index + 1}`,
-      description: String(item.description || item.item || `Laundry service ${index + 1}`).trim().slice(0, 240),
+      description: String(item.description || linkedItem?.data?.name || item.item || `Laundry service ${index + 1}`).trim().slice(0, 240),
       classificationType: rule.classificationType,
       classificationCode: rule.classificationCode,
       quantityMilli: Math.round(quantity * 1000),
-      unit: String(item.unit || 'Piece').trim().slice(0, 24),
-      unitPricePaise: parseMoney(item.rate, `invoice line ${index + 1} rate`),
+      unit: String(item.unit || linkedItem?.data?.uom || 'Piece').trim().slice(0, 24),
+      unitPricePaise: parseMoney(item.rate ?? linkedItem?.data?.rate, `invoice line ${index + 1} rate`),
       taxRateBps: rule.rateBps,
     } as const;
   });
