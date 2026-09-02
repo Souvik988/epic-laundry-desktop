@@ -73,7 +73,7 @@ import { applyEntityNormalization, previewEntityNormalization, ENTITY_NORMALIZAT
 import { searchLaundryWorkspace } from './modules/laundry/search.js';
 import { createLaundryReportExportJob, getLaundryReportExportJob, readLaundryReportExport } from './modules/laundry/report-exports.js';
 import { createSavedReportView, deleteSavedReportView, listSavedReportViews } from './modules/laundry/report-views.js';
-import { actOnMarketplaceOrder, linkMarketplaceOrderToLocalOrder, marketplaceSyncStatus, materializeMarketplaceOrder, replayHeldMarketplaceOrder } from './modules/marketplace/edge-sync.js';
+import { actOnMarketplaceOrder, createDeviceEnrollment, linkMarketplaceOrderToLocalOrder, marketplaceSyncStatus, materializeMarketplaceOrder, registerMarketplaceDevice, replayHeldMarketplaceOrder } from './modules/marketplace/edge-sync.js';
 import { marketplaceAvailability, saveMarketplaceAvailability } from './modules/marketplace/availability.js';
 import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMarketplaceReassessment, marketplaceOrderTruth, recordMarketplaceIntake } from './modules/marketplace/order-truth.js';
 import { createCanonicalDebitNoteSnapshot, createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
@@ -246,6 +246,16 @@ const customerPortalTokenBody = {
 } as const;
 const customerPortalQuery = {
   type: 'object', properties: { token: { type: 'string', minLength: 1, maxLength: 4000 } }, additionalProperties: false,
+} as const;
+const marketplaceDeviceRegistrationBody = {
+  type: 'object', required: ['deviceId', 'vendorId', 'publicKey'], properties: {
+    deviceId: { type: 'string', minLength: 1, maxLength: 160 }, vendorId: { type: 'string', minLength: 1, maxLength: 120 }, station: { type: 'string', maxLength: 120 },
+    publicKey: { type: 'string', minLength: 1, maxLength: 10000 }, credentialRef: { type: 'string', maxLength: 500 }, softwareVersion: { type: 'string', maxLength: 80 },
+    capabilities: { type: 'object', additionalProperties: { type: 'boolean' } }, status: { type: 'string', enum: ['Pending', 'Registered', 'Revoked'] },
+  }, additionalProperties: false,
+} as const;
+const marketplaceDeviceRevokeBody = {
+  type: 'object', properties: { reason: { type: 'string', minLength: 3, maxLength: 500 } }, additionalProperties: false,
 } as const;
 const marketplacePaymentWebhookParams = {
   type: 'object', required: ['provider'],
@@ -646,6 +656,29 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/marketplace/sync/status', { preHandler: [guard, allow('orders.read')] }, async (req: any) =>
     inStore(req, () => marketplaceSyncStatus(req.auth!.tenant)),
   );
+  app.post('/api/marketplace/device/enrollment', { preHandler: [guard, allow('settings.manage')] }, async (req: any) =>
+    inStore(req, () => ({ ...createDeviceEnrollment(), storage: 'one-time-response-only', activation: 'EXTERNAL_MARKETPLACE_ACTIVATION_REQUIRED' })),
+  );
+  app.put('/api/marketplace/device', { schema: { body: marketplaceDeviceRegistrationBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try {
+      return inStore(req, () => {
+        const status = String(req.body.status || 'Pending');
+        if (status === 'Registered') throw new Error('DEVICE_ACTIVATION_REQUIRED');
+        return registerMarketplaceDevice(req.auth!.tenant, req.auth!.actor, req.body);
+      });
+    } catch (error: any) { return rep.code(error.message === 'DEVICE_ACTIVATION_REQUIRED' ? 409 : 400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/marketplace/device/revoke', { schema: { body: marketplaceDeviceRevokeBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try {
+      return inStore(req, () => {
+        const current = store.getMarketplaceDevice(req.auth!.tenant);
+        if (!current) throw new Error('MARKETPLACE_DEVICE_NOT_FOUND');
+        const result = registerMarketplaceDevice(req.auth!.tenant, req.auth!.actor, { ...current, status: 'Revoked' });
+        audit(req.auth!.tenant, req.auth!.actor, 'marketplace:device-revoked', { entity: 'marketplace_device', row_id: result.id, after: { reason: String(req.body?.reason || '').trim().slice(0, 500) || undefined } });
+        return result;
+      });
+    } catch (error: any) { return rep.code(error.message === 'MARKETPLACE_DEVICE_NOT_FOUND' ? 404 : 400).send({ code: error.message, error: error.message }); }
+  });
   app.get('/api/marketplace/availability', { preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => marketplaceAvailability(req.auth!.tenant)));
   app.put('/api/marketplace/availability', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => idempotent(req, 'marketplace.availability-update', () => saveMarketplaceAvailability(req.auth!.tenant, req.auth!.actor, req.body || {}))); }
