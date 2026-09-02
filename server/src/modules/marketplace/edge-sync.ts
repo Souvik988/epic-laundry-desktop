@@ -165,6 +165,19 @@ export function actOnMarketplaceOrder(tenant: string, actor: string, externalOrd
   const event = queueMarketplaceEvent(tenant, actor, { aggregateType: 'marketplace_order', aggregateId: order.externalOrderId, aggregateVersion: order.sourceVersion, eventType: input.action === 'accept' ? 'marketplace.order.accepted.v1' : 'marketplace.order.rejected.v1', payload: { externalOrderId: order.externalOrderId, localProjectionId: order.id, reason: reason || undefined, actedAt: now, vendorId: device.vendorId } });
   return { order: saved, event };
 }
+export function linkMarketplaceOrderToLocalOrder(tenant: string, actor: string, externalOrderId: string, localOrderId: string) {
+  const order = ['MARKETPLACE', 'CUSTOMER_APP', 'WEBSITE', 'VENDOR_APP', 'ADMIN'].map((channel) => store.getMarketplaceOrderProjection(tenant, channel as MarketplaceChannel, externalOrderId)).find(Boolean);
+  if (!order) throw new Error('marketplace order not found');
+  const local = store.getRow(tenant, String(localOrderId || '').trim());
+  if (!local || local.entity !== 'laundry_order') throw new Error('local laundry order not found');
+  const conflicting = store.listOrderExternalLinks(tenant, local.id).find((link) => link.externalOrderId !== externalOrderId);
+  if (conflicting) throw new Error('EXTERNAL_ORDER_ALREADY_LINKED');
+  const now = new Date().toISOString();
+  const saved = store.saveMarketplaceOrderProjection({ ...order, localOrderId: local.id, updatedAt: now });
+  const externalLink = store.saveOrderExternalLink({ id: store.getOrderExternalLink(tenant, order.channel, externalOrderId)?.id || `oel_${randomUUID()}`, tenant, storeId: store.currentStore(tenant), localOrderId: local.id, channel: order.channel, externalOrderId, externalStoreId: order.storeId, externalVendorId: order.vendorId, sourceRevision: order.sourceVersion, createdAt: now, lastSyncedAt: now });
+  audit(tenant, actor, 'marketplace:order-linked-to-local-order', { entity: 'marketplace_order_projection', row_id: order.id, after: { externalOrderId, localOrderId: local.id, channel: order.channel } });
+  return { projection: saved, localOrder: local, externalLink };
+}
 export function marketplaceSyncStatus(tenant: string) {
   const device = store.getMarketplaceDevice(tenant); const outbox = store.syncOutboxCounts(tenant); const inbox = store.syncInboxCounts(tenant); const checkpoint = device ? store.getSyncCheckpoint(tenant, device.id, 'marketplace.events') : undefined;
   return { version: SYNC_VERSION, configured: Boolean(device?.status === 'Registered'), device: device ? { id: device.id, vendorId: device.vendorId, storeId: device.storeId, station: device.station, status: device.status, lastSeenAt: device.lastSeenAt, rotationRequired: device.rotationRequired } : null, checkpoint: checkpoint ? { remoteStream: checkpoint.remoteStream, cursor: checkpoint.cursor, lastPullAt: checkpoint.lastPullAt, lastPushAt: checkpoint.lastPushAt, lastHeartbeatAt: checkpoint.lastHeartbeatAt, serverTimeOffsetMs: checkpoint.serverTimeOffsetMs, error: checkpoint.error, updatedAt: checkpoint.updatedAt } : null, outbox: { pending: outbox.Pending, inFlight: outbox.InFlight, retry: outbox.Retry, acknowledged: outbox.Acknowledged, deadLetter: outbox.DeadLetter }, inbox: { received: inbox.Received, held: inbox.Held, failed: inbox.Failed }, onlineOrders: store.marketplaceOrderProjectionCount(tenant) };

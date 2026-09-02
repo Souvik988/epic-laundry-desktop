@@ -37,6 +37,10 @@ try {
   const orders = await app.inject({ method: 'GET', url: '/api/marketplace/orders?state=AwaitingAcceptance&limit=20', headers });
   assert.equal(orders.statusCode, 200, 'authenticated operator can load the online order queue');
   assert.equal(orders.json().items.length, 1, 'queue returns the store-scoped external order once');
+  store.withStoreScope(tenant, storeId, () => store.insertRow({ id: 'LOCAL-API-ORDER-001', entity: 'laundry_order', tenant, status: 'Booked', version: 1, created_by: 'marketplace-owner', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), data: { name: 'LOCAL-API-ORDER-001', state: 'Booked' } }));
+  const link = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/link', headers: { ...headers, 'idempotency-key': 'marketplace-api-link-001' }, payload: { localOrderId: 'LOCAL-API-ORDER-001' } });
+  assert.equal(link.statusCode, 200, 'operator can explicitly bind an online projection to a physical local order');
+  assert.equal(link.json().projection.localOrderId, 'LOCAL-API-ORDER-001', 'projection stores the stable local operational identity');
   const intake = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/intake', headers: { ...headers, 'idempotency-key': 'marketplace-api-intake-001' }, payload: { actual: { pieces: 6 }, reason: 'physical count at counter' } });
   assert.equal(intake.statusCode, 200, 'operator can record physical intake separately from the online request');
   const reassessment = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/reassessment', headers: { ...headers, 'idempotency-key': 'marketplace-api-reassessment-001' }, payload: { previousAmountPaise: 10000, revisedAmountPaise: 12500, tolerancePaise: 100, reason: 'actual pieces differ from estimate' } });
