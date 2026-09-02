@@ -15,13 +15,13 @@ try {
   const { Store, store } = await import('./kernel/store.js');
   closeStore = () => store.close();
   assert.equal(existsSync(databaseFile), true, 'first Store instantiation creates the configured database path');
-  assert.ok(store.migrationStatus().length >= 20, 'first Store instantiation applies schema migrations');
+  assert.ok(store.migrationStatus().length >= 22, 'first Store instantiation applies schema migrations');
 
   store.close();
   closeStore = undefined;
   const restarted = new Store(databaseFile, { skipLegacyImport: true });
   closeStore = () => restarted.close();
-  assert.ok(restarted.migrationStatus().length >= 20, 'database restarts with the applied schema');
+  assert.ok(restarted.migrationStatus().length >= 22, 'database restarts with the applied schema');
   console.log('Clean database bootstrap regression passed.');
 } finally {
   closeStore?.();

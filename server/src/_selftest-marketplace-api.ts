@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const tempDir = mkdtempSync(join(tmpdir(), 'epic-marketplace-api-'));
+process.env.EPIC_DATA_FILE = join(tempDir, 'legacy.json');
+process.env.EPIC_DB_FILE = join(tempDir, 'epic.sqlite');
+process.env.EPIC_LEGACY_JSON_FILE = process.env.EPIC_DATA_FILE;
+let closeStore: (() => void) | undefined;
+try {
+  const Fastify = (await import('fastify')).default;
+  const { store } = await import('./kernel/store.js');
+  const { registerApi } = await import('./api.js');
+  const { createDeviceEnrollment, receiveMarketplaceOrder, registerMarketplaceDevice } = await import('./modules/marketplace/edge-sync.js');
+  closeStore = () => store.close();
+  const app = Fastify(); registerApi(app);
+  const boot = await app.inject({ method: 'POST', url: '/api/auth/bootstrap', payload: { username: 'marketplace-owner', password: 'StrongMarketplacePassword!26', tenant: 'MKT-API', storeId: 'STORE-API', businessName: 'Marketplace API Laundry' } });
+  assert.equal(boot.statusCode, 200, 'owner bootstrap succeeds for marketplace API contract test');
+  const headers = { cookie: String(boot.headers['set-cookie']).split(';')[0] };
+  const tenant = 'MKT-API'; const storeId = 'STORE-API'; const enrollment = store.withStoreScope(tenant, storeId, () => createDeviceEnrollment());
+  const device = store.withStoreScope(tenant, storeId, () => registerMarketplaceDevice(tenant, 'marketplace-owner', { deviceId: enrollment.deviceId, vendorId: 'VENDOR-API', publicKey: enrollment.publicKey, credentialRef: 'sim://marketplace-api', status: 'Registered' }));
+  const incoming = {
+    eventId: 'marketplace-api-order-001', source: 'simulator', tenantId: tenant, vendorId: 'VENDOR-API', storeId, deviceId: device.id,
+    aggregateType: 'marketplace_order', aggregateId: 'EXT-API-001', aggregateVersion: 1, eventType: 'marketplace.order.assigned.v1', eventVersion: 1, occurredAt: new Date().toISOString(),
+    payload: { externalOrderId: 'EXT-API-001', channel: 'CUSTOMER_APP', state: 'AwaitingAcceptance', orderNumber: 'APP-001', customer: { name: 'Kavya Nair' } },
+  };
+  store.withStoreScope(tenant, storeId, () => receiveMarketplaceOrder(tenant, 'marketplace-owner', incoming));
+  const status = await app.inject({ method: 'GET', url: '/api/marketplace/sync/status', headers });
+  assert.equal(status.statusCode, 200, 'owner can inspect marketplace sync diagnostics');
+  assert.equal(status.json().configured, true, 'diagnostics identify a registered marketplace device');
+  const orders = await app.inject({ method: 'GET', url: '/api/marketplace/orders?state=AwaitingAcceptance&limit=20', headers });
+  assert.equal(orders.statusCode, 200, 'authenticated operator can load the online order queue');
+  assert.equal(orders.json().items.length, 1, 'queue returns the store-scoped external order once');
+  const accept = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/accept', headers: { ...headers, 'idempotency-key': 'marketplace-api-accept-001' }, payload: {} });
+  assert.equal(accept.statusCode, 200, 'operator can accept an awaiting marketplace order');
+  assert.equal(accept.json().order.state, 'Accepted', 'accepted action updates the local operational projection');
+  const acceptedRetry = await app.inject({ method: 'POST', url: '/api/marketplace/orders/EXT-API-001/accept', headers: { ...headers, 'idempotency-key': 'marketplace-api-accept-001' }, payload: {} });
+  assert.equal(acceptedRetry.json().event.eventId, accept.json().event.eventId, 'operator command retry returns the original durable outbound event');
+  const noAuth = await app.inject({ method: 'GET', url: '/api/marketplace/orders' });
+  assert.equal(noAuth.statusCode, 401, 'online order queue is never exposed without an authenticated local session');
+  await app.close();
+  console.log('PASS  marketplace operator API contract self-test complete');
+} finally {
+  closeStore?.();
+  rmSync(tempDir, { recursive: true, force: true });
+}

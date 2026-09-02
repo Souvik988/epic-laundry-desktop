@@ -13,6 +13,8 @@
     "test:auth": "tsx src/_selftest-auth.ts",
     "test:store-migration": "tsx src/_selftest-store-migration.ts",
     "test:clean-db-bootstrap": "tsx src/_selftest-clean-db-bootstrap.ts",
+    "test:marketplace-sync": "tsx src/_selftest-marketplace-sync.ts",
+    "test:marketplace-api": "tsx src/_selftest-marketplace-api.ts",
     "test:customer": "tsx src/_selftest-customer.ts",
     "test:package": "tsx src/_selftest-package.ts",
     "test:catalogue": "tsx src/_selftest-catalogue.ts",

@@ -34,6 +34,12 @@ export interface DbShape {
   financialNormalizationRuns?: FinancialNormalizationRun[];
   normalizedCustomers?: NormalizedCustomerRecord[];
   normalizedOrders?: NormalizedOrderRecord[];
+  marketplaceDevices?: MarketplaceDeviceRecord[];
+  syncOutbox?: SyncOutboxRecord[];
+  syncInbox?: SyncInboxRecord[];
+  syncCheckpoints?: SyncCheckpointRecord[];
+  orderExternalLinks?: OrderExternalLinkRecord[];
+  marketplaceOrders?: MarketplaceOrderProjectionRecord[];
 }
 
 export type AuthIdentity = {
@@ -250,6 +256,41 @@ export type CompatibilityMigrationRun = {
   id: string; tenant: string; storeId: string; entity: string; status: 'running' | 'completed' | 'failed';
   cursor: number; total: number; applied: number; invalid: number; conflicts: number;
   sourceHash: string; actor: string; startedAt: string; updatedAt: string; completedAt?: string; error?: string;
+};
+export type MarketplaceDeviceStatus = 'NotConfigured' | 'Pending' | 'Registered' | 'Revoked';
+export type MarketplaceDeviceRecord = {
+  id: string; tenant: string; storeId: string; vendorId: string; station: string; status: MarketplaceDeviceStatus;
+  publicKey: string; credentialRef: string; capabilities: Record<string, boolean>; softwareVersion: string;
+  activatedAt?: string; lastSeenAt?: string; revokedAt?: string; rotationRequired: boolean; createdAt: string; updatedAt: string;
+};
+export type SyncOutboxState = 'Pending' | 'InFlight' | 'Acknowledged' | 'Retry' | 'DeadLetter';
+export type SyncOutboxRecord = {
+  eventId: string; tenant: string; vendorId: string; storeId: string; deviceId: string; aggregateType: string; aggregateId: string;
+  aggregateVersion: number; eventType: string; eventVersion: number; payload: Record<string, unknown>; createdAt: string; sequence: number;
+  state: SyncOutboxState; attemptCount: number; nextAttemptAt: string; leaseUntil?: string; acknowledgedAt?: string;
+  remoteReceiptId?: string; lastError?: string; correlationId: string;
+};
+export type SyncInboxStatus = 'Received' | 'Applied' | 'Held' | 'Failed';
+export type SyncInboxRecord = {
+  eventId: string; source: string; tenant: string; vendorId: string; storeId: string; deviceId: string; aggregateType: string;
+  aggregateId: string; aggregateVersion: number; eventType: string; eventVersion: number; payloadHash: string; payload: Record<string, unknown>;
+  receivedAt: string; appliedAt?: string; applyStatus: SyncInboxStatus; localAggregateType?: string; localId?: string; error?: string; correlationId: string;
+};
+export type SyncCheckpointRecord = {
+  tenant: string; storeId: string; deviceId: string; remoteStream: string; cursor: string; lastPullAt?: string; lastPushAt?: string;
+  lastHeartbeatAt?: string; serverTimeOffsetMs?: number; error?: string; updatedAt: string;
+};
+export type MarketplaceChannel = 'COUNTER' | 'CUSTOMER_APP' | 'WEBSITE' | 'VENDOR_APP' | 'MARKETPLACE' | 'ADMIN' | 'IMPORT';
+export type OrderExternalLinkRecord = {
+  id: string; tenant: string; storeId: string; localOrderId?: string; channel: MarketplaceChannel; externalOrderId: string;
+  externalCustomerId?: string; externalStoreId?: string; externalVendorId?: string; sourceRevision: number; createdAt: string; lastSyncedAt?: string;
+};
+export type MarketplaceOrderState = 'AwaitingAcceptance' | 'Accepted' | 'Rejected' | 'Expired' | 'PickupScheduled' | 'IntakeRequired' | 'CustomerApprovalRequired' | 'Processing' | 'Ready' | 'DeliveryScheduled' | 'Completed' | 'Cancelled';
+export type MarketplaceOrderProjectionRecord = {
+  id: string; tenant: string; storeId: string; vendorId: string; channel: MarketplaceChannel; externalOrderId: string; sourceVersion: number;
+  state: MarketplaceOrderState; orderNumber: string; customer: Record<string, unknown>; pickup: Record<string, unknown>; request: Record<string, unknown>;
+  paymentState: string; assignmentAt?: string; acceptanceDeadline?: string; preferences: string; notes: string; syncState: string;
+  localOrderId?: string; createdAt: string; updatedAt: string;
 };
 
 // A standalone server must not derive persistent data from its current working directory.
@@ -515,6 +556,8 @@ export class Store {
       { version: 18, name: 'hardened-print-job-state-and-document-constraints', sql: "CREATE TABLE tag_print_jobs_hardened (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, template_id TEXT NOT NULL, template_version TEXT NOT NULL, printer_profile TEXT NOT NULL, tag_ids_json TEXT NOT NULL, document_type TEXT NOT NULL CHECK(document_type IN ('invoice','mini-invoice','garment-tags','bag-tags','correction')), requested_copies INTEGER NOT NULL CHECK(typeof(requested_copies) = 'integer' AND requested_copies BETWEEN 1 AND 500), requested_by TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('Queued','Rendering','Printed','Downloaded','Failed','Cancelled')), started_at TEXT, completed_at TEXT, failure_reason TEXT, output_hash TEXT, evidence TEXT); INSERT INTO tag_print_jobs_hardened(id,tenant,store_id,order_id,template_id,template_version,printer_profile,tag_ids_json,document_type,requested_copies,requested_by,created_at,status,started_at,completed_at,failure_reason,output_hash,evidence) SELECT id,tenant,store_id,order_id,template_id,template_version,printer_profile,tag_ids_json,document_type,requested_copies,requested_by,created_at,status,started_at,completed_at,failure_reason,output_hash,evidence FROM tag_print_jobs; DROP TABLE tag_print_jobs; ALTER TABLE tag_print_jobs_hardened RENAME TO tag_print_jobs; CREATE INDEX tag_print_jobs_scope_time ON tag_print_jobs(tenant, store_id, created_at DESC);" },
       { version: 19, name: 'explicit-laundry-container-tags', sql: "CREATE TABLE IF NOT EXISTS laundry_containers (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, customer_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence > 0), total INTEGER NOT NULL CHECK(total > 0), weight_milli INTEGER, tag_code TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('Intake','Processing','Ready','Dispatched','Delivered','Missing','Damaged','Cancelled')), location TEXT NOT NULL DEFAULT 'Intake', condition TEXT NOT NULL DEFAULT 'Normal', created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, delivered_at TEXT, UNIQUE(tenant, store_id, tag_code), UNIQUE(tenant, store_id, order_id, sequence)); CREATE INDEX IF NOT EXISTS laundry_containers_scope_order ON laundry_containers(tenant, store_id, order_id, sequence); CREATE INDEX IF NOT EXISTS laundry_containers_tag_lookup ON laundry_containers(tenant, store_id, tag_code, state); CREATE TABLE IF NOT EXISTS laundry_container_events (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, container_id TEXT NOT NULL, event TEXT NOT NULL, from_state TEXT, to_state TEXT, location TEXT, actor TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS laundry_container_events_container ON laundry_container_events(tenant, store_id, container_id, created_at);" },
       { version: 20, name: 'explicit-garment-visual-keys', sql: "UPDATE entity_rows SET data_json = json_set(data_json, '$.visual_key', CASE json_extract(data_json, '$.photo') WHEN '/ui/app/garments/lndry-folded-shirt-v3.png' THEN 'foldedShirt' WHEN '/ui/app/garments/lndry-folded-trouser-v1.png' THEN 'foldedTrouser' WHEN '/ui/app/garments/lndry-folded-saree-v1.png' THEN 'foldedSaree' WHEN '/ui/app/garments/lndry-folded-kurti-v1.png' THEN 'foldedKurti' WHEN '/ui/app/garments/lndry-folded-blanket-v1.png' THEN 'foldedBlanket' WHEN '/ui/app/garments/lndry-folded-bedsheet-v1.png' THEN 'foldedBedsheet' WHEN '/ui/app/garments/lndry-mixed-clothes-v1.png' THEN 'mixedClothes' WHEN '/ui/app/garments/lndry-shoe-pair-v1.png' THEN 'shoePair' WHEN '/ui/app/garments/lndry-folded-blazer-v1.png' THEN 'foldedBlazer' WHEN '/ui/app/garments/lndry-folded-dress-v1.png' THEN 'foldedDress' WHEN '/ui/app/garments/lndry-folded-jeans-v1.png' THEN 'foldedJeans' WHEN '/ui/app/garments/lndry-folded-hoodie-v1.png' THEN 'foldedHoodie' WHEN '/ui/app/garments/lndry-folded-kurta-v1.png' THEN 'foldedKurta' ELSE '' END) WHERE entity = 'laundry_garment' AND COALESCE(json_extract(data_json, '$.visual_key'), '') = '';" },
+      { version: 21, name: 'marketplace-edge-sync-foundation', sql: "CREATE TABLE marketplace_devices (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, vendor_id TEXT NOT NULL, station TEXT NOT NULL DEFAULT '', status TEXT NOT NULL CHECK(status IN ('NotConfigured','Pending','Registered','Revoked')), public_key TEXT NOT NULL DEFAULT '', credential_ref TEXT NOT NULL DEFAULT '', capabilities_json TEXT NOT NULL DEFAULT '{}', software_version TEXT NOT NULL DEFAULT '', activated_at TEXT, last_seen_at TEXT, revoked_at TEXT, rotation_required INTEGER NOT NULL DEFAULT 0 CHECK(rotation_required IN (0,1)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(tenant, store_id)); CREATE TABLE sync_outbox (event_id TEXT PRIMARY KEY, tenant TEXT NOT NULL, vendor_id TEXT NOT NULL, store_id TEXT NOT NULL, device_id TEXT NOT NULL, aggregate_type TEXT NOT NULL, aggregate_id TEXT NOT NULL, aggregate_version INTEGER NOT NULL CHECK(aggregate_version > 0), event_type TEXT NOT NULL, event_version INTEGER NOT NULL CHECK(event_version > 0), payload_json TEXT NOT NULL, created_at TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence > 0), state TEXT NOT NULL CHECK(state IN ('Pending','InFlight','Acknowledged','Retry','DeadLetter')), attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0), next_attempt_at TEXT NOT NULL, lease_until TEXT, acknowledged_at TEXT, remote_receipt_id TEXT, last_error TEXT, correlation_id TEXT NOT NULL); CREATE UNIQUE INDEX sync_outbox_aggregate_sequence ON sync_outbox(tenant,store_id,device_id,aggregate_type,aggregate_id,sequence); CREATE INDEX sync_outbox_delivery_queue ON sync_outbox(tenant,store_id,device_id,state,next_attempt_at,created_at); CREATE TABLE sync_inbox (event_id TEXT PRIMARY KEY, source TEXT NOT NULL, tenant TEXT NOT NULL, vendor_id TEXT NOT NULL, store_id TEXT NOT NULL, device_id TEXT NOT NULL, aggregate_type TEXT NOT NULL, aggregate_id TEXT NOT NULL, aggregate_version INTEGER NOT NULL CHECK(aggregate_version > 0), event_version INTEGER NOT NULL CHECK(event_version > 0), payload_hash TEXT NOT NULL, payload_json TEXT NOT NULL, received_at TEXT NOT NULL, applied_at TEXT, apply_status TEXT NOT NULL CHECK(apply_status IN ('Received','Applied','Held','Failed')), local_aggregate_type TEXT, local_id TEXT, error TEXT, correlation_id TEXT NOT NULL); CREATE INDEX sync_inbox_scope_aggregate ON sync_inbox(tenant,store_id,aggregate_type,aggregate_id,aggregate_version); CREATE TABLE sync_checkpoints (tenant TEXT NOT NULL, store_id TEXT NOT NULL, device_id TEXT NOT NULL, remote_stream TEXT NOT NULL, cursor TEXT NOT NULL DEFAULT '', last_pull_at TEXT, last_push_at TEXT, last_heartbeat_at TEXT, server_time_offset_ms INTEGER, error TEXT, updated_at TEXT NOT NULL, PRIMARY KEY(tenant,store_id,device_id,remote_stream)); CREATE TABLE order_external_links (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, local_order_id TEXT, channel TEXT NOT NULL CHECK(channel IN ('COUNTER','CUSTOMER_APP','WEBSITE','VENDOR_APP','MARKETPLACE','ADMIN','IMPORT')), external_order_id TEXT NOT NULL, external_customer_id TEXT, external_store_id TEXT, external_vendor_id TEXT, source_revision INTEGER NOT NULL DEFAULT 1 CHECK(source_revision > 0), created_at TEXT NOT NULL, last_synced_at TEXT, UNIQUE(tenant,store_id,channel,external_order_id)); CREATE INDEX order_external_links_local_order ON order_external_links(tenant,store_id,local_order_id); CREATE TABLE marketplace_order_projections (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, vendor_id TEXT NOT NULL, channel TEXT NOT NULL CHECK(channel IN ('COUNTER','CUSTOMER_APP','WEBSITE','VENDOR_APP','MARKETPLACE','ADMIN','IMPORT')), external_order_id TEXT NOT NULL, source_version INTEGER NOT NULL CHECK(source_version > 0), state TEXT NOT NULL CHECK(state IN ('AwaitingAcceptance','Accepted','Rejected','Expired','PickupScheduled','IntakeRequired','CustomerApprovalRequired','Processing','Ready','DeliveryScheduled','Completed','Cancelled')), order_number TEXT NOT NULL, customer_json TEXT NOT NULL, pickup_json TEXT NOT NULL, request_json TEXT NOT NULL, payment_state TEXT NOT NULL DEFAULT 'Unknown', assignment_at TEXT, acceptance_deadline TEXT, preferences TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', sync_state TEXT NOT NULL DEFAULT 'Current', local_order_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(tenant,store_id,channel,external_order_id)); CREATE INDEX marketplace_order_queue ON marketplace_order_projections(tenant,store_id,state,acceptance_deadline,updated_at DESC);" },
+      { version: 22, name: 'sync-inbox-event-type-for-safe-replay', sql: "ALTER TABLE sync_inbox ADD COLUMN event_type TEXT NOT NULL DEFAULT '';" },
     ];
     this.db.transaction(() => {
       for (const migration of migrations) {
@@ -860,6 +903,172 @@ export class Store {
     event.published = true;
     this.db.prepare("UPDATE records SET payload_json = ? WHERE kind = 'outbox' AND tenant = ? AND store_id = ? AND id = ?").run(encode(event), row.tenant, row.store_id, id);
   }
+
+  private marketplaceDeviceFromRow(row: Record<string, unknown>): MarketplaceDeviceRecord {
+    return { id: String(row.id), tenant: String(row.tenant), storeId: String(row.store_id), vendorId: String(row.vendor_id), station: String(row.station || ''), status: String(row.status) as MarketplaceDeviceStatus, publicKey: String(row.public_key || ''), credentialRef: String(row.credential_ref || ''), capabilities: decode<Record<string, boolean>>(String(row.capabilities_json || '{}')), softwareVersion: String(row.software_version || ''), activatedAt: row.activated_at ? String(row.activated_at) : undefined, lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : undefined, revokedAt: row.revoked_at ? String(row.revoked_at) : undefined, rotationRequired: Boolean(row.rotation_required), createdAt: String(row.created_at), updatedAt: String(row.updated_at) };
+  }
+  saveMarketplaceDevice(input: MarketplaceDeviceRecord) {
+    const storeId = input.storeId || this.currentStore(input.tenant);
+    this.db.prepare(`INSERT INTO marketplace_devices(id,tenant,store_id,vendor_id,station,status,public_key,credential_ref,capabilities_json,software_version,activated_at,last_seen_at,revoked_at,rotation_required,created_at,updated_at)
+      VALUES (@id,@tenant,@storeId,@vendorId,@station,@status,@publicKey,@credentialRef,@capabilitiesJson,@softwareVersion,@activatedAt,@lastSeenAt,@revokedAt,@rotationRequired,@createdAt,@updatedAt)
+      ON CONFLICT(tenant,store_id) DO UPDATE SET vendor_id=excluded.vendor_id,station=excluded.station,status=excluded.status,public_key=excluded.public_key,credential_ref=excluded.credential_ref,capabilities_json=excluded.capabilities_json,software_version=excluded.software_version,activated_at=excluded.activated_at,last_seen_at=excluded.last_seen_at,revoked_at=excluded.revoked_at,rotation_required=excluded.rotation_required,updated_at=excluded.updated_at`).run({ ...input, storeId, station: input.station || '', publicKey: input.publicKey || '', credentialRef: input.credentialRef || '', capabilitiesJson: encode(input.capabilities || {}), softwareVersion: input.softwareVersion || '', activatedAt: input.activatedAt || null, lastSeenAt: input.lastSeenAt || null, revokedAt: input.revokedAt || null, rotationRequired: input.rotationRequired ? 1 : 0 });
+    return this.getMarketplaceDevice(input.tenant)!;
+  }
+  getMarketplaceDevice(tenant: string) {
+    const row = this.db.prepare('SELECT * FROM marketplace_devices WHERE tenant = ? AND store_id = ?').get(tenant, this.currentStore(tenant)) as Record<string, unknown> | undefined;
+    return row ? this.marketplaceDeviceFromRow(row) : undefined;
+  }
+  private syncOutboxFromRow(row: Record<string, unknown>): SyncOutboxRecord {
+    return { eventId: String(row.event_id), tenant: String(row.tenant), vendorId: String(row.vendor_id), storeId: String(row.store_id), deviceId: String(row.device_id), aggregateType: String(row.aggregate_type), aggregateId: String(row.aggregate_id), aggregateVersion: Number(row.aggregate_version), eventType: String(row.event_type), eventVersion: Number(row.event_version), payload: decode<Record<string, unknown>>(String(row.payload_json)), createdAt: String(row.created_at), sequence: Number(row.sequence), state: String(row.state) as SyncOutboxState, attemptCount: Number(row.attempt_count), nextAttemptAt: String(row.next_attempt_at), leaseUntil: row.lease_until ? String(row.lease_until) : undefined, acknowledgedAt: row.acknowledged_at ? String(row.acknowledged_at) : undefined, remoteReceiptId: row.remote_receipt_id ? String(row.remote_receipt_id) : undefined, lastError: row.last_error ? String(row.last_error) : undefined, correlationId: String(row.correlation_id) };
+  }
+  appendSyncOutbox(event: SyncOutboxRecord) {
+    const storeId = event.storeId || this.currentStore(event.tenant);
+    this.db.prepare(`INSERT INTO sync_outbox(event_id,tenant,vendor_id,store_id,device_id,aggregate_type,aggregate_id,aggregate_version,event_type,event_version,payload_json,created_at,sequence,state,attempt_count,next_attempt_at,lease_until,acknowledged_at,remote_receipt_id,last_error,correlation_id)
+      VALUES (@eventId,@tenant,@vendorId,@storeId,@deviceId,@aggregateType,@aggregateId,@aggregateVersion,@eventType,@eventVersion,@payloadJson,@createdAt,@sequence,@state,@attemptCount,@nextAttemptAt,@leaseUntil,@acknowledgedAt,@remoteReceiptId,@lastError,@correlationId)`).run({ ...event, storeId, payloadJson: encode(event.payload), leaseUntil: event.leaseUntil || null, acknowledgedAt: event.acknowledgedAt || null, remoteReceiptId: event.remoteReceiptId || null, lastError: event.lastError || null });
+    return event;
+  }
+  getSyncOutboxEvent(tenant: string, eventId: string) {
+    const row = this.db.prepare('SELECT * FROM sync_outbox WHERE tenant = ? AND store_id = ? AND event_id = ?').get(tenant, this.currentStore(tenant), eventId) as Record<string, unknown> | undefined;
+    return row ? this.syncOutboxFromRow(row) : undefined;
+  }
+  listSyncOutbox(tenant: string, state?: SyncOutboxState) {
+    const rows = this.db.prepare(`SELECT * FROM sync_outbox WHERE tenant = ? AND store_id = ? ${state ? 'AND state = ?' : ''} ORDER BY created_at, sequence`).all(...(state ? [tenant, this.currentStore(tenant), state] : [tenant, this.currentStore(tenant)])) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.syncOutboxFromRow(row));
+  }
+  syncOutboxCounts(tenant: string) {
+    const counts: Record<SyncOutboxState, number> = { Pending: 0, InFlight: 0, Acknowledged: 0, Retry: 0, DeadLetter: 0 };
+    for (const row of this.db.prepare('SELECT state, COUNT(*) AS count FROM sync_outbox WHERE tenant = ? AND store_id = ? GROUP BY state').all(tenant, this.currentStore(tenant)) as Array<{ state: SyncOutboxState; count: number }>) counts[row.state] = Number(row.count);
+    return counts;
+  }
+  leaseSyncOutbox(tenant: string, deviceId: string, options: { now: string; leaseUntil: string; limit: number; maxAttempts: number }) {
+    const storeId = this.currentStore(tenant); const now = options.now; const limit = Math.max(1, Math.min(100, Math.trunc(options.limit)));
+    return this.transaction(() => {
+      this.db.prepare("UPDATE sync_outbox SET state = 'Retry', lease_until = NULL, last_error = COALESCE(last_error, 'delivery lease expired') WHERE tenant = ? AND store_id = ? AND device_id = ? AND state = 'InFlight' AND lease_until IS NOT NULL AND lease_until <= ?").run(tenant, storeId, deviceId, now);
+      this.db.prepare("UPDATE sync_outbox SET state = 'DeadLetter', lease_until = NULL, last_error = COALESCE(last_error, 'maximum delivery attempts exceeded') WHERE tenant = ? AND store_id = ? AND device_id = ? AND state IN ('Pending','Retry') AND attempt_count >= ?").run(tenant, storeId, deviceId, options.maxAttempts);
+      const candidates = this.db.prepare("SELECT event_id FROM sync_outbox WHERE tenant = ? AND store_id = ? AND device_id = ? AND state IN ('Pending','Retry') AND next_attempt_at <= ? AND attempt_count < ? ORDER BY created_at, sequence LIMIT ?").all(tenant, storeId, deviceId, now, options.maxAttempts, limit) as Array<{ event_id: string }>;
+      const claim = this.db.prepare("UPDATE sync_outbox SET state = 'InFlight', attempt_count = attempt_count + 1, lease_until = ?, last_error = NULL WHERE tenant = ? AND store_id = ? AND event_id = ? AND state IN ('Pending','Retry')");
+      for (const candidate of candidates) claim.run(options.leaseUntil, tenant, storeId, candidate.event_id);
+      return candidates.map((candidate) => this.getSyncOutboxEvent(tenant, candidate.event_id)!).filter(Boolean);
+    });
+  }
+  acknowledgeSyncOutbox(tenant: string, eventId: string, remoteReceiptId: string, acknowledgedAt: string) {
+    const current = this.getSyncOutboxEvent(tenant, eventId);
+    if (!current) throw new Error('sync event not found');
+    if (current.state === 'Acknowledged') return current;
+    if (current.state === 'DeadLetter') throw new Error('dead-letter sync event cannot be acknowledged without replay');
+    this.db.prepare("UPDATE sync_outbox SET state = 'Acknowledged', acknowledged_at = ?, remote_receipt_id = ?, lease_until = NULL, last_error = NULL WHERE tenant = ? AND store_id = ? AND event_id = ?").run(acknowledgedAt, remoteReceiptId, tenant, this.currentStore(tenant), eventId);
+    return this.getSyncOutboxEvent(tenant, eventId)!;
+  }
+  retrySyncOutbox(tenant: string, eventId: string, input: { nextAttemptAt: string; error: string; maxAttempts: number; manual?: boolean }) {
+    const current = this.getSyncOutboxEvent(tenant, eventId);
+    if (!current) throw new Error('sync event not found');
+    if (current.state === 'Acknowledged') return current;
+    const state: SyncOutboxState = input.manual || current.attemptCount < input.maxAttempts ? 'Retry' : 'DeadLetter';
+    this.db.prepare('UPDATE sync_outbox SET state = ?, next_attempt_at = ?, lease_until = NULL, last_error = ? WHERE tenant = ? AND store_id = ? AND event_id = ?').run(state, input.nextAttemptAt, input.error.slice(0, 1000), tenant, this.currentStore(tenant), eventId);
+    return this.getSyncOutboxEvent(tenant, eventId)!;
+  }
+  replaySyncOutbox(tenant: string, eventId: string, now: string) {
+    const current = this.getSyncOutboxEvent(tenant, eventId);
+    if (!current) throw new Error('sync event not found');
+    if (current.state === 'Acknowledged') throw new Error('acknowledged sync event cannot be replayed');
+    this.db.prepare("UPDATE sync_outbox SET state = 'Retry', attempt_count = 0, next_attempt_at = ?, lease_until = NULL, last_error = NULL WHERE tenant = ? AND store_id = ? AND event_id = ?").run(now, tenant, this.currentStore(tenant), eventId);
+    return this.getSyncOutboxEvent(tenant, eventId)!;
+  }
+  private syncInboxFromRow(row: Record<string, unknown>): SyncInboxRecord {
+    return { eventId: String(row.event_id), source: String(row.source), tenant: String(row.tenant), vendorId: String(row.vendor_id), storeId: String(row.store_id), deviceId: String(row.device_id), aggregateType: String(row.aggregate_type), aggregateId: String(row.aggregate_id), aggregateVersion: Number(row.aggregate_version), eventType: String(row.event_type || ''), eventVersion: Number(row.event_version), payloadHash: String(row.payload_hash), payload: decode<Record<string, unknown>>(String(row.payload_json)), receivedAt: String(row.received_at), appliedAt: row.applied_at ? String(row.applied_at) : undefined, applyStatus: String(row.apply_status) as SyncInboxStatus, localAggregateType: row.local_aggregate_type ? String(row.local_aggregate_type) : undefined, localId: row.local_id ? String(row.local_id) : undefined, error: row.error ? String(row.error) : undefined, correlationId: String(row.correlation_id) };
+  }
+  getSyncInboxEvent(tenant: string, eventId: string) {
+    const row = this.db.prepare('SELECT * FROM sync_inbox WHERE tenant = ? AND store_id = ? AND event_id = ?').get(tenant, this.currentStore(tenant), eventId) as Record<string, unknown> | undefined;
+    return row ? this.syncInboxFromRow(row) : undefined;
+  }
+  receiveSyncInbox(event: SyncInboxRecord) {
+    const existing = this.getSyncInboxEvent(event.tenant, event.eventId);
+    if (existing) {
+      if (existing.payloadHash !== event.payloadHash) throw new Error('SYNC_EVENT_PAYLOAD_COLLISION');
+      return { record: existing, duplicate: true };
+    }
+    const storeId = event.storeId || this.currentStore(event.tenant);
+    this.db.prepare(`INSERT INTO sync_inbox(event_id,source,tenant,vendor_id,store_id,device_id,aggregate_type,aggregate_id,aggregate_version,event_type,event_version,payload_hash,payload_json,received_at,applied_at,apply_status,local_aggregate_type,local_id,error,correlation_id)
+      VALUES (@eventId,@source,@tenant,@vendorId,@storeId,@deviceId,@aggregateType,@aggregateId,@aggregateVersion,@eventType,@eventVersion,@payloadHash,@payloadJson,@receivedAt,@appliedAt,@applyStatus,@localAggregateType,@localId,@error,@correlationId)`).run({ ...event, storeId, payloadJson: encode(event.payload), appliedAt: event.appliedAt || null, localAggregateType: event.localAggregateType || null, localId: event.localId || null, error: event.error || null });
+    return { record: this.getSyncInboxEvent(event.tenant, event.eventId)!, duplicate: false };
+  }
+  updateSyncInbox(tenant: string, eventId: string, input: Pick<SyncInboxRecord, 'applyStatus' | 'appliedAt' | 'localAggregateType' | 'localId' | 'error'>) {
+    this.db.prepare('UPDATE sync_inbox SET apply_status = ?, applied_at = ?, local_aggregate_type = ?, local_id = ?, error = ? WHERE tenant = ? AND store_id = ? AND event_id = ?').run(input.applyStatus, input.appliedAt || null, input.localAggregateType || null, input.localId || null, input.error || null, tenant, this.currentStore(tenant), eventId);
+    return this.getSyncInboxEvent(tenant, eventId)!;
+  }
+  listSyncInbox(tenant: string) { return (this.db.prepare('SELECT * FROM sync_inbox WHERE tenant = ? AND store_id = ? ORDER BY received_at, rowid').all(tenant, this.currentStore(tenant)) as Array<Record<string, unknown>>).map((row) => this.syncInboxFromRow(row)); }
+  syncInboxCounts(tenant: string) {
+    const counts: Record<SyncInboxStatus, number> = { Received: 0, Applied: 0, Held: 0, Failed: 0 };
+    for (const row of this.db.prepare('SELECT apply_status, COUNT(*) AS count FROM sync_inbox WHERE tenant = ? AND store_id = ? GROUP BY apply_status').all(tenant, this.currentStore(tenant)) as Array<{ apply_status: SyncInboxStatus; count: number }>) counts[row.apply_status] = Number(row.count);
+    return counts;
+  }
+  saveSyncCheckpoint(input: SyncCheckpointRecord) {
+    const storeId = input.storeId || this.currentStore(input.tenant);
+    this.db.prepare(`INSERT INTO sync_checkpoints(tenant,store_id,device_id,remote_stream,cursor,last_pull_at,last_push_at,last_heartbeat_at,server_time_offset_ms,error,updated_at)
+      VALUES (@tenant,@storeId,@deviceId,@remoteStream,@cursor,@lastPullAt,@lastPushAt,@lastHeartbeatAt,@serverTimeOffsetMs,@error,@updatedAt)
+      ON CONFLICT(tenant,store_id,device_id,remote_stream) DO UPDATE SET cursor=excluded.cursor,last_pull_at=excluded.last_pull_at,last_push_at=excluded.last_push_at,last_heartbeat_at=excluded.last_heartbeat_at,server_time_offset_ms=excluded.server_time_offset_ms,error=excluded.error,updated_at=excluded.updated_at`).run({ ...input, storeId, lastPullAt: input.lastPullAt || null, lastPushAt: input.lastPushAt || null, lastHeartbeatAt: input.lastHeartbeatAt || null, serverTimeOffsetMs: input.serverTimeOffsetMs ?? null, error: input.error || null });
+    return this.getSyncCheckpoint(input.tenant, input.deviceId, input.remoteStream)!;
+  }
+  getSyncCheckpoint(tenant: string, deviceId: string, remoteStream: string) {
+    const row = this.db.prepare('SELECT * FROM sync_checkpoints WHERE tenant = ? AND store_id = ? AND device_id = ? AND remote_stream = ?').get(tenant, this.currentStore(tenant), deviceId, remoteStream) as Record<string, unknown> | undefined;
+    return row ? { tenant: String(row.tenant), storeId: String(row.store_id), deviceId: String(row.device_id), remoteStream: String(row.remote_stream), cursor: String(row.cursor || ''), lastPullAt: row.last_pull_at ? String(row.last_pull_at) : undefined, lastPushAt: row.last_push_at ? String(row.last_push_at) : undefined, lastHeartbeatAt: row.last_heartbeat_at ? String(row.last_heartbeat_at) : undefined, serverTimeOffsetMs: row.server_time_offset_ms === null || row.server_time_offset_ms === undefined ? undefined : Number(row.server_time_offset_ms), error: row.error ? String(row.error) : undefined, updatedAt: String(row.updated_at) } satisfies SyncCheckpointRecord : undefined;
+  }
+  private orderExternalLinkFromRow(row: Record<string, unknown>): OrderExternalLinkRecord {
+    return { id: String(row.id), tenant: String(row.tenant), storeId: String(row.store_id), localOrderId: row.local_order_id ? String(row.local_order_id) : undefined, channel: String(row.channel) as MarketplaceChannel, externalOrderId: String(row.external_order_id), externalCustomerId: row.external_customer_id ? String(row.external_customer_id) : undefined, externalStoreId: row.external_store_id ? String(row.external_store_id) : undefined, externalVendorId: row.external_vendor_id ? String(row.external_vendor_id) : undefined, sourceRevision: Number(row.source_revision), createdAt: String(row.created_at), lastSyncedAt: row.last_synced_at ? String(row.last_synced_at) : undefined };
+  }
+  saveOrderExternalLink(input: OrderExternalLinkRecord) {
+    const storeId = input.storeId || this.currentStore(input.tenant);
+    this.db.prepare(`INSERT INTO order_external_links(id,tenant,store_id,local_order_id,channel,external_order_id,external_customer_id,external_store_id,external_vendor_id,source_revision,created_at,last_synced_at)
+      VALUES (@id,@tenant,@storeId,@localOrderId,@channel,@externalOrderId,@externalCustomerId,@externalStoreId,@externalVendorId,@sourceRevision,@createdAt,@lastSyncedAt)
+      ON CONFLICT(tenant,store_id,channel,external_order_id) DO UPDATE SET local_order_id=COALESCE(excluded.local_order_id,order_external_links.local_order_id),external_customer_id=COALESCE(excluded.external_customer_id,order_external_links.external_customer_id),external_store_id=COALESCE(excluded.external_store_id,order_external_links.external_store_id),external_vendor_id=COALESCE(excluded.external_vendor_id,order_external_links.external_vendor_id),source_revision=MAX(order_external_links.source_revision,excluded.source_revision),last_synced_at=excluded.last_synced_at`).run({ ...input, storeId, localOrderId: input.localOrderId || null, externalCustomerId: input.externalCustomerId || null, externalStoreId: input.externalStoreId || null, externalVendorId: input.externalVendorId || null, lastSyncedAt: input.lastSyncedAt || null });
+    return this.getOrderExternalLink(input.tenant, input.channel, input.externalOrderId)!;
+  }
+  getOrderExternalLink(tenant: string, channel: MarketplaceChannel, externalOrderId: string) {
+    const row = this.db.prepare('SELECT * FROM order_external_links WHERE tenant = ? AND store_id = ? AND channel = ? AND external_order_id = ?').get(tenant, this.currentStore(tenant), channel, externalOrderId) as Record<string, unknown> | undefined;
+    return row ? this.orderExternalLinkFromRow(row) : undefined;
+  }
+  listOrderExternalLinks(tenant: string, localOrderId?: string) {
+    const rows = this.db.prepare(`SELECT * FROM order_external_links WHERE tenant = ? AND store_id = ? ${localOrderId ? 'AND local_order_id = ?' : ''} ORDER BY created_at`).all(...(localOrderId ? [tenant, this.currentStore(tenant), localOrderId] : [tenant, this.currentStore(tenant)])) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.orderExternalLinkFromRow(row));
+  }
+  private marketplaceOrderProjectionFromRow(row: Record<string, unknown>): MarketplaceOrderProjectionRecord {
+    return { id: String(row.id), tenant: String(row.tenant), storeId: String(row.store_id), vendorId: String(row.vendor_id), channel: String(row.channel) as MarketplaceChannel, externalOrderId: String(row.external_order_id), sourceVersion: Number(row.source_version), state: String(row.state) as MarketplaceOrderState, orderNumber: String(row.order_number), customer: decode<Record<string, unknown>>(String(row.customer_json)), pickup: decode<Record<string, unknown>>(String(row.pickup_json)), request: decode<Record<string, unknown>>(String(row.request_json)), paymentState: String(row.payment_state), assignmentAt: row.assignment_at ? String(row.assignment_at) : undefined, acceptanceDeadline: row.acceptance_deadline ? String(row.acceptance_deadline) : undefined, preferences: String(row.preferences || ''), notes: String(row.notes || ''), syncState: String(row.sync_state), localOrderId: row.local_order_id ? String(row.local_order_id) : undefined, createdAt: String(row.created_at), updatedAt: String(row.updated_at) };
+  }
+  getMarketplaceOrderProjection(tenant: string, channel: MarketplaceChannel, externalOrderId: string) {
+    const row = this.db.prepare('SELECT * FROM marketplace_order_projections WHERE tenant = ? AND store_id = ? AND channel = ? AND external_order_id = ?').get(tenant, this.currentStore(tenant), channel, externalOrderId) as Record<string, unknown> | undefined;
+    return row ? this.marketplaceOrderProjectionFromRow(row) : undefined;
+  }
+  saveMarketplaceOrderProjection(input: MarketplaceOrderProjectionRecord) {
+    const storeId = input.storeId || this.currentStore(input.tenant);
+    this.db.prepare(`INSERT INTO marketplace_order_projections(id,tenant,store_id,vendor_id,channel,external_order_id,source_version,state,order_number,customer_json,pickup_json,request_json,payment_state,assignment_at,acceptance_deadline,preferences,notes,sync_state,local_order_id,created_at,updated_at)
+      VALUES (@id,@tenant,@storeId,@vendorId,@channel,@externalOrderId,@sourceVersion,@state,@orderNumber,@customerJson,@pickupJson,@requestJson,@paymentState,@assignmentAt,@acceptanceDeadline,@preferences,@notes,@syncState,@localOrderId,@createdAt,@updatedAt)
+      ON CONFLICT(tenant,store_id,channel,external_order_id) DO UPDATE SET vendor_id=excluded.vendor_id,source_version=excluded.source_version,state=excluded.state,order_number=excluded.order_number,customer_json=excluded.customer_json,pickup_json=excluded.pickup_json,request_json=excluded.request_json,payment_state=excluded.payment_state,assignment_at=excluded.assignment_at,acceptance_deadline=excluded.acceptance_deadline,preferences=excluded.preferences,notes=excluded.notes,sync_state=excluded.sync_state,local_order_id=COALESCE(excluded.local_order_id,marketplace_order_projections.local_order_id),updated_at=excluded.updated_at`).run({ ...input, storeId, customerJson: encode(input.customer), pickupJson: encode(input.pickup), requestJson: encode(input.request), assignmentAt: input.assignmentAt || null, acceptanceDeadline: input.acceptanceDeadline || null, localOrderId: input.localOrderId || null });
+    return this.getMarketplaceOrderProjection(input.tenant, input.channel, input.externalOrderId)!;
+  }
+  listMarketplaceOrderProjections(tenant: string, state?: MarketplaceOrderState) {
+    const rows = this.db.prepare(`SELECT * FROM marketplace_order_projections WHERE tenant = ? AND store_id = ? ${state ? 'AND state = ?' : ''} ORDER BY acceptance_deadline, updated_at DESC`).all(...(state ? [tenant, this.currentStore(tenant), state] : [tenant, this.currentStore(tenant)])) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.marketplaceOrderProjectionFromRow(row));
+  }
+  listMarketplaceOrderProjectionPage(tenant: string, input: { state?: MarketplaceOrderState; cursor?: string; limit?: number } = {}) {
+    let cursor: { updatedAt: string; id: string } | undefined;
+    if (input.cursor) {
+      try {
+        const parsed = JSON.parse(Buffer.from(input.cursor, 'base64url').toString('utf8')) as { updatedAt?: unknown; id?: unknown };
+        if (typeof parsed.updatedAt !== 'string' || typeof parsed.id !== 'string') throw new Error('invalid cursor');
+        cursor = { updatedAt: parsed.updatedAt, id: parsed.id };
+      } catch { throw new Error('invalid marketplace order cursor'); }
+    }
+    const limit = Math.max(1, Math.min(200, Math.trunc(input.limit || 50)));
+    const clauses = ['tenant = ?', 'store_id = ?']; const params: unknown[] = [tenant, this.currentStore(tenant)];
+    if (input.state) { clauses.push('state = ?'); params.push(input.state); }
+    if (cursor) { clauses.push('(updated_at < ? OR (updated_at = ? AND id < ?))'); params.push(cursor.updatedAt, cursor.updatedAt, cursor.id); }
+    const rows = this.db.prepare(`SELECT * FROM marketplace_order_projections WHERE ${clauses.join(' AND ')} ORDER BY updated_at DESC, id DESC LIMIT ?`).all(...params, limit + 1) as Array<Record<string, unknown>>;
+    const hasMore = rows.length > limit; const items = rows.slice(0, limit).map((row) => this.marketplaceOrderProjectionFromRow(row)); const last = items.at(-1);
+    return { items, nextCursor: hasMore && last ? Buffer.from(JSON.stringify({ updatedAt: last.updatedAt, id: last.id }), 'utf8').toString('base64url') : undefined };
+  }
+  marketplaceOrderProjectionCount(tenant: string) {
+    return Number((this.db.prepare('SELECT COUNT(*) AS count FROM marketplace_order_projections WHERE tenant = ? AND store_id = ?').get(tenant, this.currentStore(tenant)) as { count: number }).count);
+  }
   appendStock(entry: StockLedgerEntry) { this.appendRecord('stock', entry.tenant, entry.id, entry); }
   stockOf(tenant: string) { return this.recordsOf<StockLedgerEntry>('stock', tenant); }
   appendIms(action: ImsAction) { this.appendRecord('ims', action.tenant, action.id, action); }
@@ -873,12 +1082,12 @@ export class Store {
         rows: this.readRows('SELECT * FROM entity_rows WHERE tenant = ? AND store_id = ? ORDER BY created_at', [tenant, storeId]),
         gl: scopedRecords<GLEntry>('gl'), audit: scopedRecords<AuditEntry>('audit'), outbox: scopedRecords<OutboxEvent>('outbox'),
         stock: scopedRecords<StockLedgerEntry>('stock'), ims: scopedRecords<ImsAction>('ims'), seq,
-        garmentUnits: this.listGarmentUnits(tenant), garmentUnitEvents: this.listGarmentUnitEvents(tenant), tagReprints: this.listTagReprints(tenant), tagHistory: this.listTagHistory(tenant), printJobs: this.listPrintJobs(tenant), laundryContainers: this.listLaundryContainers(tenant), laundryContainerEvents: this.listLaundryContainerEvents(tenant), financialEntries: this.listFinancialEntries(tenant), financialDocuments: this.listFinancialDocuments(tenant), customerLedgerEntries: this.listCustomerLedgerEntries(tenant), walletEntries: this.listWalletEntries(tenant), orderHolds: this.listOrderHolds(tenant, true), customerAddresses: this.listCustomerAddresses(tenant), cashShiftCloses: this.listCashShiftCloses(tenant), financialNormalizationRuns: this.listFinancialNormalizationRuns(tenant, 10000), normalizedCustomers: this.listNormalizedCustomers(tenant), normalizedOrders: this.listNormalizedOrders(tenant),
+        garmentUnits: this.listGarmentUnits(tenant), garmentUnitEvents: this.listGarmentUnitEvents(tenant), tagReprints: this.listTagReprints(tenant), tagHistory: this.listTagHistory(tenant), printJobs: this.listPrintJobs(tenant), laundryContainers: this.listLaundryContainers(tenant), laundryContainerEvents: this.listLaundryContainerEvents(tenant), financialEntries: this.listFinancialEntries(tenant), financialDocuments: this.listFinancialDocuments(tenant), customerLedgerEntries: this.listCustomerLedgerEntries(tenant), walletEntries: this.listWalletEntries(tenant), orderHolds: this.listOrderHolds(tenant, true), customerAddresses: this.listCustomerAddresses(tenant), cashShiftCloses: this.listCashShiftCloses(tenant), financialNormalizationRuns: this.listFinancialNormalizationRuns(tenant, 10000), normalizedCustomers: this.listNormalizedCustomers(tenant), normalizedOrders: this.listNormalizedOrders(tenant), marketplaceDevices: this.getMarketplaceDevice(tenant) ? [this.getMarketplaceDevice(tenant)!] : [], syncOutbox: this.listSyncOutbox(tenant), syncInbox: this.listSyncInbox(tenant), syncCheckpoints: (this.db.prepare('SELECT * FROM sync_checkpoints WHERE tenant = ? AND store_id = ?').all(tenant, storeId) as Array<Record<string, unknown>>).map((row) => ({ tenant: String(row.tenant), storeId: String(row.store_id), deviceId: String(row.device_id), remoteStream: String(row.remote_stream), cursor: String(row.cursor || ''), lastPullAt: row.last_pull_at ? String(row.last_pull_at) : undefined, lastPushAt: row.last_push_at ? String(row.last_push_at) : undefined, lastHeartbeatAt: row.last_heartbeat_at ? String(row.last_heartbeat_at) : undefined, serverTimeOffsetMs: row.server_time_offset_ms === null || row.server_time_offset_ms === undefined ? undefined : Number(row.server_time_offset_ms), error: row.error ? String(row.error) : undefined, updatedAt: String(row.updated_at) })), orderExternalLinks: this.listOrderExternalLinks(tenant), marketplaceOrders: this.listMarketplaceOrderProjections(tenant),
       };
     });
   }
   replaceAll(input: DbShape) {
-    this.db.exec('DELETE FROM entity_rows; DELETE FROM records; DELETE FROM sequences; DELETE FROM garment_unit_events; DELETE FROM tag_reprints; DELETE FROM tag_history; DELETE FROM tag_print_jobs; DELETE FROM laundry_container_events; DELETE FROM laundry_containers; DELETE FROM garment_units; DELETE FROM financial_entries; DELETE FROM financial_documents; DELETE FROM customer_ledger_entries; DELETE FROM wallet_entries; DELETE FROM customer_addresses; DELETE FROM laundry_order_holds; DELETE FROM cash_shift_closes; DELETE FROM financial_normalization_runs; DELETE FROM laundry_order_items; DELETE FROM laundry_orders; DELETE FROM customers; DELETE FROM compatibility_migration_runs; DELETE FROM idempotency_commands;');
+    this.db.exec('DELETE FROM entity_rows; DELETE FROM records; DELETE FROM sequences; DELETE FROM garment_unit_events; DELETE FROM tag_reprints; DELETE FROM tag_history; DELETE FROM tag_print_jobs; DELETE FROM laundry_container_events; DELETE FROM laundry_containers; DELETE FROM garment_units; DELETE FROM financial_entries; DELETE FROM financial_documents; DELETE FROM customer_ledger_entries; DELETE FROM wallet_entries; DELETE FROM customer_addresses; DELETE FROM laundry_order_holds; DELETE FROM cash_shift_closes; DELETE FROM financial_normalization_runs; DELETE FROM laundry_order_items; DELETE FROM laundry_orders; DELETE FROM customers; DELETE FROM compatibility_migration_runs; DELETE FROM idempotency_commands; DELETE FROM sync_outbox; DELETE FROM sync_inbox; DELETE FROM sync_checkpoints; DELETE FROM order_external_links; DELETE FROM marketplace_order_projections; DELETE FROM marketplace_devices;');
     for (const row of input.rows || []) this.insertRow(row);
     for (const entry of input.gl || []) this.appendGL(entry);
     for (const entry of input.audit || []) this.appendAudit(entry);
@@ -903,6 +1112,12 @@ export class Store {
     for (const run of input.financialNormalizationRuns || []) this.appendFinancialNormalizationRun(run);
     for (const customer of input.normalizedCustomers || []) this.upsertNormalizedCustomer(customer);
     for (const order of input.normalizedOrders || []) this.upsertNormalizedOrder(order);
+    for (const device of input.marketplaceDevices || []) this.saveMarketplaceDevice(device);
+    for (const event of input.syncOutbox || []) this.appendSyncOutbox(event);
+    for (const event of input.syncInbox || []) this.receiveSyncInbox(event);
+    for (const checkpoint of input.syncCheckpoints || []) this.saveSyncCheckpoint(checkpoint);
+    for (const link of input.orderExternalLinks || []) this.saveOrderExternalLink(link);
+    for (const order of input.marketplaceOrders || []) this.saveMarketplaceOrderProjection(order);
   }
   replaceScoped(tenant: string, storeId: string, input: DbShape) {
     return this.withStoreScope(tenant, storeId, () => this.transaction(() => {
@@ -927,6 +1142,12 @@ export class Store {
       this.db.prepare('DELETE FROM laundry_orders WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM customers WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM compatibility_migration_runs WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM sync_outbox WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM sync_inbox WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM sync_checkpoints WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM order_external_links WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM marketplace_order_projections WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM marketplace_devices WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM idempotency_commands WHERE tenant = ? AND scope LIKE ?').run(tenant, `${storeId}:%`);
       for (const row of input.rows || []) {
         if (String(row.tenant) !== tenant) throw new Error('backup contains a row from another tenant');
@@ -958,6 +1179,12 @@ export class Store {
       for (const run of input.financialNormalizationRuns || []) { if (run.tenant !== tenant || run.storeId !== storeId) throw new Error('backup contains normalization evidence from another store'); this.appendFinancialNormalizationRun(run); }
       for (const customer of input.normalizedCustomers || []) { if (customer.tenant !== tenant || customer.storeId !== storeId) throw new Error('backup contains a normalized customer from another store'); this.upsertNormalizedCustomer(customer); }
       for (const order of input.normalizedOrders || []) { if (order.tenant !== tenant || order.storeId !== storeId) throw new Error('backup contains a normalized order from another store'); this.upsertNormalizedOrder(order); }
+      for (const device of input.marketplaceDevices || []) { if (device.tenant !== tenant || device.storeId !== storeId) throw new Error('backup contains a marketplace device from another store'); this.saveMarketplaceDevice(device); }
+      for (const event of input.syncOutbox || []) { if (event.tenant !== tenant || event.storeId !== storeId) throw new Error('backup contains a sync outbox event from another store'); this.appendSyncOutbox(event); }
+      for (const event of input.syncInbox || []) { if (event.tenant !== tenant || event.storeId !== storeId) throw new Error('backup contains a sync inbox event from another store'); this.receiveSyncInbox(event); }
+      for (const checkpoint of input.syncCheckpoints || []) { if (checkpoint.tenant !== tenant || checkpoint.storeId !== storeId) throw new Error('backup contains a sync checkpoint from another store'); this.saveSyncCheckpoint(checkpoint); }
+      for (const link of input.orderExternalLinks || []) { if (link.tenant !== tenant || link.storeId !== storeId) throw new Error('backup contains an external order link from another store'); this.saveOrderExternalLink(link); }
+      for (const order of input.marketplaceOrders || []) { if (order.tenant !== tenant || order.storeId !== storeId) throw new Error('backup contains a marketplace order from another store'); this.saveMarketplaceOrderProjection(order); }
       return { rows: (input.rows || []).length };
     }));
   }

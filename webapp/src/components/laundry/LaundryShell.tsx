@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { AlertTriangle, BarChart3, Bell, Bike, BookOpenCheck, ChevronDown, ClipboardList, ContactRound, LayoutDashboard, LogOut, MapPinned, Plus, Printer, ReceiptText, Settings2, Shirt, Sparkles, Upload, UsersRound, WalletCards, CircleDollarSign, ScanLine, Banknote, ShieldCheck, Route as RouteIcon, Wrench, Search } from 'lucide-react'
+import { AlertTriangle, BarChart3, Bell, Bike, BookOpenCheck, ChevronDown, ClipboardList, ContactRound, LayoutDashboard, LogOut, MapPinned, Plus, Printer, ReceiptText, Settings2, Shirt, Sparkles, Upload, UsersRound, WalletCards, CircleDollarSign, ScanLine, Banknote, ShieldCheck, Route as RouteIcon, Wrench, Search, Cloud } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { apiGet, apiPost } from '@/lib/api'
 import { useEffect, useState } from 'react'
@@ -15,6 +15,7 @@ const navigation: Array<{ to: string; label: string; icon: typeof LayoutDashboar
   { to: '/laundry/packages', label: 'Care packages', icon: Sparkles, permission: 'packages.read' },
   { to: '/laundry/new-order', label: 'Order booking', icon: Plus, permission: 'orders.create' },
   { to: '/laundry/orders', label: 'Store orders', icon: ClipboardList, permission: 'orders.read' },
+  { to: '/laundry/online-orders', label: 'Online orders', icon: Cloud, permission: 'settings.manage' },
   { to: '/laundry/garment-tracking', label: 'Garment tracking', icon: ScanLine, permission: 'garments.read' },
   { to: '/laundry/production-queue', label: 'Production queue', icon: Wrench, permission: 'production.read' },
   { to: '/laundry/quality-claims', label: 'Quality claims', icon: ShieldCheck, permission: 'quality.read' },
@@ -40,7 +41,7 @@ const navigationGroups: Array<{ id: string; label: string; items: typeof navigat
   { id: 'delivery', label: 'Pickup & delivery', items: navigation.filter((item) => ['/laundry/routes', '/laundry/dispatch', '/laundry/settlements'].includes(item.to)) },
   { id: 'finance', label: 'Finance', items: navigation.filter((item) => ['/laundry/cash-closing', '/laundry/expenses'].includes(item.to)) },
   { id: 'programs', label: 'Customer programs', items: navigation.filter((item) => item.to === '/laundry/packages') },
-  { id: 'management', label: 'Management', items: navigation.filter((item) => ['/laundry/reports', '/laundry/catalogue', '/laundry/import-prices', '/laundry/import-catalogue', '/laundry/import-customers', '/laundry/settings'].includes(item.to)) },
+  { id: 'management', label: 'Management', items: navigation.filter((item) => ['/laundry/online-orders', '/laundry/reports', '/laundry/catalogue', '/laundry/import-prices', '/laundry/import-catalogue', '/laundry/import-customers', '/laundry/settings'].includes(item.to)) },
 ]
 
 export type UiPermission = 'orders.read' | 'orders.create' | 'expenses.create' | 'settings.manage' | 'catalogue.read' | 'customers.read' | 'packages.read' | 'garments.read' | 'cash.read' | 'production.read' | 'quality.read' | 'routes.read'
