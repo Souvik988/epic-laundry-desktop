@@ -1,6 +1,6 @@
 # V4 execution matrix
 
-Authoritative checkpoint: local `main` at `c53e972` (2026-09-03). Remote `origin/main` remains `7276726`; no V4 work has been pushed.
+Authoritative checkpoint: local `main` at `15379cd` (2026-09-03). Remote `origin/main` remains `7276726`; no V4 work has been pushed.
 
 | Requirement group | Current implementation / evidence | Class | DB / API / UI / test | Remaining action |
 | --- | --- | --- | --- | --- |
@@ -27,6 +27,6 @@ Authoritative checkpoint: local `main` at `c53e972` (2026-09-03). Remote `origin
 | Release | Internal unsigned build distinction and signature verification exist. New Windows CI job has not run remotely; production signing/update feed unavailable. | PENDING_REMOTE_CI / EXTERNAL_BLOCKER | `.github/workflows/ci.yml`, desktop | Test local packaging/launch where possible; retain truthful production gate. |
 | Hardware / providers | Keyboard scanner/native print intents exist. | NEEDS_REAL_HARDWARE / NEEDS_PROVIDER | hardware module | Keep evidence-based state; validate with real equipment/credentials. |
 
-Latest local evidence: complete server regression set passed (typecheck/build, clean DB bootstrap, workspace separation/status, marketplace sync/API/order truth/settlement/cash/notifications/provider events, tax/invoice, catalogue/assets, legacy laundry, recovery/normalization, and authenticated E2E); web build, accessibility audit and Playwright smoke passed after the operator-access correction; desktop workspace/recovery/signature/manifest checks passed; Windows unsigned installer/portable build and 3,721-entry manifest were generated; the installed executable is running and contains the production tax guard. This is local evidence only—remote CI remains pending because no V4 branch was pushed.
+Latest local evidence: complete server regression set passed (typecheck/build, clean DB bootstrap, workspace separation/status, marketplace sync/API/order truth/settlement/cash/notifications/provider events, tax/invoice, catalogue/assets, legacy laundry, recovery/normalization, and authenticated E2E); web build, accessibility audit and Playwright smoke passed after the operator-access correction; desktop workspace/recovery/signature/manifest checks passed; Windows unsigned installer/portable build and 3,721-entry manifest were generated; the installed executable is running and contains the production tax guard and recurring-invoice canonical bridge. This is local evidence only—remote CI remains pending because no V4 branch was pushed.
 
 Execution order: (1) finish clean baseline evidence, (2) availability + request/intake/reassessment, (3) settlement, (4) tax/invoice, (5) UI/document/runtime/performance/security audit, (6) release evidence.
