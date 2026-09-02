@@ -445,7 +445,7 @@ export function bookLaundryOrder(tenant: string, actor: string, input: BookInput
   const customer = resolveCustomer(tenant, actor, input.customer || {});
   const quote = quoteLaundryOrder(tenant, input, customer.id);
   const paymentMode = input.paymentMode || 'Pay Later';
-  const placeOfSupply = input.placeOfSupply || process.env.EPIC_SUPPLIER_STATE || '29';
+  const placeOfSupply = input.placeOfSupply || supplierTaxProfile(tenant)?.stateCode || process.env.EPIC_SUPPLIER_STATE || '29';
   const invoice = createRow(tenant, actor, 'sales_invoice', {
     customer: customer.id,
     posting_date: orderDate,
@@ -648,7 +648,7 @@ export function editLaundryOrder(tenant: string, actor: string, id: string, inpu
     const oldInvoice = cancelRow(tenant, actor, 'sales_invoice', invoice.id, { postReversal: false });
     const oldInvoiceDocument = store.listFinancialDocuments(tenant, { sourceId: invoice.id }).find((document) => document.documentType === 'invoice');
     if (oldInvoiceDocument) store.appendFinancialDocument({ ...oldInvoiceDocument, status: 'Cancelled', occurredAt: oldInvoice.updated_at });
-    const replacement = createRow(tenant, actor, 'sales_invoice', { customer: customer.id, posting_date: today(), place_of_supply: String(invoice.data.place_of_supply || process.env.EPIC_SUPPLIER_STATE || '29'), currency: 'INR', suppress_notifications: true, items: invoiceItems(quote) });
+    const replacement = createRow(tenant, actor, 'sales_invoice', { customer: customer.id, posting_date: today(), place_of_supply: String(invoice.data.place_of_supply || supplierTaxProfile(tenant)?.stateCode || process.env.EPIC_SUPPLIER_STATE || '29'), currency: 'INR', suppress_notifications: true, items: invoiceItems(quote) });
     const submittedReplacement = submitRow(tenant, actor, 'sales_invoice', replacement.id);
     store.appendFinancialDocument({ id: `doc:${submittedReplacement.id}`, tenant, storeId: store.currentStore(tenant), documentType: 'invoice', sourceEntity: 'sales_invoice', sourceId: submittedReplacement.id, amountPaise: parseMoney(quote.grandTotal, 'invoice total'), currency: 'INR', status: submittedReplacement.status, occurredAt: submittedReplacement.updated_at, actor, metadata: { orderId: order.id, replacementOf: invoice.id } });
     order.data.expected_delivery_date = input.expectedDeliveryDate;

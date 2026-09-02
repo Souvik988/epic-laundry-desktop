@@ -1099,14 +1099,15 @@ export function registerApi(app: FastifyInstance) {
     const tenant = requestTenant(req);
     const row = store.getRow(tenant, req.params.id);
     if (!row || !['sales_invoice', 'pos_invoice'].includes(row.entity)) return rep.code(404).send({ error: 'not found' });
-    const gst = row.data.__gst;
+    const linked = row.data.canonical_snapshot_id ? store.getRow(tenant, String(row.data.canonical_snapshot_id)) : undefined;
+    const gst = linked?.entity === 'canonical_invoice_snapshot' ? gstFromCanonicalSnapshot(linked.data) : row.data.__gst;
     if (!gst) return rep.code(400).send({ error: 'invoice not submitted' });
     try {
       const configured = supplierTaxProfile(tenant);
       if (!configured) return rep.code(409).send({ code: 'TAX_PROFILE_INCOMPLETE', error: 'configure the supplier tax profile before creating e-invoice data' });
       if (configured.registrationStatus !== 'Registered') return rep.code(409).send({ code: 'EINVOICE_NOT_APPLICABLE', error: 'e-invoice data is not applicable to an unregistered supplier' });
       const p = store.getRow(tenant, row.data.customer);
-      return buildEinvoicePayload({ name: row.data.name, posting_date: row.data.posting_date, data: row.data }, companyForTenant(tenant), {
+      return buildEinvoicePayload({ name: linked?.entity === 'canonical_invoice_snapshot' ? linked.data.invoiceNumber : row.data.name, posting_date: row.data.posting_date, data: row.data }, companyForTenant(tenant), {
       name: p?.data?.name || (row.entity === 'pos_invoice' ? 'Walk-in Customer' : ''), gstin: p?.data?.gstin, addr: p?.data?.addr,
       state: p?.data?.state, pos: row.data.place_of_supply,
       }, gst);
