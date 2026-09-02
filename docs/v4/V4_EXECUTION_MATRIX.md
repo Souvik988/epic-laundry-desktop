@@ -1,6 +1,6 @@
 # V4 execution matrix
 
-Authoritative checkpoint: local `main` at `f7babc6` (2026-09-02). Remote `origin/main` remains `7276726`; no V4 work has been pushed.
+Authoritative checkpoint: local `main` at `d852c52` (2026-09-02). Remote `origin/main` remains `7276726`; no V4 work has been pushed.
 
 | Requirement group | Current implementation / evidence | Class | DB / API / UI / test | Remaining action |
 | --- | --- | --- | --- | --- |
