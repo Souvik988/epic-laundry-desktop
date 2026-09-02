@@ -82,6 +82,7 @@ import { marketplaceSettlement, recordMarketplaceCashCollection, recordMarketpla
 import { recordProviderPaymentEvent, verifyProviderWebhook, type ProviderPaymentEvent } from './modules/marketplace/provider-events.js';
 import { queueMarketplaceNotification, recordMarketplaceNotificationDelivery, type NotificationChannel, type NotificationState } from './modules/marketplace/notifications.js';
 import { renderCanonicalTaxInvoice } from './modules/gst/canonical-invoice-print.js';
+import { approveTaxPolicyRule, createTaxPolicyRule, listTaxPolicyRules, retireTaxPolicyRule, saveSupplierTaxProfile, supplierTaxProfile, taxReadiness } from './modules/gst/tax-policy.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -183,6 +184,13 @@ const marketplaceNotificationDeliveryParams = {
 } as const;
 const marketplaceNotificationDeliveryBody = {
   type: 'object', required: ['state'], properties: { state: { type: 'string', enum: ['Queued', 'Sent', 'Delivered', 'Failed'] }, providerMessageId: { type: 'string', maxLength: 200 }, error: { type: 'string', maxLength: 500 } }, additionalProperties: false,
+} as const;
+const gstTaxPolicyBody = {
+  type: 'object', required: ['classificationType', 'classificationCode', 'description', 'supplyType', 'rateBps', 'validFrom', 'sourceNote', 'version'], properties: { classificationType: { type: 'string', enum: ['SAC', 'HSN'] }, classificationCode: { type: 'string', minLength: 2, maxLength: 20 }, description: { type: 'string', minLength: 1, maxLength: 240 }, supplyType: { type: 'string', enum: ['Service', 'Product'] }, rateBps: { type: 'integer', minimum: 0, maximum: 10000 }, validFrom: { type: 'string', minLength: 10, maxLength: 10 }, validTo: { type: 'string', minLength: 10, maxLength: 10 }, sourceNote: { type: 'string', minLength: 3, maxLength: 1000 }, version: { type: 'string', minLength: 1, maxLength: 80 } }, additionalProperties: false,
+} as const;
+const gstTaxPolicyQuery = { type: 'object', properties: { asOf: { type: 'string', minLength: 10, maxLength: 10 } }, additionalProperties: false } as const;
+const gstSupplierProfileBody = {
+  type: 'object', required: ['legalName', 'address', 'stateCode', 'pincode', 'registrationStatus'], properties: { legalName: { type: 'string', minLength: 1, maxLength: 240 }, tradeName: { type: 'string', maxLength: 240 }, address: { type: 'string', minLength: 1, maxLength: 1000 }, stateCode: { type: 'string', minLength: 2, maxLength: 2 }, pincode: { type: 'string', minLength: 6, maxLength: 6 }, registrationStatus: { type: 'string', enum: ['Registered', 'Unregistered'] }, gstin: { type: 'string', maxLength: 15 }, invoiceSeries: { type: 'string', maxLength: 80 }, einvoiceState: { type: 'string', enum: ['NotApplicable', 'NotConfigured', 'Sandbox', 'Ready', 'Pending', 'Generated', 'Failed', 'Cancelled', 'TimeRestricted'] } }, additionalProperties: false,
 } as const;
 const marketplaceIntakeBody = {
   type: 'object', required: ['actual'], properties: { actual: { type: 'object', additionalProperties: true }, reason: { type: 'string', maxLength: 500 } }, additionalProperties: false,
@@ -1061,6 +1069,25 @@ export function registerApi(app: FastifyInstance) {
     if (!row) return rep.code(404).send({ error: 'canonical invoice not found' });
     rep.header('Content-Type', 'text/html; charset=utf-8');
     return renderCanonicalTaxInvoice(row.data as any);
+  });
+  app.get('/api/gst/tax-profile', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => supplierTaxProfile(req.auth!.tenant) || { ready: false, code: 'TAX_PROFILE_INCOMPLETE', profile: null }));
+  app.get('/api/gst/tax-readiness', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => taxReadiness(req.auth!.tenant)));
+  app.put('/api/gst/tax-profile', { schema: { body: gstSupplierProfileBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, 'gst.tax-profile', () => saveSupplierTaxProfile(req.auth!.tenant, req.auth!.actor, req.body))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/gst/tax-rules', { schema: { querystring: gstTaxPolicyQuery }, preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listTaxPolicyRules(req.auth!.tenant, req.query?.asOf)));
+  app.post('/api/gst/tax-rules', { schema: { body: gstTaxPolicyBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'gst.tax-policy-rule', () => createTaxPolicyRule(req.auth!.tenant, req.auth!.actor, req.body)))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/gst/tax-rules/:id/approve', { schema: { params: laundryIdParams, body: { type: 'object', additionalProperties: false } }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `gst.tax-policy-approve:${req.params.id}`, () => approveTaxPolicyRule(req.auth!.tenant, req.auth!.actor, req.params.id))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/gst/tax-rules/:id/retire', { schema: { params: laundryIdParams, body: { type: 'object', additionalProperties: false } }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `gst.tax-policy-retire:${req.params.id}`, () => retireTaxPolicyRule(req.auth!.tenant, req.auth!.actor, req.params.id))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/gst/einvoice/:id', { preHandler: guard }, async (req: any, rep: any) => {
     const row = store.getRow(requestTenant(req), req.params.id);
