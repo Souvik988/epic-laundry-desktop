@@ -4,8 +4,10 @@ Status: **PARTIAL / NEEDS_LEGAL_VALIDATION.** Configured-store laundry
 bookings now create one immutable canonical snapshot and link it to the
 operational order. The legacy tax-print endpoint resolves through that
 snapshot and fails closed when supplier profile or effective classification
-evidence is missing. Legacy ERP documents, cancellation credit notes, provider
-IRN evidence, and legal approval remain outside this completed bridge.
+evidence is missing. Full laundry cancellation and controlled supersession now
+create a submitted legacy credit note first, avoid double-reversing the invoice,
+and link an immutable canonical credit-note snapshot when V4 tax evidence is
+available. Provider IRN evidence and legal approval remain outside this bridge.
 
 The target is one immutable invoice snapshot used by A4/thermal renderers, PDF, customer display, tax exports, e-invoice payload, credit/debit notes, payment/refund receipts, and marketplace records. Surfaces must not recompute historical tax independently.
 

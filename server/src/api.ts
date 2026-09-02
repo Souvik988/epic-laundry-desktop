@@ -1115,7 +1115,13 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/gst/print/:id', { preHandler: guard }, async (req: any, rep: any) => {
     const tenant = requestTenant(req);
     const row = store.getRow(tenant, req.params.id);
-    if (!row || row.entity !== 'sales_invoice' || row.status !== 'Submitted') return rep.code(404).send({ error: 'submitted sales invoice not found' });
+    if (!row || !['sales_invoice', 'credit_note'].includes(row.entity) || row.status !== 'Submitted') return rep.code(404).send({ error: 'submitted invoice or credit note not found' });
+    if (row.entity === 'credit_note') {
+      const linked = row.data.canonical_snapshot_id ? store.getRow(tenant, String(row.data.canonical_snapshot_id)) : undefined;
+      if (linked?.entity !== 'canonical_invoice_snapshot') return rep.code(409).send({ code: 'TAX_PROFILE_INCOMPLETE', error: 'canonical credit-note evidence is not available' });
+      rep.header('Content-Type', 'text/html; charset=utf-8');
+      return renderCanonicalTaxInvoice(linked.data as any);
+    }
     try {
       const canonical = store.transaction(() => ensureCanonicalInvoiceForLegacy(tenant, requestActor(req), row.id));
       rep.header('Content-Type', 'text/html; charset=utf-8');

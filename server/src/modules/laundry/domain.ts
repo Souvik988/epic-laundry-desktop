@@ -13,6 +13,7 @@ import { completeOpenTask, createProductionTask, productionStateCreatesTask } fr
 import { cashShiftForTransaction } from './cash.js';
 import { ensureCanonicalInvoiceForLegacy } from '../gst/legacy-invoice-bridge.js';
 import { supplierTaxProfile } from '../gst/tax-policy.js';
+import { createLaundryCancellationCreditNote } from '../gst/cancellation-credit-note.js';
 
 export const LAUNDRY_STATES = ['Booked', 'Picked Up', 'In Process', 'Ready', 'Out for Delivery', 'Delivered', 'Cancelled'] as const;
 export type LaundryState = typeof LAUNDRY_STATES[number];
@@ -565,6 +566,7 @@ export function cancelLaundryOrder(tenant: string, actor: string, id: string, re
     if (!note) throw new Error('cancellation reason is required');
     const invoice = store.getRow(tenant, String(order.data.invoice || ''));
     if (invoice?.entity === 'sales_invoice' && invoice.status === 'Submitted') {
+      createLaundryCancellationCreditNote(tenant, actor, invoice, order.id, note);
       const payments = store.rowsOf(tenant, 'payment_entry').filter((payment) => payment.status === 'Submitted' && payment.data.payment_type === 'Receive' && payment.data.against_sales === invoice.id);
       for (const payment of payments) {
         const amount = round(Number(payment.data.amount || 0));
@@ -577,7 +579,10 @@ export function cancelLaundryOrder(tenant: string, actor: string, id: string, re
         store.updateRow(cancelled);
         if (amount > 0) appendCustomerLedger(tenant, actor, { customer: String(order.data.customer), entryType: 'Refund', debit: amount, referenceType: 'payment_entry', referenceId: payment.id, reason: `Order cancellation: ${note}` });
       }
-      cancelRow(tenant, actor, 'sales_invoice', invoice.id);
+      // The submitted credit note already reverses the invoice's revenue and
+      // receivable postings; only transition the original invoice's status so
+      // accounting is not double-reversed.
+      cancelRow(tenant, actor, 'sales_invoice', invoice.id, { postReversal: false });
       const invoiceDocument = store.listFinancialDocuments(tenant, { sourceId: invoice.id }).find((document) => document.documentType === 'invoice');
       if (invoiceDocument) store.appendFinancialDocument({ ...invoiceDocument, status: 'Cancelled', occurredAt: new Date().toISOString() });
       const total = round(Number(order.data.grand_total || invoice.data.grand_total || 0));
@@ -634,7 +639,9 @@ export function editLaundryOrder(tenant: string, actor: string, id: string, inpu
     const submittedPayments = store.rowsOf(tenant, 'payment_entry').filter((payment) => payment.status === 'Submitted' && payment.data.payment_type === 'Receive' && payment.data.against_sales === invoice.id);
     if (submittedPayments.length) throw new Error('paid or partially paid orders cannot be edited; reverse the collection or cancel and rebook');
     const oldTotal = round(Number(order.data.grand_total || invoice.data.grand_total || 0));
-    const oldInvoice = cancelRow(tenant, actor, 'sales_invoice', invoice.id);
+    createLaundryCancellationCreditNote(tenant, actor, invoice, order.id, 'Superseded by controlled order edit');
+    // The submitted credit note already reverses the superseded invoice.
+    const oldInvoice = cancelRow(tenant, actor, 'sales_invoice', invoice.id, { postReversal: false });
     const oldInvoiceDocument = store.listFinancialDocuments(tenant, { sourceId: invoice.id }).find((document) => document.documentType === 'invoice');
     if (oldInvoiceDocument) store.appendFinancialDocument({ ...oldInvoiceDocument, status: 'Cancelled', occurredAt: oldInvoice.updated_at });
     const replacement = createRow(tenant, actor, 'sales_invoice', { customer: customer.id, posting_date: today(), place_of_supply: String(invoice.data.place_of_supply || process.env.EPIC_SUPPLIER_STATE || '29'), currency: 'INR', suppress_notifications: true, items: invoiceItems(quote) });

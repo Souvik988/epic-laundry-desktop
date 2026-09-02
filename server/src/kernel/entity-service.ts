@@ -90,14 +90,14 @@ export function submitRow(tenant: string, actor: string, entity: string, id: str
   return row;
 }
 
-export function cancelRow(tenant: string, actor: string, entity: string, id: string) {
+export function cancelRow(tenant: string, actor: string, entity: string, id: string, options: { postReversal?: boolean } = {}) {
   const def = DEFS.get(entity);
   if (!def?.lifecycle?.cancel) throw new Error(`${entity} is not cancellable`);
   const row = store.getRow(tenant, id);
   if (!row) throw new Error('not found');
   if (row.status !== 'Submitted') throw new Error('only submitted documents can be cancelled');
 
-  runPosting(tenant, row, -1); // reversal entries
+  if (options.postReversal !== false) runPosting(tenant, row, -1); // reversal entries
   row.status = 'Cancelled';
   row.updated_at = new Date().toISOString();
   store.updateRow(row);

@@ -5,6 +5,11 @@ import { computePayroll } from '../modules/hr/payroll.js';
 import { docRate } from '../modules/multi-entity/fx.js';
 import type { EntityRow, GLEntry, StockLedgerEntry } from './types.js';
 
+function supplierStateForTenant(tenant: string) {
+  const configured = store.rowsOf(tenant, 'supplier_tax_profile')[0]?.data?.stateCode;
+  return String(configured || process.env.EPIC_SUPPLIER_STATE || '29');
+}
+
 // Posting engine: a submitted document projects append-only ledger entries.
 // Cancelling posts a reversal (never deletion) — audit-trail as physics (blueprint §2.4).
 
@@ -34,7 +39,7 @@ function gl(tenant: string, row: EntityRow, account: string, debit: number, cred
 
 // Sales Invoice -> GL with full GST split (CGST/SGST or IGST) by place of supply.
 registerPosting('sales_invoice_posting', (tenant, row, sign) => {
-  const supplierState = process.env.EPIC_SUPPLIER_STATE || '29';
+  const supplierState = supplierStateForTenant(tenant);
   const pos = String(row.data.place_of_supply || supplierState);
   const items = ((row.data.items || []) as any[]).map((it) => {
     const master = store.getRow(tenant, it.item);
@@ -241,7 +246,7 @@ const PAYMENT_ACCOUNT: Record<string, string> = {
 };
 
 registerPosting('pos_invoice_posting', (tenant, row, sign) => {
-  const supplierState = process.env.EPIC_SUPPLIER_STATE || '29';
+  const supplierState = supplierStateForTenant(tenant);
   const items = ((row.data.items || []) as any[]).map((it) => {
     const master = store.getRow(tenant, it.item);
     const hsn = master?.data?.hsn || it.hsn || '';
@@ -277,7 +282,7 @@ registerPosting('pos_invoice_posting', (tenant, row, sign) => {
 // We are the buyer: place_of_supply = our state, so intra-state gives input CGST+SGST (assets),
 // inter-state gives input IGST (asset). This is the input-credit leg that pairs with IMS 2B recon.
 registerPosting('purchase_invoice_posting', (tenant, row, sign) => {
-  const ourState = process.env.EPIC_SUPPLIER_STATE || '29';
+  const ourState = supplierStateForTenant(tenant);
   const pos = String(row.data.place_of_supply || ourState);
   const items = ((row.data.items || []) as any[]).map((it) => {
     const master = store.getRow(tenant, it.item);
@@ -312,7 +317,7 @@ registerPosting('purchase_invoice_posting', (tenant, row, sign) => {
 registerPosting('credit_note_posting', (tenant, row, sign) => {
   const ref = store.getRow(tenant, row.data.reference_invoice);
   if (!ref || !ref.data.__gst) throw new Error('credit note needs a submitted reference invoice');
-  const pos = String(ref.data.place_of_supply || (process.env.EPIC_SUPPLIER_STATE || '29'));
+  const pos = String(ref.data.place_of_supply || supplierStateForTenant(tenant));
   const items = ((row.data.items || []) as any[]).map((it) => {
     const master = store.getRow(tenant, it.item);
     const hsn = master?.data?.hsn || it.hsn || '';
@@ -320,7 +325,7 @@ registerPosting('credit_note_posting', (tenant, row, sign) => {
     const taxable = (Number(it.qty) || 0) * (Number(it.rate) || 0);
     return { item: it.item, hsn, taxable, gstRate, qty: Number(it.qty) || 0, unit: master?.data?.uom || 'NOS', rate: Number(it.rate) || 0 };
   });
-  const gst = computeGst(items, process.env.EPIC_SUPPLIER_STATE || '29', pos);
+  const gst = computeGst(items, supplierStateForTenant(tenant), pos);
   row.data.__gst = gst;
   row.data.grand_total = gst.grandTotal;
 
@@ -343,7 +348,7 @@ registerPosting('credit_note_posting', (tenant, row, sign) => {
 registerPosting('debit_note_posting', (tenant, row, sign) => {
   const ref = store.getRow(tenant, row.data.reference_invoice);
   if (!ref || !ref.data.__gst) throw new Error('debit note needs a submitted reference invoice');
-  const pos = String(ref.data.place_of_supply || (process.env.EPIC_SUPPLIER_STATE || '29'));
+  const pos = String(ref.data.place_of_supply || supplierStateForTenant(tenant));
   const items = ((row.data.items || []) as any[]).map((it) => {
     const master = store.getRow(tenant, it.item);
     const hsn = master?.data?.hsn || it.hsn || '';
@@ -351,7 +356,7 @@ registerPosting('debit_note_posting', (tenant, row, sign) => {
     const taxable = (Number(it.qty) || 0) * (Number(it.rate) || 0);
     return { item: it.item, hsn, taxable, gstRate, qty: Number(it.qty) || 0, unit: master?.data?.uom || 'NOS', rate: Number(it.rate) || 0 };
   });
-  const gst = computeGst(items, process.env.EPIC_SUPPLIER_STATE || '29', pos);
+  const gst = computeGst(items, supplierStateForTenant(tenant), pos);
   row.data.__gst = gst;
   row.data.grand_total = gst.grandTotal;
 
@@ -440,7 +445,7 @@ registerPosting('salary_slip_posting', (tenant, row, sign) => {
 
 // ---- Purchase Order: a commitment, not a ledger posting. Compute the order value only. ----
 registerPosting('purchase_order_posting', (tenant, row, sign) => {
-  const supplierState = process.env.EPIC_SUPPLIER_STATE || '29';
+  const supplierState = supplierStateForTenant(tenant);
   const items = ((row.data.items || []) as any[]).map((it) => {
     const master = store.getRow(tenant, it.item);
     const hsn = master?.data?.hsn || it.hsn || '';
@@ -456,7 +461,7 @@ registerPosting('purchase_order_posting', (tenant, row, sign) => {
 
 // ---- Quotation: a proposal, not a commitment. Compute the quoted value only. ----
 registerPosting('quotation_posting', (tenant, row, sign) => {
-  const ourState = process.env.EPIC_SUPPLIER_STATE || '29';
+  const ourState = supplierStateForTenant(tenant);
   const items = ((row.data.items || []) as any[]).map((it) => {
     const master = store.getRow(tenant, it.item);
     const gstRate = Number(it.gst_rate ?? master?.data?.gst_rate ?? 0);
@@ -483,7 +488,7 @@ registerPosting('opportunity_posting', (_tenant, row, _sign) => {
 
 // ---- Sales Order: a commitment to deliver, not a ledger posting. Compute order value. ----
 registerPosting('sales_order_posting', (tenant, row, sign) => {
-  const ourState = process.env.EPIC_SUPPLIER_STATE || '29';
+  const ourState = supplierStateForTenant(tenant);
   const items = ((row.data.items || []) as any[]).map((it) => {
     const master = store.getRow(tenant, it.item);
     const gstRate = Number(it.gst_rate ?? master?.data?.gst_rate ?? 0);

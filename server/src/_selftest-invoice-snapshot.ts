@@ -11,7 +11,7 @@ try {
   const { calculateCanonicalTax } = await import('./modules/gst/canonical-tax.js'); const { createCanonicalInvoiceSnapshot } = await import('./modules/gst/invoice-snapshot.js');
   const { createRow, submitRow } = await import('./kernel/entity-service.js');
   const { approveTaxPolicyRule, createTaxPolicyRule, saveSupplierTaxProfile } = await import('./modules/gst/tax-policy.js');
-  const { ensureCanonicalInvoiceForLegacy } = await import('./modules/gst/legacy-invoice-bridge.js'); const { bookLaundryOrder, laundryCatalogue, seedLaundryDefaults } = await import('./modules/laundry/domain.js');
+  const { ensureCanonicalInvoiceForLegacy } = await import('./modules/gst/legacy-invoice-bridge.js'); const { bookLaundryOrder, cancelLaundryOrder, laundryCatalogue, seedLaundryDefaults } = await import('./modules/laundry/domain.js');
   const { generateIrnForInvoice } = await import('./modules/gst/irn-service.js');
   const tax = calculateCanonicalTax({ supplierStateCode: '29', placeOfSupplyStateCode: '29', lines: [{ id: 'svc', description: 'Laundry service', classificationType: 'SAC', classificationCode: '9997', quantityMilli: 1_000, unit: 'piece', unitPricePaise: 10_000, taxRateBps: 1800 }] });
   const input = { sourceOrderId: 'ORDER-INV-1', issuedAt: '2026-04-01T08:00:00.000Z', supplier: { legalName: 'Epic Laundry Private Limited', tradeName: 'Epic Laundry', address: 'Kolkata, West Bengal', stateCode: '29', pincode: '700001', registrationStatus: 'Registered' as const, gstin: '29ABCDE1234F1Z5', invoiceSeries: 'EL' }, customer: { name: 'Riya & Sen', stateCode: '29' }, tax, paidPaise: 5_000 };
@@ -38,6 +38,17 @@ try {
   assert.match(String(bridged.booked.order.invoiceNumber), /^BR\/FY2026-27\/00002$/, 'configured laundry booking exposes the canonical financial-year invoice number');
   const bookedRow = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => store.getRow('BRIDGE', bridged.booked.order.id)!);
   assert.ok(bookedRow.data.canonical_invoice_snapshot_id, 'configured laundry booking links its order to the canonical snapshot');
+  const bookedLegacyInvoiceId = String(bookedRow.data.invoice);
+  const cancelled = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => cancelLaundryOrder('BRIDGE', 'owner', bridged.booked.order.id, 'Customer requested cancellation'));
+  assert.equal(cancelled.state, 'Cancelled', 'configured order cancellation remains operational');
+  const cancellationNote = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => store.rowsOf('BRIDGE', 'credit_note').find((candidate) => candidate.data.source_order_id === bridged.booked.order.id));
+  assert.equal(cancellationNote?.status, 'Submitted', 'cancellation creates a submitted credit note');
+  assert.equal(cancellationNote?.data.reference_invoice, bookedLegacyInvoiceId, 'credit note references the reversed legacy invoice');
+  const creditSnapshot = cancellationNote?.data.canonical_snapshot_id ? store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => store.getRow('BRIDGE', String(cancellationNote.data.canonical_snapshot_id))) : undefined;
+  assert.equal(creditSnapshot?.data.documentType, 'CreditNote', 'credit note has a canonical immutable document snapshot');
+  assert.equal(creditSnapshot?.data.referenceInvoiceNumber, 'BR/FY2026-27/00002', 'credit note retains the original canonical invoice reference');
+  assert.equal(creditSnapshot?.data.tax.totals.totalPaise, Math.round(bridged.booked.receipt.grandTotal * 100), 'credit note reuses the exact immutable tax totals from the original invoice');
+  assert.equal(store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => store.getRow('BRIDGE', bookedLegacyInvoiceId)?.status), 'Cancelled', 'cancellation reverses the legacy invoice after credit-note creation');
   await assert.rejects(() => store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => generateIrnForInvoice('BRIDGE', bridged.invoice.id)), /EINVOICE_NOT_APPLICABLE/, 'IRN generation rejects a supplier configured as not applicable');
   store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => saveSupplierTaxProfile('BRIDGE', 'owner', { legalName: 'Bridge Laundry Private Limited', address: 'Kolkata, West Bengal', stateCode: '29', pincode: '700001', registrationStatus: 'Registered', gstin: '29ABCDE1234F1Z5', invoiceSeries: 'BR', einvoiceState: 'Sandbox' }));
   const sandboxIrn = await store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => generateIrnForInvoice('BRIDGE', bridged.invoice.id));
