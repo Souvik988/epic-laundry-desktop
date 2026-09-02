@@ -23,6 +23,12 @@ export const garmentVisuals = {
   foldedJeans: '/ui/app/garments/lndry-folded-jeans-v1.png',
   foldedHoodie: '/ui/app/garments/lndry-folded-hoodie-v1.png',
   foldedKurta: '/ui/app/garments/lndry-folded-kurta-v1.png',
+  handbag: '/ui/app/garments/optimized/lndry-handbag-v1.webp',
+  towel: '/ui/app/garments/optimized/lndry-towel-v1.webp',
+  curtain: '/ui/app/garments/optimized/lndry-curtain-v1.webp',
+  carpetRug: '/ui/app/garments/optimized/lndry-carpet-rug-v1.webp',
+  softToy: '/ui/app/garments/optimized/lndry-soft-toy-v1.webp',
+  socksPair: '/ui/app/garments/optimized/lndry-socks-pair-v1.webp',
 } as const
 
 export const generatedVisualManifest = {

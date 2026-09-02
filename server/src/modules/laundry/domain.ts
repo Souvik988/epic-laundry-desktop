@@ -122,7 +122,7 @@ type AdjustmentRuleInput = { name?: string; type?: 'Flat' | 'Percentage'; amount
 type TaxRuleInput = { name?: string; rate?: number; active?: boolean };
 
 const SERVICE_UNITS = ['Piece', 'Kilogram', 'Pair', 'Square Foot'] as const;
-const GARMENT_VISUAL_KEYS = ['foldedShirt', 'foldedTrouser', 'foldedSaree', 'foldedKurti', 'foldedBlanket', 'foldedBedsheet', 'mixedClothes', 'shoePair', 'foldedBlazer', 'foldedDress', 'foldedJeans', 'foldedHoodie', 'foldedKurta'] as const;
+const GARMENT_VISUAL_KEYS = ['foldedShirt', 'foldedTrouser', 'foldedSaree', 'foldedKurti', 'foldedBlanket', 'foldedBedsheet', 'mixedClothes', 'shoePair', 'foldedBlazer', 'foldedDress', 'foldedJeans', 'foldedHoodie', 'foldedKurta', 'handbag', 'towel', 'curtain', 'carpetRug', 'softToy', 'socksPair'] as const;
 const CONTAINER_TRANSITIONS: Record<LaundryContainerState, LaundryContainerState[]> = {
   Intake: ['Processing', 'Cancelled'], Processing: ['Ready', 'Cancelled'], Ready: ['Dispatched', 'Delivered', 'Cancelled'], Dispatched: ['Delivered'],
   Delivered: [], Missing: [], Damaged: [], Cancelled: [],
@@ -1934,19 +1934,19 @@ export function seedLaundryDefaults(tenant: string) {
     'Salwar suit': '/ui/app/garments/lndry-folded-kurti-v1.png',
     Lehenga: '/ui/app/garments/lndry-folded-saree-v1.png',
     'Tie / Scarf': '/ui/app/garments/lndry-folded-shirt-v3.png',
-    'Socks pair': '/ui/app/garments/lndry-shoe-pair-v1.png',
-    Towel: '/ui/app/garments/lndry-mixed-clothes-v1.png',
+    'Socks pair': '/ui/app/garments/optimized/lndry-socks-pair-v1.webp',
+    Towel: '/ui/app/garments/optimized/lndry-towel-v1.webp',
     'Pillow cover': '/ui/app/garments/lndry-folded-bedsheet-v1.png',
-    Curtain: '/ui/app/garments/lndry-folded-bedsheet-v1.png',
-    'Carpet / Rug': '/ui/app/garments/lndry-folded-blanket-v1.png',
+    Curtain: '/ui/app/garments/optimized/lndry-curtain-v1.webp',
+    'Carpet / Rug': '/ui/app/garments/optimized/lndry-carpet-rug-v1.webp',
     'Quilt / Duvet': '/ui/app/garments/lndry-folded-blanket-v1.png',
     'Table cloth': '/ui/app/garments/lndry-folded-bedsheet-v1.png',
-    Handbag: '/ui/app/garments/lndry-shoe-pair-v1.png',
-    'Soft toy': '/ui/app/garments/lndry-mixed-clothes-v1.png',
+    Handbag: '/ui/app/garments/optimized/lndry-handbag-v1.webp',
+    'Soft toy': '/ui/app/garments/optimized/lndry-soft-toy-v1.webp',
     'Uniform set': '/ui/app/garments/lndry-folded-shirt-v3.png',
   };
   const visualKeyByPath: Record<string, string> = {
-    '/ui/app/garments/lndry-folded-shirt-v3.png': 'foldedShirt', '/ui/app/garments/lndry-folded-trouser-v1.png': 'foldedTrouser', '/ui/app/garments/lndry-folded-saree-v1.png': 'foldedSaree', '/ui/app/garments/lndry-folded-kurti-v1.png': 'foldedKurti', '/ui/app/garments/lndry-folded-blanket-v1.png': 'foldedBlanket', '/ui/app/garments/lndry-folded-bedsheet-v1.png': 'foldedBedsheet', '/ui/app/garments/lndry-mixed-clothes-v1.png': 'mixedClothes', '/ui/app/garments/lndry-shoe-pair-v1.png': 'shoePair', '/ui/app/garments/lndry-folded-blazer-v1.png': 'foldedBlazer', '/ui/app/garments/lndry-folded-dress-v1.png': 'foldedDress', '/ui/app/garments/lndry-folded-jeans-v1.png': 'foldedJeans', '/ui/app/garments/lndry-folded-hoodie-v1.png': 'foldedHoodie', '/ui/app/garments/lndry-folded-kurta-v1.png': 'foldedKurta',
+    '/ui/app/garments/lndry-folded-shirt-v3.png': 'foldedShirt', '/ui/app/garments/lndry-folded-trouser-v1.png': 'foldedTrouser', '/ui/app/garments/lndry-folded-saree-v1.png': 'foldedSaree', '/ui/app/garments/lndry-folded-kurti-v1.png': 'foldedKurti', '/ui/app/garments/lndry-folded-blanket-v1.png': 'foldedBlanket', '/ui/app/garments/lndry-folded-bedsheet-v1.png': 'foldedBedsheet', '/ui/app/garments/lndry-mixed-clothes-v1.png': 'mixedClothes', '/ui/app/garments/lndry-shoe-pair-v1.png': 'shoePair', '/ui/app/garments/lndry-folded-blazer-v1.png': 'foldedBlazer', '/ui/app/garments/lndry-folded-dress-v1.png': 'foldedDress', '/ui/app/garments/lndry-folded-jeans-v1.png': 'foldedJeans', '/ui/app/garments/lndry-folded-hoodie-v1.png': 'foldedHoodie', '/ui/app/garments/lndry-folded-kurta-v1.png': 'foldedKurta', '/ui/app/garments/optimized/lndry-handbag-v1.webp': 'handbag', '/ui/app/garments/optimized/lndry-towel-v1.webp': 'towel', '/ui/app/garments/optimized/lndry-curtain-v1.webp': 'curtain', '/ui/app/garments/optimized/lndry-carpet-rug-v1.webp': 'carpetRug', '/ui/app/garments/optimized/lndry-soft-toy-v1.webp': 'softToy', '/ui/app/garments/optimized/lndry-socks-pair-v1.webp': 'socksPair',
   };
   for (const [name, category, unit, prices] of defaults) {
     const garment = store.rowsOf(tenant, 'laundry_garment').find((row) => String(row.data.name || '').trim().toLowerCase() === name.toLowerCase()) || createRow(tenant, actor, 'laundry_garment', {

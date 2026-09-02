@@ -1,0 +1,15 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { auditGarmentAssets } from './modules/laundry/garment-assets.js';
+
+const tenant = process.env.EPIC_AUDIT_TENANT || 'T1';
+const output = resolve(process.env.EPIC_GARMENT_CONTACT_SHEET || '../docs/v4/CATALOGUE_MEDIA_CONTACT_SHEET.html');
+const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character));
+const report = auditGarmentAssets(tenant);
+const rows = report.items.map((item) => {
+  const source = item.resolvedAsset?.startsWith('/ui/app/') ? `../../server/public/app/${item.resolvedAsset.slice('/ui/app/'.length)}` : '';
+  return `<article class="card"><div class="thumb">${source ? `<img src="${escapeHtml(source)}" alt="${escapeHtml(item.name)}" loading="lazy">` : '<span class="missing">No local preview</span>'}</div><div class="name">${escapeHtml(item.name)}</div><div class="meta"><code>${escapeHtml(item.visualKey || '—')}</code><span class="pill ${escapeHtml(item.classification)}">${escapeHtml(item.classification)}</span></div><div class="path">${escapeHtml(item.resolvedAsset || item.photo || 'missing')}</div>${item.budgetWarning ? `<div class="warning">${escapeHtml(item.budgetWarning)}</div>` : ''}${item.issue ? `<div class="error">${escapeHtml(item.issue)}</div>` : ''}</article>`;
+}).join('\n');
+mkdirSync(dirname(output), { recursive: true });
+writeFileSync(output, `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Epic Laundry catalogue media contact sheet</title><style>body{font:14px Inter,Segoe UI,sans-serif;background:#f5f7f5;color:#17332f;margin:32px}.summary{margin-bottom:24px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}.card{background:#fff;border:1px solid #dce8e3;border-radius:14px;padding:12px;box-shadow:0 5px 16px #17332f0d}.thumb{height:180px;border-radius:10px;background:#edf5f1;display:grid;place-items:center;overflow:hidden}.thumb img{width:100%;height:100%;object-fit:contain}.missing{color:#9a322d}.name{font-weight:700;margin-top:12px}.meta{display:flex;justify-content:space-between;gap:8px;margin-top:6px;align-items:center}.pill{font-size:11px;padding:3px 6px;border-radius:999px;background:#e8f3ee}.path{font-size:10px;word-break:break-all;color:#647873;margin-top:8px}.warning{font-size:11px;color:#8a5a00;margin-top:7px}.error{font-size:11px;color:#9a322d;margin-top:7px}</style></head><body><div class="summary"><h1>Epic Laundry catalogue media contact sheet</h1><p>Tenant: <b>${escapeHtml(report.tenant)}</b> · Active garments: <b>${report.total}</b> · Failures: <b>${report.failures}</b> · Derivative budget warnings: <b>${report.budgetWarnings}</b></p><p>Generated: ${escapeHtml(report.generatedAt)}. Review every thumbnail visually; classification is evidence about storage and mapping, not legal or brand approval.</p></div><main class="grid">${rows}</main></body></html>`, 'utf8');
+console.log(`Catalogue media contact sheet written to ${output}`);
