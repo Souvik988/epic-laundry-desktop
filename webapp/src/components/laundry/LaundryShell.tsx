@@ -15,7 +15,7 @@ const navigation: Array<{ to: string; label: string; icon: typeof LayoutDashboar
   { to: '/laundry/packages', label: 'Care packages', icon: Sparkles, permission: 'packages.read' },
   { to: '/laundry/new-order', label: 'Order booking', icon: Plus, permission: 'orders.create' },
   { to: '/laundry/orders', label: 'Store orders', icon: ClipboardList, permission: 'orders.read' },
-  { to: '/laundry/online-orders', label: 'Online orders', icon: Cloud, permission: 'settings.manage' },
+  { to: '/laundry/online-orders', label: 'Online orders', icon: Cloud, permission: 'orders.read' },
   { to: '/laundry/garment-tracking', label: 'Garment tracking', icon: ScanLine, permission: 'garments.read' },
   { to: '/laundry/production-queue', label: 'Production queue', icon: Wrench, permission: 'production.read' },
   { to: '/laundry/quality-claims', label: 'Quality claims', icon: ShieldCheck, permission: 'quality.read' },
@@ -44,11 +44,11 @@ const navigationGroups: Array<{ id: string; label: string; items: typeof navigat
   { id: 'management', label: 'Management', items: navigation.filter((item) => ['/laundry/online-orders', '/laundry/reports', '/laundry/catalogue', '/laundry/import-prices', '/laundry/import-catalogue', '/laundry/import-customers', '/laundry/settings'].includes(item.to)) },
 ]
 
-export type UiPermission = 'orders.read' | 'orders.create' | 'expenses.create' | 'settings.manage' | 'catalogue.read' | 'customers.read' | 'packages.read' | 'garments.read' | 'cash.read' | 'production.read' | 'quality.read' | 'routes.read'
+export type UiPermission = 'orders.read' | 'orders.edit' | 'orders.create' | 'expenses.create' | 'settings.manage' | 'catalogue.read' | 'customers.read' | 'packages.read' | 'garments.read' | 'cash.read' | 'production.read' | 'quality.read' | 'routes.read'
 export function canUseUi(roles: string[] | undefined, permission: UiPermission) {
   if (roles?.includes('owner')) return true
   const rolePermissions: Record<string, UiPermission[]> = {
-    counter_staff: ['orders.read', 'orders.create', 'expenses.create', 'customers.read', 'packages.read', 'garments.read', 'cash.read', 'production.read', 'quality.read', 'routes.read'],
+    counter_staff: ['orders.read', 'orders.edit', 'orders.create', 'expenses.create', 'customers.read', 'packages.read', 'garments.read', 'cash.read', 'production.read', 'quality.read', 'routes.read'],
     processing_staff: ['orders.read', 'catalogue.read', 'packages.read', 'garments.read', 'production.read', 'quality.read', 'routes.read'],
   rider: ['routes.read'],
   }

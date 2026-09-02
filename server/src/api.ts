@@ -585,7 +585,7 @@ export function registerApi(app: FastifyInstance) {
   );
   // Marketplace control-plane data is intentionally limited to the authenticated store scope.
   // The desktop never exposes its loopback Fastify service as a public marketplace endpoint.
-  app.get('/api/marketplace/sync/status', { preHandler: [guard, allow('settings.manage')] }, async (req: any) =>
+  app.get('/api/marketplace/sync/status', { preHandler: [guard, allow('orders.read')] }, async (req: any) =>
     inStore(req, () => marketplaceSyncStatus(req.auth!.tenant)),
   );
   app.get('/api/marketplace/availability', { preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => marketplaceAvailability(req.auth!.tenant)));
