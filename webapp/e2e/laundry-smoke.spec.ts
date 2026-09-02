@@ -129,7 +129,7 @@ test('operator can complete the core laundry desk journeys in a disposable works
 
   await page.goto('/ui/app/#/laundry/reports');
   await expect(page.getByRole('heading', { name: 'Reports' })).toBeVisible();
-  await page.getByRole('button', { name: 'Reset' }).click();
+  await page.getByRole('button', { name: 'Reset', exact: true }).click();
   await expect(page.getByText('Financial controls')).toBeVisible();
 
   await page.goto('/ui/app/#/laundry/routes');
