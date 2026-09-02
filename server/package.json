@@ -49,6 +49,7 @@
     "test:backup-crypto": "tsx src/_selftest-backup-crypto.ts",
     "test:financial-normalization": "tsx src/_selftest-financial-normalization.ts",
     "test:entity-normalization": "tsx src/_selftest-entity-normalization.ts",
+    "benchmark:v4-performance": "tsx src/_benchmark-v4-performance.ts",
     "test:e2e": "tsx src/_selftest-e2e.ts"
   },
   "dependencies": {
