@@ -18,25 +18,26 @@ brand, generic logo, copied competitor asset, watermark, or unrelated colour sys
 
 The official source export is stored at
 `webapp/public/brand/lndry-logo-source.png`. Generated art is original but must be
-reviewed visually before inclusion. The approved folded-shirt asset is now
-`webapp/public/garments/lndry-folded-shirt-v3.png`; this revision carries the
-Lndry mark on its care tag and as a small embroidered chest mark. The same binary is
-mirrored under `server/public/app/garments/` so the packaged desktop server and the
-web build resolve the identical branded visual.
+reviewed visually before inclusion. The approved folded-shirt master is now
+`assets/garments/masters/lndry-folded-shirt-v3.png`; this revision carries the
+Lndry mark on its care tag and as a small embroidered chest mark. The packaged
+desktop server and web build use its `webapp/public/garments/optimized/` WebP
+derivative at runtime.
 
 The older `epic-folded-shirt-v1.png` file is retained only as an unreferenced
 legacy artifacts for workspace history; catalogue defaults and all active UI paths
-use the approved Lndry-branded `lndry-folded-shirt-v3.png` asset.
+use the approved Lndry-branded folded-shirt derivative.
 
 The catalogue now also ships approved generated visuals for every other seeded
-garment: `lndry-folded-trouser-v1.png`, `lndry-folded-saree-v1.png`,
+garment masters: `lndry-folded-trouser-v1.png`, `lndry-folded-saree-v1.png`,
 `lndry-folded-kurti-v1.png`, `lndry-folded-blanket-v1.png`,
 `lndry-folded-bedsheet-v1.png`, `lndry-mixed-clothes-v1.png`, and
 `lndry-shoe-pair-v1.png`. The parity expansion adds `lndry-folded-blazer-v1.png`,
 `lndry-folded-dress-v1.png`, `lndry-folded-jeans-v1.png`,
 `lndry-folded-hoodie-v1.png`, and `lndry-folded-kurta-v1.png` for the common
 formalwear, westernwear, outerwear, and ethnicwear paths seen in larger
-reference catalogues. Each is mirrored in `server/public/app/garments/`,
+reference catalogues. Each is preserved under `assets/garments/masters/` and served
+from an optimized WebP derivative,
 uses a distinct non-white colorway, visibly carries the purple Lndry care-tag
 treatment, and was checked for genuine RGBA alpha before inclusion. The full
 selection is exposed through the owner catalogue visual picker.

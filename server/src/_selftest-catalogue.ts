@@ -30,8 +30,8 @@ try {
   assert.throws(() => saveLaundryCategory(tenant, actor, { name: 'delicate ITEMS' }), /already exists/, 'category names are constrained case-insensitively');
 
   const service = saveLaundryService(tenant, actor, { name: 'Premium Steam', description: 'Finishing for delicate fabrics', units: ['Piece', 'Pair'] });
-  const garment = saveLaundryGarment(tenant, actor, { name: 'Silk scarf', code: 'SILK-SCARF', category: category.id, unit: 'Piece', visualKey: 'foldedShirt', photo: '/ui/app/garments/lndry-folded-shirt-v3.png' });
-  assert.equal((garment as any).photo, '/ui/app/garments/lndry-folded-shirt-v3.png', 'only approved local garment assets are accepted');
+  const garment = saveLaundryGarment(tenant, actor, { name: 'Silk scarf', code: 'SILK-SCARF', category: category.id, unit: 'Piece', visualKey: 'foldedShirt', photo: '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp' });
+  assert.equal((garment as any).photo, '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp', 'only approved local garment assets are accepted');
   assert.equal((garment as any).visual_key, 'foldedShirt', 'catalogue garments persist an explicit visual identity');
   const uploadedGarment = saveLaundryGarment(tenant, actor, { name: 'Upload-safe tie', code: 'UPLOAD-TIE', category: category.id, unit: 'Piece', visualKey: 'foldedShirt', photo: 'data:image/png;base64,iVBORw0KGgo=' });
   assert.match(String((uploadedGarment as any).photo), /^data:image\/png;base64,/, 'validated local image data can be stored with garment metadata');
@@ -73,7 +73,7 @@ try {
   const importedCatalogue = importLaundryCatalogue(tenant, actor, {
     categories: [{ id: 'owner-category-1', name: 'Imported premium', color: '#123456' }],
     services: [{ id: 'owner-service-1', name: 'Imported care', description: 'Owner supplied care', units: ['Piece'] }],
-    garments: [{ id: 'owner-garment-1', name: 'Imported coat', code: 'IMPORTED-COAT', category: 'Imported premium', unit: 'Piece', hsn: '9997', gstRate: 5, visualKey: 'foldedBlazer', photo: '/ui/app/garments/lndry-folded-blazer-v1.png' }],
+    garments: [{ id: 'owner-garment-1', name: 'Imported coat', code: 'IMPORTED-COAT', category: 'Imported premium', unit: 'Piece', hsn: '9997', gstRate: 5, visualKey: 'foldedBlazer', photo: '/ui/app/garments/optimized/lndry-folded-blazer-v1.webp' }],
     prices: [{ id: 'owner-price-1', garment: 'Imported coat', service: 'Imported care', rate: 275 }],
     taxRules: [{ id: 'owner-tax-1', name: 'Imported GST', rate: 5 }],
   });

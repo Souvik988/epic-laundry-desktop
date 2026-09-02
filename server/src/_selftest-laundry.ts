@@ -24,7 +24,7 @@ try {
   assert.equal(catalogue.services.length, 4, 'default laundry catalogue persists services');
 
   const shirt = catalogue.garments.find((garment: any) => garment.name === 'Shirt / T-shirt')!;
-  assert.equal(shirt.photo, '/ui/app/garments/lndry-folded-shirt-v3.png', 'the default shirt uses the current Lndry-branded garment image');
+  assert.equal(shirt.photo, '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp', 'the default shirt uses the current Lndry-branded garment image');
   const steamIron = catalogue.services.find((service: any) => service.name === 'Steam Iron')!;
   const quote = quoteLaundryOrder(tenant, {
     items: [{ garment: shirt.id, service: steamIron.id, qty: 2 }], charges: 10, discounts: 5, taxRate: 5,
@@ -148,7 +148,7 @@ try {
   ]);
   assert.equal(customerImport.created, 1, 'customer imports create a reusable customer record');
   const priceImport = importLaundryPrices(tenant, 'test@epic.local', [
-    { garmentName: 'Imported blazer', categoryName: 'Men\'s Wear', serviceName: 'Dry Cleaning', rate: 450, unit: 'Piece', customerPhone: '9810146062' },
+    { garmentName: 'Imported blazer', categoryName: 'Men\'s Wear', serviceName: 'Dry Cleaning', rate: 450, unit: 'Piece', customerPhone: '9810146062', visualKey: 'foldedBlazer', photo: '/ui/app/garments/optimized/lndry-folded-blazer-v1.webp' },
   ]);
   assert.equal(priceImport.created, 1, 'price imports create a scoped garment and service rate');
   assert.equal(laundryCatalogue(tenant).prices.some((price) => price.garmentName === 'Imported blazer' && Number((price as { rate?: number }).rate) === 450), true, 'imported prices are available to the counter catalogue');

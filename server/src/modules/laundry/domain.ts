@@ -1020,7 +1020,7 @@ function cleanImagePath(value: unknown) {
     if (path.length > 1_500_000) throw new Error('garment image must be under 1 MB');
     return path;
   }
-  if (path.length > MAX_MASTER_IMAGE_PATH || !/^\/ui\/app\/(?:garments|brand)\/[a-z0-9._-]+\.(?:png|webp|jpe?g|svg)$/i.test(path)) throw new Error('garment image must be an approved local application asset');
+  if (path.length > MAX_MASTER_IMAGE_PATH || !/^\/ui\/app\/(?:garments\/(?:optimized\/)?|brand\/)[a-z0-9._-]+\.(?:png|webp|jpe?g|svg)$/i.test(path)) throw new Error('garment image must be an approved local application asset');
   return path;
 }
 function cleanVisualKey(value: unknown) {
@@ -1912,41 +1912,41 @@ export function seedLaundryDefaults(tenant: string) {
     ['Uniform set', 'Men\'s Wear', 'Piece', [['Dry Cleaning', 199], ['Wash & Fold', 129], ['Steam Iron', 39]]],
   ];
   const garmentVisualByName: Record<string, string> = {
-    'Shirt / T-shirt': '/ui/app/garments/lndry-folded-shirt-v3.png',
-    'Trouser / Pant': '/ui/app/garments/lndry-folded-trouser-v1.png',
-    Saree: '/ui/app/garments/lndry-folded-saree-v1.png',
-    Kurti: '/ui/app/garments/lndry-folded-kurti-v1.png',
-    Blanket: '/ui/app/garments/lndry-folded-blanket-v1.png',
-    'Bed sheet': '/ui/app/garments/lndry-folded-bedsheet-v1.png',
-    'Mixed clothes': '/ui/app/garments/lndry-mixed-clothes-v1.png',
-    'Shoe pair': '/ui/app/garments/lndry-shoe-pair-v1.png',
-    'Blazer / Suit': '/ui/app/garments/lndry-folded-blazer-v1.png',
-    'Dress / Gown': '/ui/app/garments/lndry-folded-dress-v1.png',
-    'Jeans / Denim': '/ui/app/garments/lndry-folded-jeans-v1.png',
-    'Hoodie / Sweatshirt': '/ui/app/garments/lndry-folded-hoodie-v1.png',
-    Kurta: '/ui/app/garments/lndry-folded-kurta-v1.png',
-    'Polo shirt': '/ui/app/garments/lndry-folded-shirt-v3.png',
-    'Formal shirt': '/ui/app/garments/lndry-folded-shirt-v3.png',
-    'Jacket / Coat': '/ui/app/garments/lndry-folded-blazer-v1.png',
-    'Kurta pyjama': '/ui/app/garments/lndry-folded-kurta-v1.png',
-    Sherwani: '/ui/app/garments/lndry-folded-kurta-v1.png',
-    Blouse: '/ui/app/garments/lndry-folded-saree-v1.png',
-    'Salwar suit': '/ui/app/garments/lndry-folded-kurti-v1.png',
-    Lehenga: '/ui/app/garments/lndry-folded-saree-v1.png',
-    'Tie / Scarf': '/ui/app/garments/lndry-folded-shirt-v3.png',
+    'Shirt / T-shirt': '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp',
+    'Trouser / Pant': '/ui/app/garments/optimized/lndry-folded-trouser-v1.webp',
+    Saree: '/ui/app/garments/optimized/lndry-folded-saree-v1.webp',
+    Kurti: '/ui/app/garments/optimized/lndry-folded-kurti-v1.webp',
+    Blanket: '/ui/app/garments/optimized/lndry-folded-blanket-v1.webp',
+    'Bed sheet': '/ui/app/garments/optimized/lndry-folded-bedsheet-v1.webp',
+    'Mixed clothes': '/ui/app/garments/optimized/lndry-mixed-clothes-v1.webp',
+    'Shoe pair': '/ui/app/garments/optimized/lndry-shoe-pair-v1.webp',
+    'Blazer / Suit': '/ui/app/garments/optimized/lndry-folded-blazer-v1.webp',
+    'Dress / Gown': '/ui/app/garments/optimized/lndry-folded-dress-v1.webp',
+    'Jeans / Denim': '/ui/app/garments/optimized/lndry-folded-jeans-v1.webp',
+    'Hoodie / Sweatshirt': '/ui/app/garments/optimized/lndry-folded-hoodie-v1.webp',
+    Kurta: '/ui/app/garments/optimized/lndry-folded-kurta-v1.webp',
+    'Polo shirt': '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp',
+    'Formal shirt': '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp',
+    'Jacket / Coat': '/ui/app/garments/optimized/lndry-folded-blazer-v1.webp',
+    'Kurta pyjama': '/ui/app/garments/optimized/lndry-folded-kurta-v1.webp',
+    Sherwani: '/ui/app/garments/optimized/lndry-folded-kurta-v1.webp',
+    Blouse: '/ui/app/garments/optimized/lndry-folded-saree-v1.webp',
+    'Salwar suit': '/ui/app/garments/optimized/lndry-folded-kurti-v1.webp',
+    Lehenga: '/ui/app/garments/optimized/lndry-folded-saree-v1.webp',
+    'Tie / Scarf': '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp',
     'Socks pair': '/ui/app/garments/optimized/lndry-socks-pair-v1.webp',
     Towel: '/ui/app/garments/optimized/lndry-towel-v1.webp',
-    'Pillow cover': '/ui/app/garments/lndry-folded-bedsheet-v1.png',
+    'Pillow cover': '/ui/app/garments/optimized/lndry-folded-bedsheet-v1.webp',
     Curtain: '/ui/app/garments/optimized/lndry-curtain-v1.webp',
     'Carpet / Rug': '/ui/app/garments/optimized/lndry-carpet-rug-v1.webp',
-    'Quilt / Duvet': '/ui/app/garments/lndry-folded-blanket-v1.png',
-    'Table cloth': '/ui/app/garments/lndry-folded-bedsheet-v1.png',
+    'Quilt / Duvet': '/ui/app/garments/optimized/lndry-folded-blanket-v1.webp',
+    'Table cloth': '/ui/app/garments/optimized/lndry-folded-bedsheet-v1.webp',
     Handbag: '/ui/app/garments/optimized/lndry-handbag-v1.webp',
     'Soft toy': '/ui/app/garments/optimized/lndry-soft-toy-v1.webp',
-    'Uniform set': '/ui/app/garments/lndry-folded-shirt-v3.png',
+    'Uniform set': '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp',
   };
   const visualKeyByPath: Record<string, string> = {
-    '/ui/app/garments/lndry-folded-shirt-v3.png': 'foldedShirt', '/ui/app/garments/lndry-folded-trouser-v1.png': 'foldedTrouser', '/ui/app/garments/lndry-folded-saree-v1.png': 'foldedSaree', '/ui/app/garments/lndry-folded-kurti-v1.png': 'foldedKurti', '/ui/app/garments/lndry-folded-blanket-v1.png': 'foldedBlanket', '/ui/app/garments/lndry-folded-bedsheet-v1.png': 'foldedBedsheet', '/ui/app/garments/lndry-mixed-clothes-v1.png': 'mixedClothes', '/ui/app/garments/lndry-shoe-pair-v1.png': 'shoePair', '/ui/app/garments/lndry-folded-blazer-v1.png': 'foldedBlazer', '/ui/app/garments/lndry-folded-dress-v1.png': 'foldedDress', '/ui/app/garments/lndry-folded-jeans-v1.png': 'foldedJeans', '/ui/app/garments/lndry-folded-hoodie-v1.png': 'foldedHoodie', '/ui/app/garments/lndry-folded-kurta-v1.png': 'foldedKurta', '/ui/app/garments/optimized/lndry-handbag-v1.webp': 'handbag', '/ui/app/garments/optimized/lndry-towel-v1.webp': 'towel', '/ui/app/garments/optimized/lndry-curtain-v1.webp': 'curtain', '/ui/app/garments/optimized/lndry-carpet-rug-v1.webp': 'carpetRug', '/ui/app/garments/optimized/lndry-soft-toy-v1.webp': 'softToy', '/ui/app/garments/optimized/lndry-socks-pair-v1.webp': 'socksPair',
+    '/ui/app/garments/optimized/lndry-folded-shirt-v3.webp': 'foldedShirt', '/ui/app/garments/optimized/lndry-folded-trouser-v1.webp': 'foldedTrouser', '/ui/app/garments/optimized/lndry-folded-saree-v1.webp': 'foldedSaree', '/ui/app/garments/optimized/lndry-folded-kurti-v1.webp': 'foldedKurti', '/ui/app/garments/optimized/lndry-folded-blanket-v1.webp': 'foldedBlanket', '/ui/app/garments/optimized/lndry-folded-bedsheet-v1.webp': 'foldedBedsheet', '/ui/app/garments/optimized/lndry-mixed-clothes-v1.webp': 'mixedClothes', '/ui/app/garments/optimized/lndry-shoe-pair-v1.webp': 'shoePair', '/ui/app/garments/optimized/lndry-folded-blazer-v1.webp': 'foldedBlazer', '/ui/app/garments/optimized/lndry-folded-dress-v1.webp': 'foldedDress', '/ui/app/garments/optimized/lndry-folded-jeans-v1.webp': 'foldedJeans', '/ui/app/garments/optimized/lndry-folded-hoodie-v1.webp': 'foldedHoodie', '/ui/app/garments/optimized/lndry-folded-kurta-v1.webp': 'foldedKurta', '/ui/app/garments/optimized/lndry-handbag-v1.webp': 'handbag', '/ui/app/garments/optimized/lndry-towel-v1.webp': 'towel', '/ui/app/garments/optimized/lndry-curtain-v1.webp': 'curtain', '/ui/app/garments/optimized/lndry-carpet-rug-v1.webp': 'carpetRug', '/ui/app/garments/optimized/lndry-soft-toy-v1.webp': 'softToy', '/ui/app/garments/optimized/lndry-socks-pair-v1.webp': 'socksPair',
   };
   for (const [name, category, unit, prices] of defaults) {
     const garment = store.rowsOf(tenant, 'laundry_garment').find((row) => String(row.data.name || '').trim().toLowerCase() === name.toLowerCase()) || createRow(tenant, actor, 'laundry_garment', {
