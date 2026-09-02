@@ -43,6 +43,7 @@ jobs:
         run: >-
           npm run test:laundry && npm run test:auth && npm run test:store-migration && npm run test:clean-db-bootstrap &&
           npm run test:customer && npm run test:package && npm run test:catalogue &&
+          npm run test:invoice-snapshot &&
           npm run test:payment && npm run test:ops && npm run test:restart &&
           npm run test:recovery-drill && npm run test:workspace-mode &&
           npm run test:startup-handshake && npm run test:garment-traceability &&
