@@ -13,6 +13,8 @@ export function queueMarketplaceNotification(tenant: string, actor: string, inpu
 export function recordMarketplaceNotificationDelivery(tenant: string, actor: string, eventId: string, channel: NotificationChannel, input: { state: NotificationState; providerMessageId?: string; error?: string }) {
   const event = store.rowsOf(tenant, 'marketplace_notification_event').find((candidate) => candidate.data.eventId === eventId && candidate.data.channel === channel); if (!event) throw new Error('notification event not found');
   if (input.state === 'Delivered' && !input.providerMessageId) throw new Error('NOTIFICATION_EVIDENCE_REQUIRED');
+  if (input.state === 'Sent' && !input.providerMessageId) throw new Error('NOTIFICATION_EVIDENCE_REQUIRED');
+  if (input.state === 'Failed' && !String(input.error || '').trim()) throw new Error('NOTIFICATION_FAILURE_REASON_REQUIRED');
   if (event.data.state === 'Delivered') return event;
   event.data.state = input.state; event.data.providerMessageId = input.providerMessageId; event.data.error = input.error; event.data.updatedAt = new Date().toISOString(); event.version += 1; event.updated_at = String(event.data.updatedAt); store.updateRow(event); audit(tenant, actor, 'marketplace:notification-delivery-recorded', { entity: event.entity, row_id: event.id, after: { eventId, channel, state: input.state, providerMessageId: input.providerMessageId ? '[present]' : undefined } }); return event;
 }

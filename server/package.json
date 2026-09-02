@@ -22,6 +22,7 @@
     "test:provider-events": "tsx src/_selftest-provider-events.ts",
     "test:provider-events-api": "tsx src/_selftest-provider-events-api.ts",
     "test:marketplace-notifications": "tsx src/_selftest-marketplace-notifications.ts",
+    "test:marketplace-notifications-api": "tsx src/_selftest-marketplace-notifications-api.ts",
     "test:marketplace-cash": "tsx src/_selftest-marketplace-cash.ts",
     "test:customer": "tsx src/_selftest-customer.ts",
     "test:package": "tsx src/_selftest-package.ts",

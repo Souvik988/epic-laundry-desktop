@@ -80,6 +80,7 @@ import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMar
 import { createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
 import { marketplaceSettlement, recordMarketplaceCashCollection, recordMarketplaceSettlement } from './modules/marketplace/settlements.js';
 import { recordProviderPaymentEvent, verifyProviderWebhook, type ProviderPaymentEvent } from './modules/marketplace/provider-events.js';
+import { queueMarketplaceNotification, recordMarketplaceNotificationDelivery, type NotificationChannel, type NotificationState } from './modules/marketplace/notifications.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -170,6 +171,17 @@ const marketplaceRejectBody = {
 } as const;
 const marketplaceLinkBody = {
   type: 'object', required: ['localOrderId'], properties: { localOrderId: { type: 'string', minLength: 1, maxLength: 160 } }, additionalProperties: false,
+} as const;
+const marketplaceNotificationBody = {
+  type: 'object', required: ['eventId', 'eventType', 'recipientRef', 'channel', 'template', 'payload'], properties: {
+    eventId: { type: 'string', minLength: 1, maxLength: 200 }, eventType: { type: 'string', minLength: 1, maxLength: 160 }, recipientRef: { type: 'string', minLength: 1, maxLength: 200 }, channel: { type: 'string', enum: ['in-app', 'push', 'whatsapp', 'sms', 'email'] }, template: { type: 'string', minLength: 1, maxLength: 160 }, payload: { type: 'object', additionalProperties: true },
+  }, additionalProperties: false,
+} as const;
+const marketplaceNotificationDeliveryParams = {
+  type: 'object', required: ['eventId', 'channel'], properties: { eventId: { type: 'string', minLength: 1, maxLength: 200 }, channel: { type: 'string', enum: ['in-app', 'push', 'whatsapp', 'sms', 'email'] } }, additionalProperties: false,
+} as const;
+const marketplaceNotificationDeliveryBody = {
+  type: 'object', required: ['state'], properties: { state: { type: 'string', enum: ['Queued', 'Sent', 'Delivered', 'Failed'] }, providerMessageId: { type: 'string', maxLength: 200 }, error: { type: 'string', maxLength: 500 } }, additionalProperties: false,
 } as const;
 const marketplaceIntakeBody = {
   type: 'object', required: ['actual'], properties: { actual: { type: 'object', additionalProperties: true }, reason: { type: 'string', maxLength: 500 } }, additionalProperties: false,
@@ -605,6 +617,14 @@ export function registerApi(app: FastifyInstance) {
       const status = code.startsWith('PAYMENT_WEBHOOK_') ? 401 : 400;
       return rep.code(status).send({ code, error: code });
     }
+  });
+  app.post('/api/marketplace/notifications', { schema: { body: marketplaceNotificationBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.notification:${req.body.eventId}:${req.body.channel}`, () => queueMarketplaceNotification(req.auth!.tenant, req.auth!.actor, req.body)))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/marketplace/notifications/:eventId/:channel/delivery', { schema: { params: marketplaceNotificationDeliveryParams, body: marketplaceNotificationDeliveryBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => recordMarketplaceNotificationDelivery(req.auth!.tenant, req.auth!.actor, req.params.eventId, req.params.channel as NotificationChannel, req.body as { state: NotificationState; providerMessageId?: string; error?: string })); }
+    catch (error: any) { return rep.code(error.message === 'NOTIFICATION_EVIDENCE_REQUIRED' || error.message === 'NOTIFICATION_FAILURE_REASON_REQUIRED' ? 400 : 404).send({ code: error.message, error: error.message }); }
   });
   app.post('/api/marketplace/orders/:externalOrderId/intake', { schema: { params: marketplaceOrderParams, body: marketplaceIntakeBody }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => idempotent(req, `marketplace.intake:${req.params.externalOrderId}`, () => recordMarketplaceIntake(req.auth!.tenant, req.auth!.actor, { externalOrderId: req.params.externalOrderId, actual: req.body.actual, reason: req.body.reason }))); }
