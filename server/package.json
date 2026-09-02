@@ -16,6 +16,7 @@
     "test:marketplace-sync": "tsx src/_selftest-marketplace-sync.ts",
     "test:marketplace-api": "tsx src/_selftest-marketplace-api.ts",
     "test:marketplace-order-truth": "tsx src/_selftest-marketplace-order-truth.ts",
+    "test:marketplace-settlement": "tsx src/_selftest-marketplace-settlement.ts",
     "test:customer": "tsx src/_selftest-customer.ts",
     "test:package": "tsx src/_selftest-package.ts",
     "test:catalogue": "tsx src/_selftest-catalogue.ts",
