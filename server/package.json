@@ -18,6 +18,7 @@
     "test:marketplace-order-truth": "tsx src/_selftest-marketplace-order-truth.ts",
     "test:marketplace-settlement": "tsx src/_selftest-marketplace-settlement.ts",
     "test:canonical-tax": "tsx src/_selftest-canonical-tax.ts",
+    "test:invoice-snapshot": "tsx src/_selftest-invoice-snapshot.ts",
     "test:customer": "tsx src/_selftest-customer.ts",
     "test:package": "tsx src/_selftest-package.ts",
     "test:catalogue": "tsx src/_selftest-catalogue.ts",
