@@ -358,6 +358,10 @@ function normalizePrinterProfiles(value: unknown): PrinterProfileSettings[] {
   }).filter((profile): profile is PrinterProfileSettings => Boolean(profile)).slice(0, 50);
 }
 const decode = <T>(value: string): T => JSON.parse(value) as T;
+function ftsSearchQuery(value: string) {
+  const tokens = value.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  return tokens.map((token) => `"${token.replaceAll('"', '""')}"*`).join(' AND ');
+}
 
 /** Local SQLite persistence; legacy JSON imports once but is never authoritative again. */
 export class Store {
@@ -575,6 +579,8 @@ export class Store {
       { version: 29, name: 'catalogue-household-visuals', sql: "UPDATE entity_rows SET data_json = json_set(json_set(data_json, '$.visual_key', CASE json_extract(data_json, '$.name') WHEN 'Pillow cover' THEN 'pillowCover' WHEN 'Quilt / Duvet' THEN 'quiltDuvet' ELSE json_extract(data_json, '$.visual_key') END), '$.photo', CASE json_extract(data_json, '$.name') WHEN 'Pillow cover' THEN '/ui/app/garments/optimized/lndry-pillow-cover-v1.webp' WHEN 'Quilt / Duvet' THEN '/ui/app/garments/optimized/lndry-quilt-duvet-v1.webp' ELSE json_extract(data_json, '$.photo') END) WHERE entity = 'laundry_garment' AND json_extract(data_json, '$.name') IN ('Pillow cover','Quilt / Duvet');" },
       { version: 30, name: 'laundry-order-page-sort', sql: "CREATE INDEX IF NOT EXISTS entity_rows_laundry_order_page_sort ON entity_rows(tenant, store_id, entity, created_at DESC, id DESC);" },
       { version: 31, name: 'laundry-order-customer-reference', sql: "CREATE INDEX IF NOT EXISTS entity_rows_laundry_order_customer ON entity_rows(tenant, store_id, entity, json_extract(data_json, '$.customer'));" },
+      { version: 32, name: 'laundry-order-search-fts', sql: "CREATE VIRTUAL TABLE IF NOT EXISTS laundry_order_search_fts USING fts5(tenant UNINDEXED, store_id UNINDEXED, order_id UNINDEXED, order_ref, order_name, invoice, customer_name, customer_phone, tokenize='unicode61 remove_diacritics 2'); INSERT INTO laundry_order_search_fts(tenant, store_id, order_id, order_ref, order_name, invoice, customer_name, customer_phone) SELECT r.tenant, r.store_id, r.id, r.id, COALESCE(json_extract(r.data_json, '$.name'), ''), COALESCE(json_extract(r.data_json, '$.invoice'), ''), COALESCE(json_extract(p.data_json, '$.name'), ''), COALESCE(json_extract(p.data_json, '$.phone'), '') FROM entity_rows r LEFT JOIN entity_rows p ON p.tenant = r.tenant AND p.store_id = r.store_id AND p.entity = 'party' AND p.id = json_extract(r.data_json, '$.customer') WHERE r.entity = 'laundry_order';" },
+      { version: 33, name: 'laundry-order-search-row-map', sql: "CREATE TABLE IF NOT EXISTS laundry_order_search_map (fts_rowid INTEGER PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, UNIQUE(tenant, store_id, order_id)); INSERT OR IGNORE INTO laundry_order_search_map(fts_rowid, tenant, store_id, order_id) SELECT rowid, tenant, store_id, order_id FROM laundry_order_search_fts; CREATE INDEX IF NOT EXISTS laundry_order_search_map_scope_order ON laundry_order_search_map(tenant, store_id, order_id);" },
     ];
     this.db.transaction(() => {
       for (const migration of migrations) {
@@ -875,14 +881,45 @@ export class Store {
     return Number((statement.get(series) as { value: number }).value);
   }
 
+  private refreshLaundryOrderSearch(tenant: string, storeId: string, orderId: string) {
+    const prior = this.db.prepare('SELECT fts_rowid FROM laundry_order_search_map WHERE tenant = ? AND store_id = ? AND order_id = ?').get(tenant, storeId, orderId) as { fts_rowid: number } | undefined;
+    if (prior) {
+      this.db.prepare('DELETE FROM laundry_order_search_fts WHERE rowid = ?').run(prior.fts_rowid);
+      this.db.prepare('DELETE FROM laundry_order_search_map WHERE fts_rowid = ?').run(prior.fts_rowid);
+    }
+    const order = this.db.prepare("SELECT id, data_json FROM entity_rows WHERE tenant = ? AND store_id = ? AND id = ? AND entity = 'laundry_order'").get(tenant, storeId, orderId) as { id: string; data_json: string } | undefined;
+    if (!order) return;
+    const data = decode<Record<string, unknown>>(order.data_json);
+    const customerId = String(data.customer || '');
+    const customer = customerId ? this.db.prepare("SELECT data_json FROM entity_rows WHERE tenant = ? AND store_id = ? AND id = ? AND entity = 'party'").get(tenant, storeId, customerId) as { data_json: string } | undefined : undefined;
+    const customerData = customer ? decode<Record<string, unknown>>(customer.data_json) : {};
+    const inserted = this.db.prepare('INSERT INTO laundry_order_search_fts(tenant, store_id, order_id, order_ref, order_name, invoice, customer_name, customer_phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+      tenant, storeId, order.id, order.id, String(data.name || ''), String(data.invoice || ''), String(customerData.name || ''), String(customerData.phone || ''),
+    );
+    this.db.prepare('INSERT INTO laundry_order_search_map(fts_rowid, tenant, store_id, order_id) VALUES (?, ?, ?, ?)').run(Number(inserted.lastInsertRowid), tenant, storeId, order.id);
+  }
+
+  private refreshSearchForCustomer(tenant: string, storeId: string, customerId: string) {
+    const orders = this.db.prepare("SELECT id FROM entity_rows WHERE tenant = ? AND store_id = ? AND entity = 'laundry_order' AND json_extract(data_json, '$.customer') = ?").all(tenant, storeId, customerId) as Array<{ id: string }>;
+    for (const order of orders) this.refreshLaundryOrderSearch(tenant, storeId, order.id);
+  }
+
   insertRow(row: EntityRow) {
     const amount = this.constrainedAmount(row);
-    this.db.prepare('INSERT INTO entity_rows(tenant,store_id,id,entity,status,version,created_by,created_at,updated_at,data_json,amount_paise,amount_direction,amount_currency) VALUES (@tenant,@storeId,@id,@entity,@status,@version,@created_by,@created_at,@updated_at,@data_json,@amountPaise,@amountDirection,@amountCurrency)').run({ ...row, ...amount, storeId: this.currentStore(row.tenant), data_json: encode(row.data) });
+    const storeId = this.currentStore(row.tenant);
+    this.db.prepare('INSERT INTO entity_rows(tenant,store_id,id,entity,status,version,created_by,created_at,updated_at,data_json,amount_paise,amount_direction,amount_currency) VALUES (@tenant,@storeId,@id,@entity,@status,@version,@created_by,@created_at,@updated_at,@data_json,@amountPaise,@amountDirection,@amountCurrency)').run({ ...row, ...amount, storeId, data_json: encode(row.data) });
+    if (row.entity === 'laundry_order') this.refreshLaundryOrderSearch(row.tenant, storeId, row.id);
+    if (row.entity === 'party') this.refreshSearchForCustomer(row.tenant, storeId, row.id);
   }
   updateRow(row: EntityRow) {
     const amount = this.constrainedAmount(row);
-    const result = this.db.prepare('UPDATE entity_rows SET entity=@entity,status=@status,version=@version,created_by=@created_by,created_at=@created_at,updated_at=@updated_at,data_json=@data_json,amount_paise=@amountPaise,amount_direction=@amountDirection,amount_currency=@amountCurrency WHERE tenant=@tenant AND store_id=@storeId AND id=@id').run({ ...row, ...amount, storeId: this.currentStore(row.tenant), data_json: encode(row.data) });
+    const storeId = this.currentStore(row.tenant);
+    const result = this.db.prepare('UPDATE entity_rows SET entity=@entity,status=@status,version=@version,created_by=@created_by,created_at=@created_at,updated_at=@updated_at,data_json=@data_json,amount_paise=@amountPaise,amount_direction=@amountDirection,amount_currency=@amountCurrency WHERE tenant=@tenant AND store_id=@storeId AND id=@id').run({ ...row, ...amount, storeId, data_json: encode(row.data) });
     if (result.changes === 0) this.insertRow(row);
+    else {
+      if (row.entity === 'laundry_order') this.refreshLaundryOrderSearch(row.tenant, storeId, row.id);
+      if (row.entity === 'party') this.refreshSearchForCustomer(row.tenant, storeId, row.id);
+    }
   }
   getRow(tenant: string, id: string) { return this.readRows('SELECT * FROM entity_rows WHERE tenant = ? AND store_id = ? AND id = ?', [tenant, this.currentStore(tenant), id])[0]; }
   rowsOf(tenant: string, entity: string) { return this.readRows('SELECT * FROM entity_rows WHERE tenant = ? AND store_id = ? AND entity = ? ORDER BY created_at', [tenant, this.currentStore(tenant), entity]); }
@@ -897,9 +934,11 @@ export class Store {
     if (input.to) { clauses.push("json_extract(r.data_json, '$.order_date') <= ?"); params.push(input.to); }
     const search = String(input.search || '').trim().toLowerCase();
     if (search) {
-      const pattern = `%${search}%`;
-      clauses.push(`(lower(COALESCE(json_extract(r.data_json, '$.name'), '')) LIKE ? OR lower(COALESCE(json_extract(r.data_json, '$.invoice'), '')) LIKE ? OR lower(r.id) LIKE ? OR json_extract(r.data_json, '$.customer') IN (SELECT p.id FROM entity_rows p WHERE p.tenant = ? AND p.store_id = ? AND p.entity = 'party' AND (lower(COALESCE(json_extract(p.data_json, '$.name'), '')) LIKE ? OR lower(COALESCE(json_extract(p.data_json, '$.phone'), '')) LIKE ?)) OR EXISTS (SELECT 1 FROM entity_rows i WHERE i.tenant = r.tenant AND i.store_id = r.store_id AND i.id = json_extract(r.data_json, '$.invoice') AND lower(COALESCE(json_extract(i.data_json, '$.name'), '')) LIKE ?))`);
-      params.push(pattern, pattern, pattern, tenant, this.currentStore(tenant), pattern, pattern, pattern);
+      const ftsQuery = ftsSearchQuery(search);
+      if (ftsQuery) {
+        clauses.push(`r.id IN (SELECT order_id FROM laundry_order_search_fts WHERE laundry_order_search_fts MATCH ? AND tenant = ? AND store_id = ?)`);
+        params.push(ftsQuery, tenant, this.currentStore(tenant));
+      } else clauses.push('1 = 0');
     }
     const where = clauses.join(' AND ');
     const total = Number((this.db.prepare(`SELECT COUNT(*) AS count FROM entity_rows r WHERE ${where}`).get(...params) as { count: number }).count);
@@ -1137,7 +1176,7 @@ export class Store {
     });
   }
   replaceAll(input: DbShape) {
-    this.db.exec('DELETE FROM entity_rows; DELETE FROM records; DELETE FROM sequences; DELETE FROM garment_unit_events; DELETE FROM tag_reprints; DELETE FROM tag_history; DELETE FROM tag_print_jobs; DELETE FROM laundry_container_events; DELETE FROM laundry_containers; DELETE FROM garment_units; DELETE FROM financial_entries; DELETE FROM financial_documents; DELETE FROM customer_ledger_entries; DELETE FROM wallet_entries; DELETE FROM customer_addresses; DELETE FROM laundry_order_holds; DELETE FROM cash_shift_closes; DELETE FROM financial_normalization_runs; DELETE FROM laundry_order_items; DELETE FROM laundry_orders; DELETE FROM customers; DELETE FROM compatibility_migration_runs; DELETE FROM idempotency_commands; DELETE FROM sync_outbox; DELETE FROM sync_inbox; DELETE FROM sync_checkpoints; DELETE FROM order_external_links; DELETE FROM marketplace_order_projections; DELETE FROM marketplace_devices;');
+    this.db.exec('DELETE FROM entity_rows; DELETE FROM laundry_order_search_map; DELETE FROM laundry_order_search_fts; DELETE FROM records; DELETE FROM sequences; DELETE FROM garment_unit_events; DELETE FROM tag_reprints; DELETE FROM tag_history; DELETE FROM tag_print_jobs; DELETE FROM laundry_container_events; DELETE FROM laundry_containers; DELETE FROM garment_units; DELETE FROM financial_entries; DELETE FROM financial_documents; DELETE FROM customer_ledger_entries; DELETE FROM wallet_entries; DELETE FROM customer_addresses; DELETE FROM laundry_order_holds; DELETE FROM cash_shift_closes; DELETE FROM financial_normalization_runs; DELETE FROM laundry_order_items; DELETE FROM laundry_orders; DELETE FROM customers; DELETE FROM compatibility_migration_runs; DELETE FROM idempotency_commands; DELETE FROM sync_outbox; DELETE FROM sync_inbox; DELETE FROM sync_checkpoints; DELETE FROM order_external_links; DELETE FROM marketplace_order_projections; DELETE FROM marketplace_devices;');
     for (const row of input.rows || []) this.insertRow(row);
     for (const entry of input.gl || []) this.appendGL(entry);
     for (const entry of input.audit || []) this.appendAudit(entry);
@@ -1172,6 +1211,8 @@ export class Store {
   replaceScoped(tenant: string, storeId: string, input: DbShape) {
     return this.withStoreScope(tenant, storeId, () => this.transaction(() => {
       this.db.prepare('DELETE FROM entity_rows WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM laundry_order_search_map WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM laundry_order_search_fts WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM records WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM garment_unit_events WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM tag_reprints WHERE tenant = ? AND store_id = ?').run(tenant, storeId);

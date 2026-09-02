@@ -49,7 +49,8 @@ try {
 
   const firstPage = timed('order page 1', () => store.listLaundryOrderPage(TENANT, { page: 1, pageSize: 50 }));
   const deepPage = timed('order page 10000', () => store.listLaundryOrderPage(TENANT, { page: 10_000, pageSize: 50 }));
-  const searchedPage = timed('customer search', () => store.listLaundryOrderPage(TENANT, { search: 'Benchmark Customer 99999', page: 1, pageSize: 50 }));
+  const searchCustomerNumber = Math.min(CUSTOMER_COUNT, 99_999);
+  const searchedPage = timed('customer search', () => store.listLaundryOrderPage(TENANT, { search: `Benchmark Customer ${searchCustomerNumber}`, page: 1, pageSize: 50 }));
   const plan = store.explainRowsOfReportDate(TENANT, 'laundry_order', 'created_at');
   console.log(JSON.stringify({
     counts: { customers: CUSTOMER_COUNT, orders: ORDER_COUNT },
