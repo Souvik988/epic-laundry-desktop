@@ -28,6 +28,8 @@ export const garmentVisuals = {
   salwarSuit: '/ui/app/garments/optimized/lndry-salwar-suit-v1.webp',
   lehenga: '/ui/app/garments/optimized/lndry-lehenga-v1.webp',
   tieScarf: '/ui/app/garments/optimized/lndry-tie-scarf-v1.webp',
+  pillowCover: '/ui/app/garments/optimized/lndry-pillow-cover-v1.webp',
+  quiltDuvet: '/ui/app/garments/optimized/lndry-quilt-duvet-v1.webp',
   handbag: '/ui/app/garments/optimized/lndry-handbag-v1.webp',
   towel: '/ui/app/garments/optimized/lndry-towel-v1.webp',
   curtain: '/ui/app/garments/optimized/lndry-curtain-v1.webp',

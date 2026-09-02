@@ -44,7 +44,8 @@ selection is exposed through the owner catalogue visual picker.
 
 The V4 catalogue-correction pass adds dedicated, original master visuals for
 `lndry-sherwani-v1.png`, `lndry-blouse-v1.png`, `lndry-salwar-suit-v1.png`,
-`lndry-lehenga-v1.png`, and `lndry-tie-scarf-v1.png`. These are intentionally
+`lndry-lehenga-v1.png`, `lndry-tie-scarf-v1.png`, `lndry-pillow-cover-v1.png`,
+and `lndry-quilt-duvet-v1.png`. These are intentionally
 unbranded garment and accessory products: a product thumbnail has no suitable
 surface for a logo, so the visual treatment relies on the approved studio,
 transparent-background asset family instead. Each has been visually reviewed,
