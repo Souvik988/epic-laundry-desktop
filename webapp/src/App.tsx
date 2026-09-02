@@ -31,6 +31,7 @@ import LaundryQualityClaims from "@/pages/laundry/LaundryQualityClaims";
 import LaundryCorrections from "@/pages/laundry/LaundryCorrections";
 import LaundryRoutes from "@/pages/laundry/LaundryRoutes";
 import LaundryOnlineOrders from "@/pages/laundry/LaundryOnlineOrders";
+import LaundrySyncStatus from "@/pages/laundry/LaundrySyncStatus";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { canUseUi, type UiPermission } from "@/components/laundry/LaundryShell";
 import { useQuery } from "@tanstack/react-query";
@@ -50,6 +51,7 @@ export function App() {
         <Route path="new-order" element={<PermissionGate permission="orders.create"><LaundryBooking /></PermissionGate>} />
         <Route path="orders" element={<PermissionGate permission="orders.read"><LaundryOrders /></PermissionGate>} />
         <Route path="online-orders" element={<PermissionGate permission="orders.read"><LaundryOnlineOrders /></PermissionGate>} />
+        <Route path="sync-status" element={<PermissionGate permission="settings.manage"><LaundrySyncStatus /></PermissionGate>} />
         <Route path="garment-tracking" element={<PermissionGate permission="garments.read"><LaundryGarmentTracking /></PermissionGate>} />
         <Route path="cash-closing" element={<PermissionGate permission="cash.read"><LaundryCashClosing /></PermissionGate>} />
         <Route path="production-queue" element={<PermissionGate permission="production.read"><LaundryProductionQueue /></PermissionGate>} />
