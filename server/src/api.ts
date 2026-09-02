@@ -83,6 +83,7 @@ import { recordProviderPaymentEvent, verifyProviderWebhook, type ProviderPayment
 import { queueMarketplaceNotification, recordMarketplaceNotificationDelivery, type NotificationChannel, type NotificationState } from './modules/marketplace/notifications.js';
 import { renderCanonicalTaxInvoice } from './modules/gst/canonical-invoice-print.js';
 import { approveTaxPolicyRule, createTaxPolicyRule, listTaxPolicyRules, retireTaxPolicyRule, saveSupplierTaxProfile, supplierTaxProfile, taxReadiness } from './modules/gst/tax-policy.js';
+import { auditGarmentAssets } from './modules/laundry/garment-assets.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -511,6 +512,7 @@ export function registerApi(app: FastifyInstance) {
     } catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
   app.get('/api/laundry/garment-backfill', { preHandler: [guard, allow('catalogue.manage')] }, async (req: any) => inStore(req, () => previewLaundryGarmentBackfill(req.auth!.tenant)));
+  app.get('/api/laundry/garment-assets/audit', { preHandler: [guard, allow('catalogue.manage')] }, async (req: any) => inStore(req, () => auditGarmentAssets(req.auth!.tenant)));
   app.post('/api/laundry/garment-backfill', { preHandler: [guard, allow('catalogue.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(200).send(inStore(req, () => idempotent(req, 'laundry.garment-backfill', () => applyLaundryGarmentBackfill(req.auth!.tenant, req.auth!.actor)))); }
     catch (error: any) { return rep.code(400).send({ error: error.message || 'garment backfill failed' }); }
