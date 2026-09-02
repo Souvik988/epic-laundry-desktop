@@ -81,6 +81,8 @@ try {
   assert.equal(rejected.event.state, 'Pending', 'vendor action produces a separately acknowledged outbound command');
 
   const paymentEnvelope = simulator.enqueuePayment(device.id, { tenantId: tenant, vendorId, storeId, aggregateVersion: 1, eventVersion: 1, correlationId: 'corr-pay-1001', paymentIntent: 'pi-web-1001', provider: 'simulator', status: 'Captured', amountPaise: 12_500, payload: { providerEventId: 'provider-event-web-1001' } });
+  assert.throws(() => store.withStoreScope(tenant, storeId, () => receiveMarketplacePayment(tenant, actor, { ...paymentEnvelope, aggregateId: '' })), /SYNC_EVENT_SCHEMA_INVALID/, 'financial envelopes reject missing aggregate identity before inbox application');
+  assert.throws(() => store.withStoreScope(tenant, storeId, () => receiveMarketplacePayment(tenant, actor, { ...paymentEnvelope, payload: null as any })), /SYNC_EVENT_SCHEMA_INVALID/, 'financial envelopes reject non-object payloads before inbox application');
   const paymentBatch = simulator.pull(device.id);
   const paymentApplied = store.withStoreScope(tenant, storeId, () => receiveMarketplacePayment(tenant, actor, paymentBatch.find((event) => event.eventId === paymentEnvelope.eventId)!));
   assert.equal(paymentApplied.duplicate, false, 'provider payment event is applied once through the sync inbox');

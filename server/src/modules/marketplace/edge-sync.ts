@@ -27,6 +27,7 @@ export type SyncTransport = { deliver: (event: SyncOutboxRecord) => { receiptId:
 
 const clean = (value: unknown, max: number) => String(value || '').trim().slice(0, max);
 const object = (value: unknown) => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const isObjectPayload = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 function canonicalize(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonicalize((value as Record<string, unknown>)[key])}`).join(',')}}`;
@@ -41,6 +42,11 @@ function requireRegisteredDevice(tenant: string) {
 function assertTarget(tenant: string, envelope: MarketplaceEnvelope, device: MarketplaceDeviceRecord) {
   const storeId = store.currentStore(tenant);
   if (envelope.tenantId !== tenant || envelope.storeId !== storeId || envelope.vendorId !== device.vendorId || envelope.deviceId !== device.id) throw new Error('SYNC_TARGET_MISMATCH');
+}
+function validateEnvelopeBase(envelope: MarketplaceEnvelope, aggregateType: string, eventPrefix: string) {
+  const eventId = clean(envelope?.eventId, 160); const source = clean(envelope?.source, 120); const tenantId = clean(envelope?.tenantId, 160); const vendorId = clean(envelope?.vendorId, 160); const storeId = clean(envelope?.storeId, 160); const deviceId = clean(envelope?.deviceId, 160); const aggregateId = clean(envelope?.aggregateId, 200); const eventType = clean(envelope?.eventType, 160); const occurredAt = clean(envelope?.occurredAt, 80);
+  if (!eventId || !source || !tenantId || !vendorId || !storeId || !deviceId || !aggregateId || envelope.aggregateType !== aggregateType || !eventType.startsWith(eventPrefix) || !Number.isSafeInteger(envelope.aggregateVersion) || envelope.aggregateVersion < 1 || !Number.isSafeInteger(envelope.eventVersion) || envelope.eventVersion < 1 || Number.isNaN(Date.parse(occurredAt)) || !isObjectPayload(envelope.payload)) throw new Error('SYNC_EVENT_SCHEMA_INVALID');
+  return { eventId, source, tenantId, vendorId, storeId, deviceId, aggregateId, eventType, occurredAt };
 }
 function backoff(eventId: string, attempt: number, now: Date) {
   const exponent = Math.max(0, Math.min(10, attempt - 1));
@@ -116,9 +122,9 @@ export function relayMarketplaceOutbox(tenant: string, transport: SyncTransport,
 }
 type ValidatedMarketplaceOrder = { payload: Record<string, unknown>; externalOrderId: string; channel: MarketplaceChannel; state: MarketplaceOrderState };
 function validateMarketplaceOrderEnvelope(envelope: MarketplaceEnvelope): ValidatedMarketplaceOrder {
-  if (envelope.aggregateType !== 'marketplace_order' || !envelope.eventType.startsWith('marketplace.order.')) throw new Error('unsupported marketplace event');
+  validateEnvelopeBase(envelope, 'marketplace_order', 'marketplace.order.');
   const payload = object(envelope.payload); const externalOrderId = clean(payload.externalOrderId || envelope.aggregateId, 160); const channel = clean(payload.channel || 'MARKETPLACE', 40) as MarketplaceChannel; const state = clean(payload.state || 'AwaitingAcceptance', 80) as MarketplaceOrderState;
-  if (!clean(envelope.eventId, 160) || !clean(envelope.source, 120) || !Number.isSafeInteger(envelope.aggregateVersion) || envelope.aggregateVersion < 1 || !Number.isSafeInteger(envelope.eventVersion) || envelope.eventVersion < 1 || !externalOrderId || externalOrderId !== envelope.aggregateId || !['CUSTOMER_APP', 'WEBSITE', 'VENDOR_APP', 'MARKETPLACE', 'ADMIN'].includes(channel) || !MARKETPLACE_ORDER_STATES.includes(state)) throw new Error('invalid marketplace order event payload');
+  if (!externalOrderId || externalOrderId !== envelope.aggregateId || !['CUSTOMER_APP', 'WEBSITE', 'VENDOR_APP', 'MARKETPLACE', 'ADMIN'].includes(channel) || !MARKETPLACE_ORDER_STATES.includes(state)) throw new Error('invalid marketplace order event payload');
   return { payload, externalOrderId, channel, state };
 }
 function applyMarketplaceOrderEnvelope(tenant: string, actor: string, envelope: MarketplaceEnvelope, input: ValidatedMarketplaceOrder) {
@@ -229,19 +235,19 @@ export function receiveMarketplaceOrder(tenant: string, actor: string, envelope:
 function receiveFinancialEnvelope(tenant: string, actor: string, envelope: MarketplaceEnvelope, apply: (payload: Record<string, unknown>) => EntityRow) {
   const device = requireRegisteredDevice(tenant); assertTarget(tenant, envelope, device);
   const payload = object(envelope.payload); const now = new Date().toISOString();
-  if (!clean(envelope.eventId, 160) || !clean(envelope.source, 120) || !Number.isSafeInteger(envelope.aggregateVersion) || envelope.aggregateVersion < 1 || !Number.isSafeInteger(envelope.eventVersion) || envelope.eventVersion < 1) throw new Error('invalid marketplace financial event');
+  validateEnvelopeBase(envelope, envelope.aggregateType, `marketplace.${envelope.aggregateType === 'marketplace_payment' ? 'payment.' : 'settlement.'}`);
   const inbox: SyncInboxRecord = { eventId: clean(envelope.eventId, 160), source: clean(envelope.source, 120), tenant, vendorId: envelope.vendorId, storeId: store.currentStore(tenant), deviceId: device.id, aggregateType: envelope.aggregateType, aggregateId: clean(envelope.aggregateId, 200), aggregateVersion: envelope.aggregateVersion, eventType: clean(envelope.eventType, 160), eventVersion: envelope.eventVersion, payloadHash: payloadHash(payload), payload, receivedAt: now, applyStatus: 'Received', correlationId: clean(envelope.correlationId || envelope.eventId, 160) };
   return store.transaction(() => { const received = store.receiveSyncInbox(inbox); if (received.duplicate) return { duplicate: true, record: store.getSyncInboxEvent(tenant, inbox.eventId), local: undefined }; const local = apply(payload); store.updateSyncInbox(tenant, inbox.eventId, { applyStatus: 'Applied', appliedAt: now, localAggregateType: local.entity, localId: local.id }); return { duplicate: false, record: store.getSyncInboxEvent(tenant, inbox.eventId), local }; });
 }
 export function receiveMarketplacePayment(tenant: string, actor: string, envelope: MarketplaceEnvelope) {
-  if (envelope.aggregateType !== 'marketplace_payment' || !envelope.eventType.startsWith('marketplace.payment.')) throw new Error('unsupported marketplace payment event');
+  validateEnvelopeBase(envelope, 'marketplace_payment', 'marketplace.payment.');
   return receiveFinancialEnvelope(tenant, actor, envelope, (payload) => {
     const provider = clean(payload.provider, 80); const paymentIntent = clean(payload.paymentIntent || envelope.aggregateId, 200); const status = clean(payload.status, 40) as 'Captured' | 'Failed' | 'Refunded' | 'Chargeback'; const amountPaise = Number(payload.amountPaise); const currency = clean(payload.currency || 'INR', 3); if (!provider || !paymentIntent || !['Captured', 'Failed', 'Refunded', 'Chargeback'].includes(status) || !Number.isSafeInteger(amountPaise) || amountPaise < 0 || currency !== 'INR') throw new Error('PAYMENT_PROVIDER_EVENT_INVALID');
     return recordProviderPaymentEvent(tenant, actor, { eventId: clean(payload.providerEventId || envelope.eventId, 200), provider, paymentIntent, status, amountPaise, currency, occurredAt: clean(payload.occurredAt || envelope.occurredAt, 80), payload });
   });
 }
 export function receiveMarketplaceSettlement(tenant: string, actor: string, envelope: MarketplaceEnvelope) {
-  if (envelope.aggregateType !== 'marketplace_settlement' || !envelope.eventType.startsWith('marketplace.settlement.')) throw new Error('unsupported marketplace settlement event');
+  validateEnvelopeBase(envelope, 'marketplace_settlement', 'marketplace.settlement.');
   return receiveFinancialEnvelope(tenant, actor, envelope, (payload) => recordMarketplaceSettlement(tenant, actor, payload as Parameters<typeof recordMarketplaceSettlement>[2]));
 }
 export function replayHeldMarketplaceOrder(tenant: string, actor: string, eventId: string) {
