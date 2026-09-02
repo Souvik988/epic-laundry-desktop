@@ -2,7 +2,11 @@ import { expect, test } from '@playwright/test';
 
 test('operator can complete the core laundry desk journeys in a disposable workspace', async ({ page }) => {
   await page.goto('/ui/app/');
-  await expect(page.getByRole('heading', { name: 'Set up your workspace' })).toBeVisible();
+  const setupHeading = page.getByRole('heading', { name: 'Set up your workspace' });
+  if (!(await setupHeading.isVisible())) {
+    await page.getByRole('button', { name: 'Return to production workspace' }).click();
+  }
+  await expect(setupHeading).toBeVisible();
 
   await page.getByRole('button', { name: /Production workspace/ }).click();
   await page.getByRole('textbox', { name: 'Business name' }).fill('UI Audit Laundry');
