@@ -13,7 +13,7 @@ try {
   const { createLaundryRegressionFixture } = await import('./testing/laundry-regression-fixture.js');
   const { laundryBusinessDate } = await import('./modules/laundry/dates.js');
   const {
-    assignLaundryOrder, bookLaundryOrder, cancelLaundryExpense, cancelLaundryOrder, createLaundryExpense, createLaundryRider, editLaundryExpense, editLaundryOrder, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard, laundryDispatch, laundryReportDetail, laundryReports, laundryStatistics, listLaundryRiderSettlements, quoteLaundryOrder, recordLaundryFulfillment, saveLaundryRiderSettlement, seedLaundryDefaults, transitionLaundryOrder,
+    assignLaundryOrder, bookLaundryOrder, cancelLaundryExpense, cancelLaundryOrder, createLaundryExpense, createLaundryRider, editLaundryExpense, editLaundryOrder, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard, laundryDispatch, laundryReportDetail, laundryReports, laundryStatistics, listLaundryRiderSettlements, quoteLaundryOrder, recordLaundryFulfillment, saveLaundryRiderSettlement, scanLaundryGarment, seedLaundryDefaults, transitionLaundryOrder,
   } = await import('./modules/laundry/domain.js');
 
   const tenant = 'TEST';
@@ -54,6 +54,12 @@ try {
   assert.equal(store.rowsOf(tenant, 'payment_entry').length, 1, 'booking persists payment evidence');
 
   transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'In Process');
+  assert.throws(() => transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'Ready'), /assembly incomplete/, 'final Ready transition blocks incomplete tracked-piece assembly');
+  for (const unit of result.garmentUnits) {
+    for (const nextState of ['Sorted', 'Processing', 'QC', 'Assembly', 'Racked'] as const) {
+      scanLaundryGarment(tenant, 'test@epic.local', { tagCode: unit.tagCode, nextState, location: nextState === 'Racked' ? `RACK-TEST-${unit.sequence}` : `${nextState} station`, note: 'Assembly safety fixture' });
+    }
+  }
   transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'Ready');
   assert.throws(() => transitionLaundryOrder(tenant, 'test@epic.local', result.order.id, 'Out for Delivery'), /assign a delivery rider/, 'delivery cannot be dispatched without a rider');
   const rider = createLaundryRider(tenant, 'test@epic.local', { name: 'Mohan Rider', phone: '9000000002' });

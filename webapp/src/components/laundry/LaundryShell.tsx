@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AlertTriangle, BarChart3, Bell, Bike, BookOpenCheck, ChevronDown, ClipboardList, ContactRound, LayoutDashboard, LogOut, MapPinned, Plus, Printer, ReceiptText, Settings2, Shirt, Sparkles, Upload, UsersRound, WalletCards, CircleDollarSign, ScanLine, Banknote, ShieldCheck, Route as RouteIcon, Wrench, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -33,6 +33,16 @@ const navigation: Array<{ to: string; label: string; icon: typeof LayoutDashboar
   { to: '/laundry/settings', label: 'Store settings', icon: Settings2, permission: 'settings.manage' },
 ]
 
+const navigationGroups: Array<{ id: string; label: string; items: typeof navigation }> = [
+  { id: 'home', label: 'Home', items: navigation.filter((item) => ['/laundry/dashboard', '/laundry/statistics'].includes(item.to)) },
+  { id: 'counter', label: 'Counter', items: navigation.filter((item) => ['/laundry/new-order', '/laundry/orders', '/laundry/customers', '/laundry/print-centre'].includes(item.to)) },
+  { id: 'production', label: 'Production', items: navigation.filter((item) => ['/laundry/garment-tracking', '/laundry/production-queue', '/laundry/quality-claims', '/laundry/corrections'].includes(item.to)) },
+  { id: 'delivery', label: 'Pickup & delivery', items: navigation.filter((item) => ['/laundry/routes', '/laundry/dispatch', '/laundry/settlements'].includes(item.to)) },
+  { id: 'finance', label: 'Finance', items: navigation.filter((item) => ['/laundry/cash-closing', '/laundry/expenses'].includes(item.to)) },
+  { id: 'programs', label: 'Customer programs', items: navigation.filter((item) => item.to === '/laundry/packages') },
+  { id: 'management', label: 'Management', items: navigation.filter((item) => ['/laundry/reports', '/laundry/catalogue', '/laundry/import-prices', '/laundry/import-catalogue', '/laundry/import-customers', '/laundry/settings'].includes(item.to)) },
+]
+
 export type UiPermission = 'orders.read' | 'orders.create' | 'expenses.create' | 'settings.manage' | 'catalogue.read' | 'customers.read' | 'packages.read' | 'garments.read' | 'cash.read' | 'production.read' | 'quality.read' | 'routes.read'
 export function canUseUi(roles: string[] | undefined, permission: UiPermission) {
   if (roles?.includes('owner')) return true
@@ -45,7 +55,10 @@ export function canUseUi(roles: string[] | undefined, permission: UiPermission) 
 }
 
 export function LaundryShell() {
+  const navigate = useNavigate()
+  const location = useLocation()
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const session = useQuery({ queryKey: ['auth-session'], queryFn: () => apiGet<Session>('/auth/session') })
   const workspace = useQuery({ queryKey: ['workspace-mode'], queryFn: () => window.epic?.workspaceStatus?.() || Promise.resolve({ mode: 'production' as const }) })
   const notifications = useQuery({ queryKey: ['notifications'], queryFn: () => apiGet<NotificationItem[]>('/notifications') })
@@ -54,6 +67,41 @@ export function LaundryShell() {
   const resetDemo = useMutation({ mutationFn: () => window.epic?.resetDemoWorkspace?.() || Promise.reject(new Error('Demo reset is only available in the desktop application.')) })
   const permittedNavigation = navigation.filter((item) => canUseUi(session.data?.user?.roles, item.permission))
   const canBook = canUseUi(session.data?.user?.roles, 'orders.create')
+  useEffect(() => {
+    let buffer = ''
+    let timeout: number | undefined
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Enter') {
+        const value = buffer.trim()
+        buffer = ''
+        window.clearTimeout(timeout)
+        if (!value || !/^(ELT|GU|ELB|LND|INV)-/i.test(value)) return
+        event.preventDefault()
+        event.stopPropagation()
+        const routed = window.dispatchEvent(new CustomEvent('epic-global-scan', { cancelable: true, detail: { code: value } }))
+        if (routed) {
+          void apiGet<Array<{ path: string; kind?: string }>>(`/laundry/search?q=${encodeURIComponent(value)}`)
+            .then((matches) => {
+              const exact = matches.find((match) => match.path)
+              if (exact) {
+                const scanTarget = exact.kind === 'garment' || exact.kind === 'container'
+                navigate(`${exact.path}${scanTarget ? (exact.path.includes('?') ? '&' : '?') + 'scan=1' : ''}`)
+              }
+              else navigate(`/laundry/garment-tracking?tag=${encodeURIComponent(value)}&scan=1`)
+            })
+            .catch(() => navigate(`/laundry/garment-tracking?tag=${encodeURIComponent(value)}&scan=1`))
+        }
+        return
+      }
+      if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        buffer = `${buffer}${event.key}`.slice(-160)
+        window.clearTimeout(timeout)
+        timeout = window.setTimeout(() => { buffer = '' }, 180)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => { window.removeEventListener('keydown', onKeyDown, true); window.clearTimeout(timeout) }
+  }, [navigate])
   return (
     <div className="min-h-screen bg-[#f3f1ec] text-[#18242b] selection:bg-[#a9d8d4] selection:text-[#10242a]">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-[#213d45]/15 bg-[#123039] px-4 py-5 text-[#eaf0e9] lg:flex">
@@ -64,20 +112,34 @@ export function LaundryShell() {
             <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[.18em] text-[#a8c4bc]">Counter desk</span>
           </span>
         </NavLink>
-        <nav className="space-y-1">
-          {permittedNavigation.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => cn(
-                'group flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-all',
-                isActive ? 'bg-[#e8bf68] text-[#17363e] shadow-[0_7px_16px_rgba(0,0,0,.16)]' : 'text-[#bfd0c9] hover:bg-[#1b454e] hover:text-white',
-              )}
-            >
-              <item.icon className="h-[18px] w-[18px]" />
-              {item.label}
-            </NavLink>
-          ))}
+        <nav className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1" aria-label="Laundry workspace navigation">
+          {navigationGroups.map((group) => {
+            const items = group.items.filter((item) => permittedNavigation.some((permitted) => permitted.to === item.to))
+            if (!items.length) return null
+            const active = items.some((item) => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`))
+            const expanded = openGroups[group.id] ?? (active || group.id === 'home')
+            return <section key={group.id}>
+              <button type="button" aria-expanded={expanded} onClick={() => setOpenGroups((current) => ({ ...current, [group.id]: !expanded }))} className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[10px] font-extrabold uppercase tracking-[.16em] text-[#8eafa5] hover:bg-[#1b454e] hover:text-white">
+                <span>{group.label}</span>
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
+              </button>
+              {expanded ? <div className="space-y-1">
+                {items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) => cn(
+                      'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all',
+                      isActive ? 'bg-[#e8bf68] text-[#17363e] shadow-[0_7px_16px_rgba(0,0,0,.16)]' : 'text-[#bfd0c9] hover:bg-[#1b454e] hover:text-white',
+                    )}
+                  >
+                    <item.icon className="h-[18px] w-[18px]" />
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div> : null}
+            </section>
+          })}
         </nav>
         <div className="mt-auto rounded-2xl border border-[#87aaa0]/20 bg-[#0e272e] p-4">
           <Sparkles className="mb-2 h-4 w-4 text-[#e6bc65]" />

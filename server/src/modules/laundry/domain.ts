@@ -7,7 +7,7 @@ import { appendCustomerLedger, searchCustomerRecords } from './customers.js';
 import { notify } from '../crm/engagement.js';
 import { laundryBusinessDate } from './dates.js';
 import { randomUUID } from 'node:crypto';
-import type { GarmentUnitRecord } from '../../kernel/store.js';
+import type { GarmentUnitRecord, LaundryContainerEventRecord, LaundryContainerRecord, LaundryContainerState, TagHistoryRecord, TagPrintJobRecord, TagPrintJobStatus } from '../../kernel/store.js';
 import { parseMoney, moneyNumber, optionalMoney } from '../../kernel/money.js';
 import { completeOpenTask, createProductionTask, productionStateCreatesTask } from './production.js';
 import { cashShiftForTransaction } from './cash.js';
@@ -20,6 +20,7 @@ type BookInput = {
   items: Array<{ garment: string; service: string; qty: number }>;
   orderDate?: string;
   expectedDeliveryDate: string;
+  containerCount?: number;
   fulfillmentMode: 'Pickup Order' | 'Home Delivery' | 'Express Delivery';
   paymentMode?: 'Pay Later' | 'Cash' | 'UPI' | 'Card' | 'Bank';
   cashRegister?: string;
@@ -109,6 +110,7 @@ type FulfillmentInput = { itemIndex?: number; stage?: 'Picked Up' | 'In Process'
 export const GARMENT_UNIT_STATES = ['Intake', 'Sorted', 'Processing', 'QC', 'Rewash', 'Assembly', 'Racked', 'Dispatched', 'Delivered', 'Missing', 'Damaged', 'Cancelled'] as const;
 export type GarmentUnitState = typeof GARMENT_UNIT_STATES[number];
 type GarmentScanInput = { tagCode?: string; nextState?: GarmentUnitState; location?: string; note?: string; condition?: string };
+type ContainerScanInput = { tagCode?: string; nextState?: LaundryContainerState; location?: string; note?: string; condition?: string };
 type EditOrderInput = Pick<BookInput, 'items' | 'expectedDeliveryDate' | 'fulfillmentMode' | 'charges' | 'discounts' | 'taxRate' | 'chargeRuleIds' | 'discountRuleIds' | 'taxRuleId' | 'serviceZone'> & { notes?: string; deliveryAddress?: string; expectedVersion?: number };
 type CategoryInput = { name?: string; color?: string; image?: string; sortOrder?: number; active?: boolean };
 type ServiceInput = { name?: string; description?: string; units?: string[]; active?: boolean };
@@ -118,7 +120,28 @@ type AdjustmentRuleInput = { name?: string; type?: 'Flat' | 'Percentage'; amount
 type TaxRuleInput = { name?: string; rate?: number; active?: boolean };
 
 const SERVICE_UNITS = ['Piece', 'Kilogram', 'Pair', 'Square Foot'] as const;
+const CONTAINER_TRANSITIONS: Record<LaundryContainerState, LaundryContainerState[]> = {
+  Intake: ['Processing', 'Cancelled'], Processing: ['Ready', 'Cancelled'], Ready: ['Dispatched', 'Delivered', 'Cancelled'], Dispatched: ['Delivered'],
+  Delivered: [], Missing: [], Damaged: [], Cancelled: [],
+};
 const MAX_MASTER_IMAGE_PATH = 512;
+
+export class TagRetiredError extends Error {
+  readonly code = 'TAG_RETIRED';
+  constructor(readonly details: { tagCode: string; garmentUnitId: string; currentTagCode: string; replacementDate?: string; replacementOperator?: string }) {
+    super('This tag has been replaced. Scan the current active tag to continue.');
+    this.name = 'TagRetiredError';
+  }
+}
+
+export class LaundryDomainError extends Error {
+  constructor(readonly code: string, message: string, readonly details?: Record<string, unknown>) {
+    super(message);
+    this.name = 'LaundryDomainError';
+  }
+}
+
+const laundryError = (code: string, message: string, details?: Record<string, unknown>) => new LaundryDomainError(code, message, details);
 
 const TRANSITIONS: Record<LaundryState, LaundryState[]> = {
   Booked: ['Picked Up', 'In Process', 'Cancelled'],
@@ -257,24 +280,53 @@ function invoiceItems(quote: Quote) {
 
 function createPhysicalUnits(tenant: string, actor: string, orderId: string, customerId: string, items: QuotedItem[]) {
   const createdUnits: GarmentUnitRecord[] = [];
+  const physicalItems = items.filter((item) => ['Piece', 'Pair'].includes(item.unit));
+  const orderTotal = physicalItems.reduce((sum, item) => sum + Math.trunc(Number(item.qty)), 0);
+  let orderSequence = 0;
   items.forEach((item, itemIndex) => {
     if (!['Piece', 'Pair'].includes(item.unit)) return;
-    for (let sequence = 1; sequence <= Number(item.qty); sequence += 1) {
+    for (let lineSequence = 1; lineSequence <= Number(item.qty); lineSequence += 1) {
       const now = new Date().toISOString();
       const id = `gu_${randomUUID()}`;
+      orderSequence += 1;
       const code = `GU-${today().replace(/-/g, '')}-${String(store.nextSeq('garment-unit')).padStart(6, '0')}`;
+      const tagCode = `ELT-${today().replace(/-/g, '')}-${String(store.nextSeq('garment-tag')).padStart(6, '0')}`;
       const unit: GarmentUnitRecord = {
-        id, tenant, storeId: store.currentStore(tenant), code, orderId, itemIndex, sequence,
+        id, tenant, storeId: store.currentStore(tenant), code, orderId, itemIndex, sequence: lineSequence,
         customerId, garmentId: item.garment, serviceId: item.service, unit: item.unit,
-        state: 'Intake', location: 'Intake', activeTagCode: code, condition: 'Normal', createdBy: actor, createdAt: now, updatedAt: now,
+        state: 'Intake', location: 'Intake', activeTagCode: tagCode, condition: 'Normal', createdBy: actor, createdAt: now, updatedAt: now,
       };
       store.createGarmentUnit(unit);
-      store.appendGarmentUnitEvent({ id: `gue_${randomUUID()}`, tenant, storeId: unit.storeId, unitId: id, event: 'created', toState: 'Intake', location: 'Intake', actor, note: 'Created at order intake', metadata: { orderId, itemIndex, sequence }, createdAt: now });
+      const tag: TagHistoryRecord = { id: `th_${randomUUID()}`, tenant, storeId: unit.storeId, garmentUnitId: id, tagCode, status: 'Active', issuedAt: now, issuedBy: actor, version: 1, createdAt: now };
+      store.createTagHistory(tag);
+      store.appendGarmentUnitEvent({ id: `gue_${randomUUID()}`, tenant, storeId: unit.storeId, unitId: id, event: 'created', toState: 'Intake', location: 'Intake', actor, note: 'Created at order intake', metadata: { orderId, itemIndex, lineSequence, orderSequence, orderTotal, tagCode }, createdAt: now });
       createProductionTask(tenant, actor, id, orderId, 'Intake');
       createdUnits.push(unit);
     }
   });
   return createdUnits;
+}
+
+function createLaundryContainers(tenant: string, actor: string, orderId: string, customerId: string, items: QuotedItem[], requestedCount: unknown) {
+  if (requestedCount === undefined || requestedCount === null || requestedCount === '') return [];
+  const count = Number(requestedCount);
+  if (!Number.isSafeInteger(count) || count < 0 || count > 500) throw new Error('bag/container count must be an integer between 0 and 500');
+  const hasContainerEligibleItem = items.some((item) => !['Piece', 'Pair'].includes(item.unit));
+  if (count > 0 && !hasContainerEligibleItem) throw new Error('bag/container tags are only valid for weight or area-based order lines');
+  const weightKg = items.filter((item) => item.unit === 'Kilogram').reduce((sum, item) => sum + Number(item.qty || 0), 0);
+  const totalWeight = weightKg > 0 ? round(weightKg) : undefined;
+  const created: LaundryContainerRecord[] = [];
+  for (let sequence = 1; sequence <= count; sequence += 1) {
+    const now = new Date().toISOString();
+    const id = `lc_${randomUUID()}`;
+    const tagCode = `ELB-${today().replace(/-/g, '')}-${String(store.nextSeq('laundry-container-tag')).padStart(6, '0')}`;
+    const container: LaundryContainerRecord = { id, tenant, storeId: store.currentStore(tenant), orderId, customerId, sequence, total: count, weightKg: totalWeight, tagCode, state: 'Intake', location: 'Intake', condition: 'Normal', createdBy: actor, createdAt: now, updatedAt: now };
+    store.createLaundryContainer(container);
+    store.appendLaundryContainerEvent({ id: `lce_${randomUUID()}`, tenant, storeId: container.storeId, containerId: id, event: 'created', toState: 'Intake', location: 'Intake', actor, note: 'Created from explicit bag/container count at order intake', createdAt: now });
+    audit(tenant, actor, 'laundry:container-created', { entity: 'laundry_container', row_id: id, after: { orderId, tagCode, sequence, total: count, weightKg: totalWeight } });
+    created.push(container);
+  }
+  return created;
 }
 
 type GarmentBackfillCandidate = { orderId: string; orderNumber: string; customerId: string; itemIndex: number; sequence: number; garmentId: string; serviceId: string; unit: 'Piece' | 'Pair'; state: GarmentUnitState };
@@ -357,6 +409,7 @@ export function applyLaundryGarmentBackfill(tenant: string, actor: string) {
           const state = historicalUnitState(order.data.state);
           const record: GarmentUnitRecord = { id, tenant, storeId: store.currentStore(tenant), code, orderId: order.id, itemIndex, sequence, customerId, garmentId, serviceId: String(item.service || ''), unit: unit as 'Piece' | 'Pair', state, location: 'Historical', activeTagCode: code, condition: 'Normal', createdBy: actor, createdAt: order.created_at, updatedAt: now };
           store.createGarmentUnit(record);
+          store.createTagHistory({ id: `th_${randomUUID()}`, tenant, storeId: record.storeId, garmentUnitId: id, tagCode: code, status: 'Active', issuedAt: order.created_at, issuedBy: actor, version: 1, createdAt: order.created_at });
           store.appendGarmentUnitEvent({ id: `gue_${randomUUID()}`, tenant, storeId: record.storeId, unitId: id, event: 'legacy_backfill', toState: state, location: 'Historical', actor, note: 'Created from a reviewed legacy order without fabricating an unknown physical location', metadata: { orderId: order.id, orderNumber: order.data.name, itemIndex, sequence, sourceOrderState: order.data.state || 'Booked' }, createdAt: now });
           applied.push({ id, orderId: order.id, tagCode: code });
           existing.add(`${itemIndex}:${sequence}`);
@@ -439,31 +492,43 @@ export function bookLaundryOrder(tenant: string, actor: string, input: BookInput
   order.updated_at = new Date().toISOString();
   store.updateRow(order);
   const createdUnits = createPhysicalUnits(tenant, actor, order.id, customer.id, quote.items);
+  const createdContainers = createLaundryContainers(tenant, actor, order.id, customer.id, quote.items, input.containerCount);
   appendCustomerLedger(tenant, actor, { customer: customer.id, entryType: 'Invoice Debit', debit: quote.grandTotal, referenceType: 'laundry_order', referenceId: order.id, reason: `Order ${order.data.name || order.id}` });
   if (paymentEntry) appendCustomerLedger(tenant, actor, { customer: customer.id, entryType: 'Payment Credit', credit: quote.grandTotal, referenceType: 'payment_entry', referenceId: paymentEntry.id, reason: `Payment against ${submittedInvoice.data.name || submittedInvoice.id}` });
   audit(tenant, actor, 'laundry:booked', { entity: 'laundry_order', row_id: order.id, after: { state: 'Booked', invoice: submittedInvoice.id } });
   notify(tenant, { title: `New laundry order ${order.data.name || order.id}`, body: `${customer.data.name || 'Customer'} · ₹${quote.grandTotal.toFixed(2)}`, kind: 'Laundry order', severity: 'info', ref_entity: 'laundry_order', ref_id: order.id });
   publish(tenant, 'laundry.order.booked.v1', { id: order.id, invoice: submittedInvoice.id, customer: customer.id, grand_total: quote.grandTotal });
-  return { order: presentOrder(tenant, order), receipt: receiptFor(tenant, order), tags: tagsFor(tenant, order), garmentUnits: createdUnits.map((unit) => presentGarmentUnit(tenant, unit)) };
+  return { order: presentOrder(tenant, order), receipt: receiptFor(tenant, order), tags: tagsFor(tenant, order), containerTags: containerTagsFor(tenant, order), garmentUnits: createdUnits.map((unit) => presentGarmentUnit(tenant, unit)), containers: createdContainers.map((container) => presentLaundryContainer(tenant, container)) };
   });
 }
 
 function assertExpectedOrderVersion(order: EntityRow, expectedVersion?: unknown) {
   const currentVersion = Number.isInteger(Number(order.data.version)) ? Number(order.data.version) : 0;
-  if (expectedVersion !== undefined && expectedVersion !== null && Number(expectedVersion) !== currentVersion) throw new Error(`stale order version: expected ${Number(expectedVersion)}, current ${currentVersion}`);
+  if (expectedVersion !== undefined && expectedVersion !== null && Number(expectedVersion) !== currentVersion) throw laundryError('STALE_ORDER_VERSION', `stale order version: expected ${Number(expectedVersion)}, current ${currentVersion}`, { expectedVersion: Number(expectedVersion), currentVersion });
   return currentVersion;
+}
+
+function assertAssemblyComplete(tenant: string, orderId: string) {
+  const units = store.listGarmentUnits(tenant, { orderId }).filter((unit) => unit.state !== 'Cancelled');
+  const containers = store.listLaundryContainers(tenant, orderId).filter((container) => container.state !== 'Cancelled');
+  const blockers = [
+    ...units.filter((unit) => !['Racked', 'Dispatched', 'Delivered'].includes(unit.state)).map((unit) => `${unit.activeTagCode} (${unit.state})`),
+    ...containers.filter((container) => !['Ready', 'Dispatched', 'Delivered'].includes(container.state)).map((container) => `${container.tagCode} (${container.state})`),
+  ];
+  if (blockers.length) throw laundryError('ASSEMBLY_INCOMPLETE', `assembly incomplete: ${blockers.slice(0, 12).join(', ')}${blockers.length > 12 ? ` and ${blockers.length - 12} more` : ''}; complete every tracked identity before marking the order Ready`, { blockers, orderId });
 }
 
 export function transitionLaundryOrder(tenant: string, actor: string, id: string, state: LaundryState, note?: string, expectedVersion?: number) {
   return store.transaction(() => {
     if (!LAUNDRY_STATES.includes(state)) throw new Error('unknown laundry order state');
     const order = store.getRow(tenant, id);
-    if (!order || order.entity !== 'laundry_order') throw new Error('laundry order not found');
+    if (!order || order.entity !== 'laundry_order') throw laundryError('ORDER_NOT_FOUND', 'laundry order not found', { orderId: id });
     const version = assertExpectedOrderVersion(order, expectedVersion);
     const from = order.data.state as LaundryState;
     if (!TRANSITIONS[from]?.includes(state)) throw new Error(`cannot move an order from ${from} to ${state}`);
     if (state === 'Picked Up' && order.data.fulfillment_mode === 'Pickup Order' && !order.data.pickup_rider) throw new Error('assign a pickup rider before marking this order picked up');
     if (state === 'Out for Delivery' && order.data.fulfillment_mode !== 'Pickup Order' && !order.data.delivery_rider) throw new Error('assign a delivery rider before dispatching this order');
+    if (state === 'Ready') assertAssemblyComplete(tenant, order.id);
     order.data.state = state;
     order.data.version = version + 1;
     order.data.last_transition_note = note?.trim() || undefined;
@@ -525,6 +590,14 @@ export function cancelLaundryOrder(tenant: string, actor: string, id: string, re
       store.updateGarmentUnit(unit);
       store.appendGarmentUnitEvent({ id: `gue_${randomUUID()}`, tenant, storeId: unit.storeId, unitId: unit.id, event: 'order_cancelled', fromState, toState: 'Cancelled', location: unit.location, actor, note, metadata: { orderId: order.id }, createdAt: unit.updatedAt });
       completeOpenTask(tenant, actor, unit.id, 'Cancelled', note);
+    }
+    for (const container of store.listLaundryContainers(tenant, order.id)) {
+      if (container.state === 'Delivered' || container.state === 'Cancelled') continue;
+      const fromState = container.state;
+      container.state = 'Cancelled';
+      container.updatedAt = order.updated_at;
+      store.updateLaundryContainer(container);
+      store.appendLaundryContainerEvent({ id: `lce_${randomUUID()}`, tenant, storeId: container.storeId, containerId: container.id, event: 'order_cancelled', fromState, toState: 'Cancelled', location: container.location, actor, note, createdAt: container.updatedAt });
     }
     audit(tenant, actor, 'laundry:order-cancelled', { entity: order.entity, row_id: order.id, before: { state: current, version }, after: { state: 'Cancelled', version: version + 1, reason: note, invoice: invoice?.id } });
     notify(tenant, { title: `${order.data.name || id} cancelled`, body: note, kind: 'Cancellation', severity: 'warning', ref_entity: 'laundry_order', ref_id: id });
@@ -641,8 +714,56 @@ function presentGarmentUnit(tenant: string, unit: GarmentUnitRecord) {
     orderNumber: order?.data.name || unit.orderId, customer: { id: unit.customerId, name: customer?.data.name || 'Unknown customer', phone: customer?.data.phone || '' },
     garment: { id: unit.garmentId, name: garment?.data.name || unit.garmentId }, service: { id: unit.serviceId, name: service?.data.name || unit.serviceId },
     unit: unit.unit, sequence: unit.sequence, itemIndex: unit.itemIndex, state: unit.state, location: unit.location,
+    tagPayload: `ELT:v1:${unit.activeTagCode}`, tagStatus: 'Active',
     condition: unit.condition, expectedDeliveryDate, isOverdue, createdAt: unit.createdAt, updatedAt: unit.updatedAt,
   };
+}
+
+function presentLaundryContainer(tenant: string, container: LaundryContainerRecord) {
+  const order = store.getRow(tenant, container.orderId);
+  const customer = store.getRow(tenant, container.customerId);
+  return {
+    id: container.id, tagCode: container.tagCode, tagPayload: `ELB:v1:${container.tagCode}`, orderId: container.orderId,
+    orderNumber: order?.data.name || container.orderId, customer: { id: container.customerId, name: customer?.data.name || 'Unknown customer', phone: customer?.data.phone || '' },
+    sequence: container.sequence, total: container.total, weightKg: container.weightKg, state: container.state, location: container.location,
+    condition: container.condition, expectedDeliveryDate: order?.data.expected_delivery_date, createdAt: container.createdAt, updatedAt: container.updatedAt, deliveredAt: container.deliveredAt,
+  };
+}
+
+export function getLaundryContainerDetail(tenant: string, idOrTag: string) {
+  const container = store.getLaundryContainer(tenant, idOrTag);
+  if (!container) throw new Error('laundry container or tag was not found');
+  return { ...presentLaundryContainer(tenant, container), events: store.listLaundryContainerEvents(tenant, container.id) };
+}
+
+export function scanLaundryContainer(tenant: string, actor: string, input: ContainerScanInput) {
+  return store.transaction(() => {
+    const tagCode = String(input.tagCode || '').trim();
+    if (!tagCode || tagCode.length > 120) throw laundryError('TAG_NOT_FOUND', 'scan a container tag or code');
+    const container = store.getLaundryContainer(tenant, tagCode);
+    if (!container) throw laundryError('TAG_NOT_FOUND', 'laundry container tag was not found in this store', { tagCode, kind: 'container' });
+    const nextState = input.nextState;
+    const alreadyAtStage = Boolean(nextState && nextState === container.state);
+    if (nextState !== undefined && !Object.prototype.hasOwnProperty.call(CONTAINER_TRANSITIONS, nextState)) throw laundryError('INVALID_CONTAINER_TRANSITION', 'unknown laundry container state', { nextState });
+    const location = String(input.location || container.location || '').trim().slice(0, 80) || container.location;
+    const condition = String(input.condition || container.condition || 'Normal').trim().slice(0, 40) || 'Normal';
+    const now = new Date().toISOString();
+    if (nextState && nextState !== container.state) {
+      if (!CONTAINER_TRANSITIONS[container.state].includes(nextState)) throw laundryError('INVALID_CONTAINER_TRANSITION', `cannot move a laundry container from ${container.state} to ${nextState}`, { fromState: container.state, nextState, tagCode });
+      const fromState = container.state;
+      const fromLocation = container.location;
+      container.state = nextState; container.location = location; container.condition = condition; container.updatedAt = now;
+      if (nextState === 'Delivered') container.deliveredAt = now;
+      store.updateLaundryContainer(container);
+      store.appendLaundryContainerEvent({ id: `lce_${randomUUID()}`, tenant, storeId: container.storeId, containerId: container.id, event: 'state_transition', fromState, toState: nextState, location, actor, note: input.note, createdAt: now });
+      audit(tenant, actor, 'laundry:container-scanned', { entity: 'laundry_container', row_id: container.id, before: { state: fromState, location: fromLocation }, after: { state: nextState, location, tagCode } });
+    } else {
+      container.location = location; container.condition = condition; container.updatedAt = now;
+      store.updateLaundryContainer(container);
+      store.appendLaundryContainerEvent({ id: `lce_${randomUUID()}`, tenant, storeId: container.storeId, containerId: container.id, event: 'scan', location, actor, note: input.note, createdAt: now });
+    }
+    return { ...getLaundryContainerDetail(tenant, container.id), scanResult: alreadyAtStage ? 'already_at_stage' : 'accepted' };
+  });
 }
 
 export function listLaundryGarmentUnits(tenant: string, filters: { orderId?: string; state?: string; search?: string } = {}) {
@@ -652,22 +773,30 @@ export function listLaundryGarmentUnits(tenant: string, filters: { orderId?: str
 export function getLaundryGarmentUnit(tenant: string, idOrTag: string) {
   const unit = store.getGarmentUnit(tenant, idOrTag);
   if (!unit) throw new Error('garment unit or tag was not found');
-  return { ...presentGarmentUnit(tenant, unit), events: store.listGarmentUnitEvents(tenant, unit.id), reprints: store.listTagReprints(tenant, unit.id) };
+  return { ...presentGarmentUnit(tenant, unit), events: store.listGarmentUnitEvents(tenant, unit.id), reprints: store.listTagReprints(tenant, unit.id), tagHistory: store.listTagHistory(tenant, unit.id) };
 }
 
 export function scanLaundryGarment(tenant: string, actor: string, input: GarmentScanInput) {
   return store.transaction(() => {
     const tagCode = String(input.tagCode || '').trim();
-    if (!tagCode || tagCode.length > 120) throw new Error('scan a garment tag or unit code');
-    const unit = store.getGarmentUnitByTag(tenant, tagCode);
-    if (!unit) throw new Error('garment tag was not found in this store');
+    if (!tagCode || tagCode.length > 120) throw laundryError('TAG_NOT_FOUND', 'scan a garment tag or unit code');
+    const unit = store.getGarmentUnit(tenant, tagCode);
+    if (!unit) {
+      const historical = store.getTagHistoryByCode(tenant, tagCode);
+      if (historical) {
+        const replacement = historical.replacementTagId ? store.listTagHistory(tenant, historical.garmentUnitId).find((tag) => tag.id === historical.replacementTagId) : undefined;
+        throw new TagRetiredError({ tagCode, garmentUnitId: historical.garmentUnitId, currentTagCode: replacement?.tagCode || 'unavailable', replacementDate: historical.retiredAt, replacementOperator: historical.retiredBy });
+      }
+      throw laundryError('TAG_NOT_FOUND', 'garment tag was not found in this store', { tagCode, kind: 'garment' });
+    }
     const nextState = input.nextState;
-    if (nextState !== undefined && !GARMENT_UNIT_STATES.includes(nextState)) throw new Error('unknown garment unit state');
+    const alreadyAtStage = Boolean(nextState && nextState === unit.state);
+    if (nextState !== undefined && !GARMENT_UNIT_STATES.includes(nextState)) throw laundryError('INVALID_GARMENT_TRANSITION', 'unknown garment unit state', { nextState });
     const location = String(input.location || unit.location || '').trim().slice(0, 80) || unit.location;
     const note = String(input.note || '').trim().slice(0, 500);
     const condition = String(input.condition || unit.condition || 'Normal').trim().slice(0, 40) || 'Normal';
     if (nextState && ['Rewash', 'Missing', 'Damaged'].includes(nextState) && note.length < 3) throw new Error(`${nextState} requires an operator reason`);
-    if (nextState && nextState !== unit.state && !GARMENT_TRANSITIONS[unit.state as GarmentUnitState]?.includes(nextState)) throw new Error(`cannot move a garment from ${unit.state} to ${nextState}`);
+    if (nextState && nextState !== unit.state && !GARMENT_TRANSITIONS[unit.state as GarmentUnitState]?.includes(nextState)) throw laundryError('INVALID_GARMENT_TRANSITION', `cannot move a garment from ${unit.state} to ${nextState}`, { fromState: unit.state, nextState, tagCode });
     if (nextState && nextState !== unit.state) {
       const fromState = unit.state;
       const fromLocation = unit.location;
@@ -691,7 +820,7 @@ export function scanLaundryGarment(tenant: string, actor: string, input: Garment
       store.updateGarmentUnit(unit);
       store.appendGarmentUnitEvent({ id: `gue_${randomUUID()}`, tenant, storeId: unit.storeId, unitId: unit.id, event: 'scan', location, actor, note, metadata: { tagCode }, createdAt: now });
     }
-    return getLaundryGarmentUnit(tenant, unit.id);
+    return { ...getLaundryGarmentUnit(tenant, unit.id), scanResult: alreadyAtStage ? 'already_at_stage' : 'accepted' };
   });
 }
 
@@ -703,18 +832,78 @@ export function reprintLaundryTag(tenant: string, actor: string, unitId: string,
     if (reason.length < 3) throw new Error('a reprint reason is required');
     const station = String(input.station || 'Counter').trim().slice(0, 80) || 'Counter';
     const previousTagCode = unit.activeTagCode;
-    const newTagCode = `TAG-${today().replace(/-/g, '')}-${String(store.nextSeq('garment-tag')).padStart(6, '0')}`;
+    const newTagCode = previousTagCode;
     const now = new Date().toISOString();
-    unit.activeTagCode = newTagCode;
-    unit.updatedAt = now;
-    store.updateGarmentUnit(unit);
     const reprint = { id: `tr_${randomUUID()}`, tenant, storeId: unit.storeId, unitId: unit.id, previousTagCode, newTagCode, station, reason, actor, createdAt: now };
     store.createTagReprint(reprint);
-    store.appendGarmentUnitEvent({ id: `gue_${randomUUID()}`, tenant, storeId: unit.storeId, unitId: unit.id, event: 'tag_reprinted', location: unit.location, actor, note: reason, metadata: { station, previousTagCode, newTagCode }, createdAt: now });
-    audit(tenant, actor, 'laundry:tag-reprinted', { entity: 'garment_unit', row_id: unit.id, after: { previousTagCode, newTagCode, station, reason } });
+    store.appendGarmentUnitEvent({ id: `gue_${randomUUID()}`, tenant, storeId: unit.storeId, unitId: unit.id, event: 'tag_reprinted_same', location: unit.location, actor, note: reason, metadata: { station, tagCode: previousTagCode }, createdAt: now });
+    audit(tenant, actor, 'laundry:tag-reprinted', { entity: 'garment_unit', row_id: unit.id, after: { tagCode: previousTagCode, station, reason, identityPreserved: true } });
     return { ...getLaundryGarmentUnit(tenant, unit.id), reprint };
   });
 }
+
+export function replaceLaundryTag(tenant: string, actor: string, unitId: string, input: { station?: string; reason?: string; status?: 'Lost' | 'Damaged' | 'Replaced' }) {
+  return store.transaction(() => {
+    const unit = store.getGarmentUnit(tenant, unitId);
+    if (!unit) throw new Error('garment unit was not found');
+    const reason = String(input.reason || '').trim().slice(0, 240);
+    if (reason.length < 3) throw new Error('a replacement reason is required');
+    const station = String(input.station || 'Counter').trim().slice(0, 80) || 'Counter';
+    const oldTag = store.getTagHistoryByCode(tenant, unit.activeTagCode);
+    const previousTagCode = unit.activeTagCode;
+    const newTagCode = `ELT-${today().replace(/-/g, '')}-${String(store.nextSeq('garment-tag')).padStart(6, '0')}`;
+    const now = new Date().toISOString();
+    const replacementTag: TagHistoryRecord = { id: `th_${randomUUID()}`, tenant, storeId: unit.storeId, garmentUnitId: unit.id, tagCode: newTagCode, status: 'Active', issuedAt: now, issuedBy: actor, version: 1, createdAt: now };
+    store.createTagHistory(replacementTag);
+    if (oldTag) store.updateTagHistory({ ...oldTag, status: input.status || 'Replaced', retiredAt: now, retiredBy: actor, retirementReason: reason, replacementTagId: replacementTag.id, version: oldTag.version + 1 });
+    unit.activeTagCode = newTagCode;
+    unit.updatedAt = now;
+    store.updateGarmentUnit(unit);
+    const replacement = { id: `tr_${randomUUID()}`, tenant, storeId: unit.storeId, unitId: unit.id, previousTagCode, newTagCode, station, reason, actor, createdAt: now };
+    store.createTagReprint(replacement);
+    store.appendGarmentUnitEvent({ id: `gue_${randomUUID()}`, tenant, storeId: unit.storeId, unitId: unit.id, event: 'tag_replaced', location: unit.location, actor, note: reason, metadata: { station, previousTagCode, newTagCode, replacementTagId: replacementTag.id }, createdAt: now });
+    audit(tenant, actor, 'laundry:tag-replaced', { entity: 'garment_unit', row_id: unit.id, after: { previousTagCode, newTagCode, station, reason } });
+    return { ...getLaundryGarmentUnit(tenant, unit.id), replacement };
+  });
+}
+
+export function createLaundryPrintJob(tenant: string, actor: string, input: { orderId: string; templateId?: string; templateVersion?: string; printerProfile?: string; tagIds?: string[]; containerIds?: string[]; documentType?: string; requestedCopies?: number; status?: TagPrintJobStatus; failureReason?: string; outputHash?: string; evidence?: string }) {
+  const order = store.getRow(tenant, input.orderId);
+  if (!order || order.entity !== 'laundry_order') throw laundryError('ORDER_NOT_FOUND', 'laundry order not found', { orderId: input.orderId });
+  const documentType = String(input.documentType || 'garment-tags').trim();
+  if (!['invoice', 'mini-invoice', 'garment-tags', 'bag-tags', 'correction'].includes(documentType)) throw laundryError('PRINT_JOB_INVALID', 'unsupported print document type', { documentType });
+  const requestedTagRefs = Array.isArray(input.tagIds) ? [...new Set(input.tagIds.map((value) => String(value || '').trim()).filter(Boolean))].slice(0, 500) : [];
+  const requestedContainerRefs = Array.isArray(input.containerIds) ? [...new Set(input.containerIds.map((value) => String(value || '').trim()).filter(Boolean))].slice(0, 500) : [];
+  let tagIds: string[] = [];
+  if (documentType === 'garment-tags') {
+    if (requestedContainerRefs.length) throw laundryError('PRINT_JOB_INVALID', 'garment print jobs cannot contain container tags', { documentType });
+    const tagUnits = requestedTagRefs.map((value) => store.getGarmentUnit(tenant, value));
+    if (tagUnits.some((unit) => !unit || unit.orderId !== order.id)) throw laundryError('PRINT_JOB_INVALID', 'print job contains a tag outside the selected order', { orderId: order.id });
+    tagIds = tagUnits.map((unit) => unit!.id);
+  } else if (documentType === 'bag-tags') {
+    const containerRefs = requestedContainerRefs.length ? requestedContainerRefs : requestedTagRefs;
+    const containers = containerRefs.map((value) => store.getLaundryContainer(tenant, value));
+    if (containers.some((container) => !container || container.orderId !== order.id)) throw laundryError('PRINT_JOB_INVALID', 'print job contains a container outside the selected order', { orderId: order.id });
+    tagIds = containers.map((container) => container!.id);
+  } else if (requestedTagRefs.length || requestedContainerRefs.length) {
+    throw laundryError('PRINT_JOB_INVALID', `${documentType} print jobs cannot contain physical tag IDs`, { documentType });
+  }
+  if (['garment-tags', 'bag-tags'].includes(documentType) && tagIds.length === 0) throw laundryError('PRINT_JOB_INVALID', `${documentType} print jobs require at least one physical tag`, { documentType });
+  const status = input.status || 'Queued';
+  if (!['Queued', 'Rendering', 'Printed', 'Downloaded', 'Failed', 'Cancelled'].includes(status)) throw laundryError('PRINT_JOB_INVALID', 'unsupported print job status', { status });
+  if (status === 'Failed' && !String(input.failureReason || '').trim()) throw laundryError('PRINT_JOB_FAILED', 'failed print jobs require a failure reason', { documentType });
+  // A print job may contain many distinct physical tag IDs, but this field is
+  // the number of copies of the rendered document. The current UI renders
+  // each selected tag once, so the safe default is one document copy.
+  const requestedCopies = input.requestedCopies === undefined ? 1 : Number(input.requestedCopies);
+  if (!Number.isSafeInteger(requestedCopies) || requestedCopies < 1 || requestedCopies > 500) throw laundryError('PRINT_JOB_INVALID', 'requested print copies must be an integer between 1 and 500', { requestedCopies });
+  const job: TagPrintJobRecord = { id: `tpj_${randomUUID()}`, tenant, storeId: store.currentStore(tenant), orderId: input.orderId, templateId: String(input.templateId || 'recommended-a4-6').trim().slice(0, 120), templateVersion: String(input.templateVersion || '1').trim().slice(0, 40), printerProfile: String(input.printerProfile || 'system-default').trim().slice(0, 80), tagIds, documentType, requestedCopies, requestedBy: actor, createdAt: new Date().toISOString(), status, failureReason: input.failureReason ? String(input.failureReason).trim().slice(0, 500) : undefined, outputHash: input.outputHash ? String(input.outputHash).trim().slice(0, 160) : undefined, evidence: input.evidence ? String(input.evidence).trim().slice(0, 500) : undefined };
+  store.createPrintJob(job);
+  audit(tenant, actor, 'laundry:print-job-recorded', { entity: 'tag_print_job', row_id: job.id, after: { orderId: job.orderId, documentType: job.documentType, requestedCopies: job.requestedCopies, status: job.status, tagCount: job.tagIds.length } });
+  return job;
+}
+
+export function listLaundryPrintJobs(tenant: string, orderId?: string) { return store.listPrintJobs(tenant, orderId); }
 
 export function presentOrder(tenant: string, order: EntityRow) {
   const customer = store.getRow(tenant, order.data.customer);
@@ -761,7 +950,8 @@ export function presentOrder(tenant: string, order: EntityRow) {
     pickupSlot: order.data.pickup_slot || '',
     deliverySlot: order.data.delivery_slot || '',
     items: items.map(itemProgress),
-    physicalUnits: store.listGarmentUnits(tenant, { orderId: order.id }).map((unit) => presentGarmentUnit(tenant, unit)),
+     physicalUnits: store.listGarmentUnits(tenant, { orderId: order.id }).map((unit) => presentGarmentUnit(tenant, unit)),
+     containers: store.listLaundryContainers(tenant, order.id).map((container) => presentLaundryContainer(tenant, container)),
     notes: order.data.notes || '',
     photoPaths: order.data.photo_paths || '',
     createdAt: order.created_at,
@@ -786,7 +976,8 @@ export function getLaundryOrder(tenant: string, id: string) {
   return {
     ...presentOrder(tenant, order),
     receipt: receiptFor(tenant, order),
-    tags: tagsFor(tenant, order),
+     tags: tagsFor(tenant, order),
+     containerTags: containerTagsFor(tenant, order),
     timeline: store.auditOf(tenant).filter((entry) => entry.row_id === id).sort((a, b) => b.ts.localeCompare(a.ts)),
   };
 }
@@ -1613,30 +1804,51 @@ export function receiptFor(tenant: string, order: EntityRow) {
 export function tagsFor(tenant: string, order: EntityRow) {
   const display = presentOrder(tenant, order);
   const persisted = store.listGarmentUnits(tenant, { orderId: order.id });
-  if (persisted.length) return persisted.map((unit) => {
+  if (persisted.length) return persisted.map((unit, orderIndex) => {
     const item = display.items[unit.itemIndex] as any;
     return {
-      tagNumber: unit.activeTagCode, unitId: unit.id, orderNumber: display.orderNumber, customer: display.customer.name,
-      garment: item?.garmentName || unit.garmentId, service: item?.serviceName || unit.serviceId, sequence: unit.sequence,
-      total: item ? Math.max(1, Math.ceil(Number(item.qty) || 1)) : 1, state: unit.state, location: unit.location,
-      orderDate: display.orderDate, expectedDeliveryDate: display.expectedDeliveryDate,
+      tagNumber: unit.activeTagCode, unitId: unit.id, orderNumber: display.orderNumber, invoiceNumber: display.invoiceNumber, customer: display.customer.name, customerPhone: display.customer.phone,
+      garment: item?.garmentName || unit.garmentId, service: item?.serviceName || unit.serviceId, sequence: orderIndex + 1,
+      lineSequence: unit.sequence, total: persisted.length, state: unit.state, location: unit.location,
+      tagPayload: `ELT:v1:${unit.activeTagCode}`,
+      orderDate: display.orderDate, expectedDeliveryDate: display.expectedDeliveryDate, notes: display.notes, express: display.fulfillmentMode === 'Express Delivery', specialCare: /special|care|delicate|stain/i.test(String(display.notes || '')),
     };
   });
   if (!display.items.some((item: any) => ['Piece', 'Pair'].includes(String(item.unit)))) return [];
+  let orderSequence = 0;
+  const physicalTotal = display.items.filter((item: any) => ['Piece', 'Pair'].includes(String(item.unit))).reduce((sum: number, item: any) => sum + Math.max(1, Math.ceil(Number(item.qty) || 1)), 0);
   return display.items.flatMap((item: any, index: number) => {
-    const total = Math.max(1, Math.ceil(Number(item.qty) || 1));
-    return Array.from({ length: total }, (_, copy) => ({
+    if (!['Piece', 'Pair'].includes(String(item.unit))) return [];
+    const lineTotal = Math.max(1, Math.ceil(Number(item.qty) || 1));
+    return Array.from({ length: lineTotal }, (_, copy) => ({
       tagNumber: `${display.orderNumber}-${String(index + 1).padStart(2, '0')}-${String(copy + 1).padStart(2, '0')}`,
       orderNumber: display.orderNumber,
+      invoiceNumber: display.invoiceNumber,
       customer: display.customer.name,
+      customerPhone: display.customer.phone,
       garment: item.garmentName,
       service: item.serviceName,
-      sequence: copy + 1,
-      total,
+      sequence: ++orderSequence,
+      lineSequence: copy + 1,
+      total: physicalTotal,
+      tagPayload: `ELT:v1:${display.orderNumber}-${String(index + 1).padStart(2, '0')}-${String(copy + 1).padStart(2, '0')}`,
       orderDate: display.orderDate,
       expectedDeliveryDate: display.expectedDeliveryDate,
+      notes: display.notes,
+      express: display.fulfillmentMode === 'Express Delivery',
+      specialCare: /special|care|delicate|stain/i.test(String(display.notes || '')),
     }));
   });
+}
+
+export function containerTagsFor(tenant: string, order: EntityRow) {
+  const display = presentOrder(tenant, order);
+  return store.listLaundryContainers(tenant, order.id).map((container) => ({
+    tagNumber: container.tagCode, containerId: container.id, tagKind: 'container' as const, orderNumber: display.orderNumber,
+    invoiceNumber: display.invoiceNumber, customer: display.customer.name, customerPhone: display.customer.phone, garment: `Laundry bag ${container.sequence} / ${container.total}`, service: container.weightKg === undefined ? 'Bulk container' : `${container.weightKg} kg total`,
+    sequence: container.sequence, total: container.total, tagPayload: `ELB:v1:${container.tagCode}`, orderDate: display.orderDate, expectedDeliveryDate: display.expectedDeliveryDate,
+    state: container.state, notes: display.notes, express: display.fulfillmentMode === 'Express Delivery', specialCare: /special|care|delicate|stain/i.test(String(display.notes || '')),
+  }));
 }
 
 export function seedLaundryDefaults(tenant: string) {

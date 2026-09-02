@@ -12,7 +12,7 @@ let closeStore: (() => void) | undefined;
 try {
   const { store } = await import('./kernel/store.js');
   closeStore = () => store.close();
-  const { bookLaundryOrder, cancelLaundryOrder, getLaundryGarmentUnit, laundryCatalogue, listLaundryGarmentUnits, reprintLaundryTag, scanLaundryGarment, seedLaundryDefaults } = await import('./modules/laundry/domain.js');
+  const { bookLaundryOrder, cancelLaundryOrder, createLaundryPrintJob, getLaundryContainerDetail, getLaundryGarmentUnit, laundryCatalogue, listLaundryGarmentUnits, reprintLaundryTag, replaceLaundryTag, scanLaundryContainer, scanLaundryGarment, seedLaundryDefaults, TagRetiredError } = await import('./modules/laundry/domain.js');
   const { listProductionTasks, startProductionTask } = await import('./modules/laundry/production.js');
   const { listCustomerCorrections, listQualityClaims, openQualityClaim, resolveQualityClaim } = await import('./modules/laundry/quality.js');
   const { createRackProfile, rackOccupancy } = await import('./modules/laundry/rack.js');
@@ -26,15 +26,25 @@ try {
   const mixedPrice = (catalogue.prices as any[]).find((price: any) => price.garment === mixed.id)!;
   const mixedService = catalogue.services.find((candidate: any) => candidate.id === mixedPrice.service)!;
   const booked = store.withStoreScope(tenant, 'STORE-DEFAULT', () => bookLaundryOrder(tenant, actor, {
-    customer: { name: 'Traceability Customer', phone: '9000000888' }, items: [{ garment: shirt.id, service: service.id, qty: 3 }, { garment: mixed.id, service: mixedService.id, qty: 2.5 }], expectedDeliveryDate: '2026-09-06', fulfillmentMode: 'Home Delivery',
+    customer: { name: 'Traceability Customer', phone: '9000000888' }, items: [{ garment: shirt.id, service: service.id, qty: 3 }, { garment: mixed.id, service: mixedService.id, qty: 2.5 }], containerCount: 2, expectedDeliveryDate: '2026-09-06', fulfillmentMode: 'Home Delivery',
   }));
   assert.equal(booked.garmentUnits.length, 3, 'piece quantities create one durable unit per physical garment');
+  assert.equal(booked.containerTags.length, 2, 'explicit container count creates one durable tag per requested bulk container');
+  assert.equal(booked.containerTags[0].sequence, 1, 'container tags carry an order-wide sequence');
+  assert.equal(booked.containerTags[0].tagNumber.startsWith('ELB-'), true, 'container tags use a distinct opaque namespace');
+  const container = store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryContainer(tenant, actor, { tagCode: booked.containerTags[0].tagNumber, nextState: 'Processing', location: 'Bulk wash', note: 'Loaded with batch A' }));
+  assert.equal(container.state, 'Processing', 'container scans advance the bulk lifecycle');
+  assert.equal(container.events.at(-1)?.toState, 'Processing', 'container state transitions retain an event history');
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => getLaundryContainerDetail(tenant, booked.containerTags[0].tagNumber).id), container.id, 'container tags resolve through the detail endpoint contract');
+  assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryContainer(tenant, actor, { tagCode: booked.containerTags[0].tagNumber, nextState: 'Delivered' })), /cannot move/, 'container lifecycle jumps are rejected');
   assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => listProductionTasks(tenant, { status: 'Open' }).length), 3, 'each physical unit opens an intake production task');
   assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => listLaundryGarmentUnits(tenant)).length, 3, 'weight lines do not fabricate physical garment units');
   const first = booked.garmentUnits[0];
   const scanned = store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: first.tagCode, nextState: 'Processing', location: 'Wash station', note: 'Loaded into batch A' }));
   assert.equal(scanned.state, 'Processing', 'valid tag scan advances the garment state');
   assert.equal(scanned.events.at(-1)?.toState, 'Processing', 'state transition is retained in the event history');
+  const codeScan = store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: first.code, note: 'Inspection by permanent unit code' }));
+  assert.equal(codeScan.id, first.id, 'permanent unit codes remain valid scanner lookup aliases');
   const processingTask = store.withStoreScope(tenant, 'STORE-DEFAULT', () => listProductionTasks(tenant, { station: 'Processing' })[0]);
   assert.ok(processingTask, 'state transition creates a processing task');
   const startedTask = store.withStoreScope(tenant, 'STORE-DEFAULT', () => startProductionTask(tenant, actor, processingTask.id));
@@ -68,10 +78,19 @@ try {
   assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: first.tagCode, nextState: 'Delivered' })), /cannot move/, 'invalid lifecycle jumps are rejected');
   assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: 'TAG-NOT-REAL', nextState: 'Processing' })), /not found/, 'unknown tags are rejected without creating an event');
   const reprinted = store.withStoreScope(tenant, 'STORE-DEFAULT', () => reprintLaundryTag(tenant, actor, first.id, { station: 'Counter-1', reason: 'Original tag damaged by steam' }));
-  assert.notEqual(reprinted.tagCode, first.tagCode, 'reprint issues a new opaque active tag code');
+  assert.equal(reprinted.tagCode, first.tagCode, 'reprint preserves the active tag identity');
   assert.equal(reprinted.reprints.length, 1, 'reprint history is retained');
-  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => getLaundryGarmentUnit(tenant, reprinted.tagCode).tagCode), reprinted.tagCode, 'new tag resolves to the same unit');
-  assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: first.tagCode, nextState: 'QC' })), /not found/, 'retired tags no longer scan after a reprint');
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => getLaundryGarmentUnit(tenant, reprinted.tagCode).tagCode), reprinted.tagCode, 'reprinted tag still resolves to the same unit');
+  const printJob = store.withStoreScope(tenant, 'STORE-DEFAULT', () => createLaundryPrintJob(tenant, actor, { orderId: booked.order.id, tagIds: [first.id], documentType: 'garment-tags', requestedCopies: 1, status: 'Printed', evidence: 'Traceability print self-test' }));
+  assert.deepEqual(printJob.tagIds, [first.id], 'print history canonicalizes tag references to durable unit ids');
+  const bagPrintJob = store.withStoreScope(tenant, 'STORE-DEFAULT', () => createLaundryPrintJob(tenant, actor, { orderId: booked.order.id, containerIds: [booked.containerTags[0].tagNumber], documentType: 'bag-tags', requestedCopies: 1, status: 'Printed', evidence: 'Container tag print self-test' }));
+  assert.deepEqual(bagPrintJob.tagIds, [container.id], 'bag print history canonicalizes container references to durable ids');
+  assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => createLaundryPrintJob(tenant, actor, { orderId: booked.order.id, tagIds: ['not-this-order'], documentType: 'garment-tags' })), /outside the selected order/, 'print history rejects tags from another order or unknown tags');
+  const replaced = store.withStoreScope(tenant, 'STORE-DEFAULT', () => replaceLaundryTag(tenant, actor, first.id, { station: 'Counter-1', reason: 'Tag physically lost', status: 'Lost' }));
+  assert.notEqual(replaced.tagCode, first.tagCode, 'replacement issues a new active tag code');
+  assert.equal(replaced.tagHistory.find((tag: any) => tag.tagCode === replaced.tagCode)?.status, 'Active', 'replacement creates an active history row');
+  assert.equal(replaced.tagHistory.find((tag: any) => tag.tagCode === first.tagCode)?.status, 'Lost', 'old tag is retired with its reason');
+  assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => scanLaundryGarment(tenant, actor, { tagCode: first.tagCode, nextState: 'QC' })), (error: any) => error instanceof TagRetiredError && error.details.currentTagCode === replaced.tagCode, 'retired tags resolve to replacement history without transitioning');
   assert.equal(store.withStoreScope('OTHER-TENANT', 'STORE-DEFAULT', () => listLaundryGarmentUnits('OTHER-TENANT')).length, 0, 'garment units are isolated by tenant scope');
   const cancellable = store.withStoreScope(tenant, 'STORE-DEFAULT', () => bookLaundryOrder(tenant, actor, { customer: { name: 'Cancelled Unit Customer', phone: '9000000889' }, items: [{ garment: shirt.id, service: service.id, qty: 1 }], expectedDeliveryDate: '2026-09-06', fulfillmentMode: 'Home Delivery' }));
   store.withStoreScope(tenant, 'STORE-DEFAULT', () => cancelLaundryOrder(tenant, actor, cancellable.order.id, 'Customer cancelled before processing'));

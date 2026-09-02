@@ -48,7 +48,7 @@ try {
   const rehearsal = freshDatabaseRestoreRehearsal(tenant, 'STORE-DEFAULT', backup);
   assert.equal(rehearsal.counts.normalizedCustomers, 1, 'fresh restore preserves normalized customer projections');
   assert.equal(rehearsal.counts.normalizedOrders, 1, 'fresh restore preserves normalized order projections');
-  assert.equal(store.migrationStatus().at(-1)?.version, 16, 'normalized projection migration is checksum-tracked');
+  assert.equal(store.migrationStatus().at(-1)?.version, 19, 'normalized projection migration remains checksum-tracked after later operational migrations');
   console.log('PASS  controlled customer/order normalization, fixed-scale item projection, resumability and idempotency self-test complete');
 } finally {
   closeStore?.();

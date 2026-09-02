@@ -1,65 +1,755 @@
-import { useQuery } from '@tanstack/react-query'
-import { Loader2, Printer, Search, Tag } from 'lucide-react'
-import { useState } from 'react'
-import QRCode from 'qrcode'
-import { apiGet, apiPost } from '@/lib/api'
-import type { LaundryOrder } from '@/lib/laundry'
-import { formatINR } from '@/lib/utils'
-import { lndryBrand } from '@/assets/generated/manifest'
+import { useQuery } from "@tanstack/react-query";
+import {
+  Check,
+  Download,
+  History,
+  Loader2,
+  Printer,
+  Search,
+  Tag,
+  X,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import QRCode from "qrcode";
+import JsBarcode from "jsbarcode";
+import { apiGet, apiPost } from "@/lib/api";
+import type { LaundryOrder } from "@/lib/laundry";
+import {
+  buildLaundryPrintHtml,
+  type PrintOrder,
+  type PrintSettings,
+  type PrintTag,
+} from "@/lib/laundryPrint";
+import { formatINR } from "@/lib/utils";
 
-type Detail = LaundryOrder & { receipt: { items: Array<{ garmentName: string; serviceName: string; qty: number; amount: number }>; subtotal: number; charges: number; discounts: number; taxAmount: number; grandTotal: number }; tags: Array<{ tagNumber: string; orderNumber: string; customer: string; garment: string; service: string; sequence: number; total: number; orderDate: string; expectedDeliveryDate: string }> }
-type PrintSettings = { businessName: string; address: string; phone: string; email: string; upiId: string; qrOnPrint: boolean; logoDataUrl: string }
+type Detail = LaundryOrder &
+  PrintOrder & {
+    receipt: PrintOrder["receipt"];
+    tags: PrintTag[];
+    containerTags?: PrintTag[];
+  };
+type PrintJob = {
+  id: string;
+  orderId: string;
+  documentType: string;
+  requestedCopies: number;
+  requestedBy: string;
+  createdAt: string;
+  status: string;
+  templateId: string;
+  evidence?: string;
+  tagIds: string[];
+};
+type Tab = "invoice" | "mini-invoice" | "garment-tags" | "bag-tags" | "history";
+type PrintQueueFilter = "today" | "ready" | "unprinted" | "partial" | "reprints" | "completed" | "all";
 
 export default function LaundryPrintCentre() {
-  const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState('')
-  const orders = useQuery({ queryKey: ['print-centre-orders', search], queryFn: () => apiGet<LaundryOrder[]>(`/laundry/orders?search=${encodeURIComponent(search)}`) })
-  const detail = useQuery({ queryKey: ['print-centre-order', selected], queryFn: () => apiGet<Detail>(`/laundry/orders/${selected}`), enabled: Boolean(selected) })
-  const settings = useQuery({ queryKey: ['print-centre-settings'], queryFn: () => apiGet<PrintSettings>('/laundry/print-settings') })
-  const order = detail.data
-  const printSettings = settings.data
-  const displayBusinessName = printSettings?.businessName?.trim() || 'Epic Laundry'
-  const displayContact = [printSettings?.address, printSettings?.phone, printSettings?.email].filter(Boolean).join(' · ')
-  return <div className="animate-in fade-in slide-in-from-bottom-2 duration-500"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#4d8982]">Print centre</p><h1 className="mt-1 font-serif text-3xl text-[#17353c]">Invoices & garment tags</h1><p className="mt-1 text-sm text-[#718087]">Preview a controlled customer receipt or physical-unit tag sheet before printing.</p></div><div className="mt-6 grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]"><section className="h-fit rounded-[22px] border border-[#263f44]/10 bg-white p-4 shadow-[0_8px_28px_rgba(37,48,43,.04)]"><div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7e8d90]" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search invoice or customer" className="h-10 w-full rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] pl-9 pr-3 text-sm outline-none focus:border-[#438b82]" /></div><div className="mt-3 max-h-[540px] space-y-1 overflow-y-auto">{orders.isLoading ? <Loader2 className="mx-auto my-8 h-5 w-5 animate-spin text-[#3a7d78]" /> : (orders.data || []).map((row) => <button key={row.id} type="button" onClick={() => setSelected(row.id)} className={`w-full rounded-xl p-3 text-left transition ${selected === row.id ? 'bg-[#eaf3ef]' : 'hover:bg-[#f5f7f3]'}`}><span className="block text-sm font-bold text-[#205660]">{row.invoiceNumber || row.orderNumber}</span><span className="mt-0.5 block text-xs text-[#617178]">{row.customer.name} · {formatINR(row.grandTotal)}</span><span className="mt-1 block text-[10px] uppercase tracking-[.1em] text-[#829092]">{row.state}</span></button>)}{!orders.isLoading && !orders.data?.length && <p className="py-8 text-center text-sm text-[#718087]">No orders found.</p>}</div></section><section className="rounded-[22px] border border-[#263f44]/10 bg-[#fffdf8] p-5 shadow-[0_8px_28px_rgba(37,48,43,.05)] md:p-6">{!selected ? <div className="grid min-h-[440px] place-items-center text-center text-sm text-[#718087]"><Tag className="mx-auto mb-3 h-6 w-6 text-[#55938a]" />Select an order to preview its documents.</div> : detail.isLoading || !order ? <div className="grid min-h-[440px] place-items-center"><Loader2 className="h-6 w-6 animate-spin text-[#3a7d78]" /></div> : <><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#4d8982]">Preview · {order.invoiceNumber || order.orderNumber}</p><h2 className="mt-1 font-serif text-2xl text-[#17353c]">{order.customer.name}</h2></div><div className="flex gap-2"><button type="button" onClick={() => printDocument('receipt', order, printSettings)} className="inline-flex items-center gap-1.5 rounded-lg bg-[#123039] px-3 py-2 text-xs font-bold text-white"><Printer className="h-3.5 w-3.5" />Receipt</button><button type="button" onClick={() => printDocument('tags', order, printSettings)} className="inline-flex items-center gap-1.5 rounded-lg bg-[#e6bc65] px-3 py-2 text-xs font-bold text-[#17363e]"><Tag className="h-3.5 w-3.5" />Tags ({order.tags.length})</button></div></div><div className="mx-auto mt-6 max-w-xl rounded-xl border border-dashed border-[#9cb5ac] bg-white p-5"><div className="flex items-start justify-between gap-4 border-b border-[#263f44]/10 pb-4"><div><p className="font-serif text-xl text-[#17353c]">{displayBusinessName}</p><p className="mt-1 text-xs text-[#718087]">{order.fulfillmentMode} · Due {order.expectedDeliveryDate}</p>{displayContact ? <p className="mt-1 text-[10px] text-[#718087]">{displayContact}</p> : null}</div><img src={printSettings?.logoDataUrl || "/ui/app/brand/lndry-logo-source.png"} alt={`${displayBusinessName} logo`} className="h-10 w-10 object-contain" /></div><div className="mt-4 space-y-2">{order.receipt.items.map((item) => <div key={`${item.garmentName}:${item.serviceName}`} className="flex justify-between text-sm"><span>{item.garmentName} × {item.qty}<small className="ml-1 text-xs text-[#718087]">{item.serviceName}</small></span><strong>{formatINR(item.amount)}</strong></div>)}</div><div className="mt-4 space-y-1 border-t border-[#263f44]/10 pt-3 text-sm"><div className="flex justify-between"><span>Subtotal</span><span>{formatINR(order.receipt.subtotal)}</span></div><div className="flex justify-between"><span>Adjustments</span><span>{formatINR(order.receipt.charges - order.receipt.discounts + order.receipt.taxAmount)}</span></div><div className="mt-2 flex justify-between border-t border-[#263f44]/10 pt-2 font-serif text-xl"><span>Total</span><span>{formatINR(order.receipt.grandTotal)}</span></div></div><p className="mt-3 text-xs text-[#718087]">{order.paymentStatus} · {order.paymentMode} · {order.customer.phone}</p></div></>}</section></div></div>
+  const [search, setSearch] = useState("");
+  const [orderFilter, setOrderFilter] = useState<PrintQueueFilter>("today");
+  const [selected, setSelected] = useState("");
+  const [tab, setTab] = useState<Tab>("garment-tags");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [notice, setNotice] = useState("");
+  const [searchParams] = useSearchParams();
+  useEffect(() => {
+    const order = searchParams.get("order");
+    if (order) setSelected(order);
+  }, [searchParams]);
+  const orders = useQuery({
+    queryKey: ["print-centre-orders", search],
+    queryFn: () =>
+      apiGet<LaundryOrder[]>(
+        `/laundry/orders?search=${encodeURIComponent(search)}`,
+      ),
+  });
+  const detail = useQuery({
+    queryKey: ["print-centre-order", selected],
+    queryFn: () => apiGet<Detail>(`/laundry/orders/${selected}`),
+    enabled: Boolean(selected),
+  });
+  const settings = useQuery({
+    queryKey: ["print-centre-settings"],
+    queryFn: () => apiGet<PrintSettings>("/laundry/print-settings"),
+  });
+  const jobs = useQuery({
+    queryKey: ["print-centre-history", selected],
+    queryFn: () =>
+      apiGet<PrintJob[]>(
+        `/laundry/print-jobs${selected ? `?orderId=${encodeURIComponent(selected)}` : ""}`,
+      ),
+  });
+  const allJobs = useQuery({
+    queryKey: ["print-centre-history-all"],
+    queryFn: () => apiGet<PrintJob[]>("/laundry/print-jobs"),
+  });
+  const order = detail.data;
+  const tags = order?.tags || [];
+  const containerTags = order?.containerTags || [];
+  const activeTags = tab === "bag-tags" ? containerTags : tags;
+  const selectedRows = useMemo(
+    () =>
+      activeTags.filter((tag) =>
+        selectedTags.includes(tag.containerId || tag.unitId || tag.tagNumber),
+      ),
+    [selectedTags, activeTags],
+  );
+  const allSelected =
+    activeTags.length > 0 && selectedRows.length === activeTags.length;
+
+  async function runDocument(kind: "print" | "pdf") {
+    if (!order) return;
+    const receiptTab = tab === "invoice" || tab === "mini-invoice";
+    const rows = receiptTab
+      ? []
+      : selectedRows.length
+        ? selectedRows
+        : activeTags;
+    const containerTab = tab === "bag-tags";
+    const documentKind = receiptTab ? "receipt" : "tags";
+    const html = await buildLaundryPrintHtml(
+      documentKind,
+      order,
+      settings.data,
+      rows,
+    );
+    const result =
+      kind === "pdf"
+        ? await window.epic?.exportHtmlPdf?.(
+            html,
+            `${order.orderNumber}-${tab}`,
+          )
+        : await window.epic?.printHtml?.(html);
+    let ok = Boolean(result?.ok);
+    if (!result) {
+      const popup = window.open("", "_blank", "width=900,height=1100");
+      if (popup) {
+        popup.document.write(
+          html + "<script>window.onload=()=>window.print()<\/script>",
+        );
+        popup.document.close();
+        ok = true;
+      }
+    }
+    setNotice(
+      ok
+        ? kind === "pdf"
+          ? "PDF saved from the same renderer used for preview."
+          : "Native print command accepted. Physical page emergence is not independently verified."
+        : "Print was cancelled or could not be started.",
+    );
+    try {
+      await apiPost("/laundry/print-jobs", {
+        orderId: order.id,
+        templateId: "recommended-a4-6",
+        templateVersion: "1",
+        printerProfile: settings.data?.printerProfile || "system-default",
+        ...(containerTab
+          ? {
+              containerIds: rows.map((row) => row.containerId || row.tagNumber),
+            }
+          : { tagIds: rows.map((row) => row.unitId || row.tagNumber) }),
+        documentType: tab,
+        requestedCopies: 1,
+        status: ok ? (kind === "pdf" ? "Downloaded" : "Printed") : "Cancelled",
+        evidence: ok
+          ? kind === "pdf"
+            ? "Electron printToPDF completed"
+            : "Native print command accepted; physical output not independently verified"
+          : "Operator cancelled or print command failed",
+      });
+      jobs.refetch();
+      allJobs.refetch();
+    } catch {
+      setNotice(
+        "The document action completed, but its audit record could not be saved.",
+      );
+    }
+  }
+
+  const visibleOrders = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const history = allJobs.data || [];
+    const physicalJobs = (orderId: string) => history.filter((job) => job.orderId === orderId && ["garment-tags", "bag-tags"].includes(job.documentType) && ["Printed", "Downloaded"].includes(job.status));
+    return (orders.data || []).filter(
+      (row) => {
+        const total = (row.physicalUnits?.length || 0) + (row.containers?.length || 0);
+        const rowJobs = physicalJobs(row.id);
+        const printedIds = new Set(rowJobs.flatMap((job) => job.tagIds || []));
+        const printed = printedIds.size;
+        if (orderFilter === "all") return true;
+        if (orderFilter === "today") return row.orderDate === today;
+        if (orderFilter === "ready") return ["Ready", "In Process", "Processing", "Racked"].includes(row.state);
+        if (orderFilter === "unprinted") return total > 0 && printed === 0;
+        if (orderFilter === "partial") return total > 0 && printed > 0 && printed < total;
+        if (orderFilter === "reprints") return rowJobs.length > 1 || printedIds.size < rowJobs.reduce((sum, job) => sum + (job.tagIds || []).length, 0);
+        return orderFilter === "completed" && row.state === "Delivered";
+      },
+    );
+  }, [orders.data, allJobs.data, orderFilter]);
+  return (
+    <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+      <PageHeading />
+      <div className="mt-6 grid gap-5 xl:grid-cols-[290px_minmax(0,1fr)]">
+        <OrderList
+          search={search}
+          setSearch={setSearch}
+          filter={orderFilter}
+          setFilter={setOrderFilter}
+          orders={visibleOrders}
+          loading={orders.isLoading}
+          selected={selected}
+          onSelect={(id) => {
+            setSelected(id);
+            setSelectedTags([]);
+            setTab("garment-tags");
+            setNotice("");
+          }}
+        />
+        <section className="min-w-0 rounded-[22px] border border-[#263f44]/10 bg-[#fffdf8] p-5 shadow-[0_8px_28px_rgba(37,48,43,.05)] md:p-6">
+          {!selected ? (
+            <EmptyState />
+          ) : detail.isLoading || !order ? (
+            <div className="grid min-h-[560px] place-items-center">
+              <Loader2 className="h-6 w-6 animate-spin text-[#3a7d78]" />
+            </div>
+          ) : (
+            <DocumentWorkspace
+              order={order}
+              tags={tags}
+              containerTags={containerTags}
+              tab={tab}
+              setTab={(next) => {
+                setTab(next);
+                setSelectedTags([]);
+              }}
+              notice={notice}
+              setNotice={setNotice}
+              jobs={jobs.data || []}
+              settings={settings.data}
+              selectedTags={selectedTags}
+              selectedRows={selectedRows}
+              allSelected={allSelected}
+              setSelectedTags={setSelectedTags}
+              onPrint={() => void runDocument("print")}
+              onPdf={() => void runDocument("pdf")}
+            />
+          )}
+        </section>
+      </div>
+    </div>
+  );
 }
 
-async function printDocument(kind: 'receipt' | 'tags', order: Detail, printSettings?: PrintSettings) {
-  const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
-  const settings = printSettings
-  const configuredLogo = settings?.logoDataUrl?.startsWith('data:image/') ? settings.logoDataUrl : lndryBrand.mark
-  const logo = configuredLogo.startsWith('data:image/') ? configuredLogo : await loadImageDataUrl(configuredLogo)
-  const logoMarkup = logo ? `<img src="${logo}" alt="Lndry" class="brand-mark">` : '<span class="brand-fallback">Lndry</span>'
-  const businessName = settings?.businessName?.trim() || 'Epic Laundry'
-  const contact = [settings?.address, settings?.phone, settings?.email].filter(Boolean).map(escape).join(' · ')
-  const upiQr = settings?.qrOnPrint && settings.upiId?.trim() ? await QRCode.toDataURL(`upi://pay?pa=${encodeURIComponent(settings.upiId.trim())}&pn=${encodeURIComponent(businessName)}&cu=INR`, { width: 180, margin: 1, color: { dark: '#123039', light: '#ffffff' } }).catch(() => '') : ''
-  const qrMarkup = upiQr ? `<div style="margin-left:auto;text-align:center"><img src="${upiQr}" alt="UPI payment QR" style="width:76px;height:76px;object-fit:contain"><small style="display:block;color:#718087">Scan to pay</small></div>` : ''
-  const header = `<header>${logoMarkup}<div><strong>${escape(businessName)}</strong><small>Lndry · local laundry desk</small>${contact ? `<small>${contact}</small>` : ''}</div>${qrMarkup}</header>`
-  const body = kind === 'receipt'
-    ? `${header}<h1>Receipt</h1><p>${escape(order.invoiceNumber || order.orderNumber)} · ${escape(order.customer.name)} · ${escape(order.customer.phone)}</p><hr>${order.receipt.items.map((item) => `<p>${escape(item.garmentName)} × ${item.qty} — ${formatINR(item.amount)}</p>`).join('')}<hr><h2>Total: ${formatINR(order.receipt.grandTotal)}</h2><p>${escape(order.paymentStatus)} · ${escape(order.paymentMode)}</p>`
-    : `${header}<h1>Garment tags</h1><p>${escape(order.orderNumber)} · ${escape(order.customer.name)} · Due ${escape(order.expectedDeliveryDate)}</p><div class="tags">${order.tags.map((tag) => `<article class="tag"><div class="tag-top"><strong>${escape(tag.tagNumber)}</strong><span>${escape(String(tag.sequence))} / ${escape(String(tag.total))}</span></div><strong>${escape(tag.garment)}</strong><small>${escape(tag.service)}</small><small>Customer: ${escape(tag.customer)}</small><small>Order date: ${escape(tag.orderDate)}</small><small>Due: ${escape(tag.expectedDeliveryDate)}</small></article>`).join('')}</div>`
-  const html = `<!doctype html><html><head><title>${kind === 'receipt' ? 'Receipt' : 'Garment tags'} · Epic Laundry</title><style>body{font-family:Arial,sans-serif;color:#17353c;max-width:720px;margin:36px auto;padding:0 24px}header{display:flex;align-items:center;gap:12px;border-bottom:2px solid #664cf0;padding-bottom:12px}header strong{display:block;font-size:24px}header small{display:block;color:#718087;margin-top:3px}.brand-mark{width:42px;height:42px;object-fit:contain}.brand-fallback{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#664cf0;color:white;font-weight:700}h1{font-size:24px}.tags{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.tag{border:1px dashed #78998f;border-radius:10px;padding:14px;min-height:110px;display:flex;flex-direction:column;gap:4px}.tag-top{display:flex;justify-content:space-between;gap:8px;color:#664cf0;font-size:12px}.tag small{color:#617178}@media print{button{display:none}}</style></head><body>${body}</body></html>`
-  if (window.epic?.printHtml) {
-    const result = await window.epic.printHtml(html)
-    try { await apiPost('/ops/hardware-receipts', { kind: kind === 'receipt' ? 'receipt-printer' : 'tag-printer', operation: 'print', status: result.ok ? 'Completed' : 'Cancelled', device: 'electron-system-dialog', sourceEntity: 'laundry_order', sourceId: order.id, evidence: result.ok ? 'Electron print callback reported success' : 'Operator cancelled the native print dialog' }) } catch (error) { console.warn('Print receipt could not be recorded', error) }
-    return
-  }
-  const win = window.open('', '_blank', 'width=800,height=900'); if (!win) return
-  try { win.opener = null } catch { /* browser may make opener read-only */ }
-  win.document.write(`${html}<script>window.onload=()=>window.print()<\/script>`); win.document.close()
+function PageHeading() {
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#4d8982]">
+          Operations · documents
+        </p>
+        <h1 className="mt-1 font-serif text-3xl text-[#17353c]">
+          Print centre
+        </h1>
+        <p className="mt-1 text-sm text-[#718087]">
+          Prepare, inspect, and evidence every customer document and physical
+          tag batch.
+        </p>
+      </div>
+      <div className="rounded-2xl border border-[#39786f]/20 bg-[#eaf3ef] px-4 py-3 text-xs font-semibold text-[#2e6a60]">
+        <Tag className="mr-2 inline h-4 w-4" />
+        Opaque QR payloads · offline ready
+      </div>
+    </div>
+  );
+}
+function EmptyState() {
+  return (
+    <div className="grid min-h-[560px] place-items-center text-center text-sm text-[#718087]">
+      <div>
+        <Tag className="mx-auto mb-3 h-8 w-8 text-[#55938a]" />
+        <p className="font-serif text-2xl text-[#17353c]">
+          Choose an order to begin
+        </p>
+        <p className="mt-1">
+          Search by order, invoice, customer, phone, or active tag.
+        </p>
+      </div>
+    </div>
+  );
+}
+function OrderList({
+  search,
+  setSearch,
+  filter,
+  setFilter,
+  orders,
+  loading,
+  selected,
+  onSelect,
+}: {
+  search: string;
+  setSearch: (value: string) => void;
+  filter: PrintQueueFilter;
+  setFilter: (value: PrintQueueFilter) => void;
+  orders: LaundryOrder[];
+  loading: boolean;
+  selected: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <aside className="h-fit rounded-[22px] border border-[#263f44]/10 bg-white p-4 shadow-[0_8px_28px_rgba(37,48,43,.04)]">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7e8d90]" />
+        <input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Order, invoice, customer, tag"
+          className="h-11 w-full rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] pl-9 pr-3 text-sm outline-none focus:border-[#438b82] focus:ring-2 focus:ring-[#b9ded6]"
+        />
+      </div>
+      <div className="mt-4 flex flex-wrap gap-1 text-[10px] font-bold uppercase tracking-[.12em] text-[#718087]">
+        {(["today", "ready", "unprinted", "partial", "reprints", "completed", "all"] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setFilter(value)}
+            className={`rounded-full px-2.5 py-1.5 ${filter === value ? "bg-[#eaf3ef] text-[#2e6a60]" : "hover:bg-[#f2f5f1]"}`}
+          >
+            {value === "today" ? "Today" : value === "ready" ? "Ready" : value === "unprinted" ? "Unprinted" : value === "partial" ? "Partial" : value === "reprints" ? "Reprints" : value === "completed" ? "Completed" : "All"}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 max-h-[590px] space-y-1 overflow-y-auto">
+        {loading ? (
+          <Loader2 className="mx-auto my-8 h-5 w-5 animate-spin text-[#3a7d78]" />
+        ) : (
+          orders.map((row) => (
+            <button
+              key={row.id}
+              type="button"
+              onClick={() => onSelect(row.id)}
+              className={`w-full rounded-xl p-3 text-left transition ${selected === row.id ? "bg-[#eaf3ef] ring-1 ring-inset ring-[#8dbeb3]" : "hover:bg-[#f5f7f3]"}`}
+            >
+              <span className="flex items-center justify-between gap-2">
+                <span className="text-sm font-bold text-[#205660]">
+                  {row.invoiceNumber || row.orderNumber}
+                </span>
+                <span className="text-xs font-bold text-[#17353c]">
+                  {formatINR(row.grandTotal)}
+                </span>
+              </span>
+              <span className="mt-1 block truncate text-xs text-[#617178]">
+                {row.customer.name}
+              </span>
+              <span className="mt-1 block text-[10px] uppercase tracking-[.1em] text-[#829092]">
+                {row.state} · Due {row.expectedDeliveryDate}
+              </span>
+            </button>
+          ))
+        )}
+        {!loading && !orders.length ? (
+          <p className="py-8 text-center text-sm text-[#718087]">
+            No orders found.
+          </p>
+        ) : null}
+      </div>
+    </aside>
+  );
 }
 
-async function loadImageDataUrl(source: string): Promise<string> {
-  try {
-    const response = await fetch(source)
-    if (!response.ok) return ''
-    const blob = await response.blob()
-    return await new Promise((resolve) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(String(reader.result || ''))
-      reader.onerror = () => resolve('')
-      reader.readAsDataURL(blob)
-    })
-  } catch {
-    return ''
-  }
+function DocumentWorkspace({
+  order,
+  tags,
+  containerTags,
+  tab,
+  setTab,
+  notice,
+  setNotice,
+  jobs,
+  settings,
+  selectedTags,
+  selectedRows,
+  allSelected,
+  setSelectedTags,
+  onPrint,
+  onPdf,
+}: {
+  order: Detail;
+  tags: PrintTag[];
+  containerTags: PrintTag[];
+  tab: Tab;
+  setTab: (tab: Tab) => void;
+  notice: string;
+  setNotice: (value: string) => void;
+  jobs: PrintJob[];
+  settings?: PrintSettings;
+  selectedTags: string[];
+  selectedRows: PrintTag[];
+  allSelected: boolean;
+  setSelectedTags: (value: string[]) => void;
+  onPrint: () => void;
+  onPdf: () => void;
+}) {
+  const tabs: Array<[Tab, string]> = [
+    ["invoice", "Invoice"],
+    ["mini-invoice", "Mini invoice"],
+    ["garment-tags", `Garment tags (${tags.length})`],
+    ["bag-tags", `Bag tags (${containerTags.length})`],
+    ["history", "Print history"],
+  ];
+  const physicalTags = tab === "bag-tags" ? containerTags : tags;
+  const canPrint =
+    tab === "invoice" ||
+    tab === "mini-invoice" ||
+    ((tab === "garment-tags" || tab === "bag-tags") && physicalTags.length > 0);
+  const printLabel =
+    tab === "invoice" || tab === "mini-invoice"
+      ? "Print invoice"
+      : selectedRows.length
+        ? "Print selected"
+        : "Print all";
+  return (
+    <>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#4d8982]">
+            Workset · {order.orderNumber}
+          </p>
+          <h2 className="mt-1 font-serif text-2xl text-[#17353c]">
+            {order.customer.name}
+          </h2>
+          <p className="mt-1 text-xs text-[#718087]">
+            {order.invoiceNumber || "No invoice"} · {tags.length} garment tag
+            {tags.length === 1 ? "" : "s"} · {containerTags.length} bag tag
+            {containerTags.length === 1 ? "" : "s"} · due{" "}
+            {order.expectedDeliveryDate}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={!canPrint}
+            onClick={onPrint}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#123039] px-3 py-2 text-xs font-bold text-white disabled:opacity-40"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            {printLabel}
+          </button>
+          <button
+            type="button"
+            disabled={!canPrint}
+            onClick={onPdf}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#123039]/15 bg-white px-3 py-2 text-xs font-bold text-[#17353c] disabled:opacity-40"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download PDF
+          </button>
+        </div>
+      </header>
+      <nav className="mt-6 flex gap-1 overflow-x-auto border-b border-[#263f44]/10">
+        {tabs.map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setTab(value)}
+            className={`whitespace-nowrap border-b-2 px-3 py-3 text-xs font-bold ${tab === value ? "border-[#3a7d78] text-[#2e6a60]" : "border-transparent text-[#718087] hover:text-[#17353c]"}`}
+          >
+            {value === "history" ? (
+              <History className="mr-1 inline h-3.5 w-3.5" />
+            ) : null}
+            {label}
+          </button>
+        ))}
+      </nav>
+      {notice ? (
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-xl border border-[#9ccabf] bg-[#eef8f3] px-3 py-2.5 text-xs font-semibold text-[#2e6a60]">
+          <span>
+            <Check className="mr-1.5 inline h-4 w-4" />
+            {notice}
+          </span>
+          <button
+            type="button"
+            onClick={() => setNotice("")}
+            aria-label="Dismiss print notice"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
+      {tab === "history" ? (
+        <PrintHistory jobs={jobs} />
+      ) : tab === "invoice" || tab === "mini-invoice" ? (
+        <InvoicePreview order={order} compact={tab === "mini-invoice"} />
+      ) : (
+          <TagBatch
+            kind={tab === "bag-tags" ? "container" : "garment"}
+            tags={physicalTags}
+            template={settings?.tagTemplate}
+            selectedTags={selectedTags}
+          selectedRows={selectedRows}
+          allSelected={allSelected}
+          setSelectedTags={setSelectedTags}
+        />
+      )}
+    </>
+  );
+}
+
+function TagBatch({
+  kind,
+  tags,
+  template,
+  selectedTags,
+  selectedRows,
+  allSelected,
+  setSelectedTags,
+}: {
+  kind: "garment" | "container";
+  tags: PrintTag[];
+  template: PrintSettings["tagTemplate"];
+  selectedTags: string[];
+  selectedRows: PrintTag[];
+  allSelected: boolean;
+  setSelectedTags: (value: string[]) => void;
+}) {
+  const container = kind === "container";
+  return (
+    <>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="font-serif text-xl text-[#17353c]">
+            {container ? "Bag / container tag batch" : "Garment tag batch"}
+          </p>
+          <p className="text-xs text-[#718087]">
+            {container
+              ? "Explicit container identities keep bulk handling and handoffs accountable."
+              : "Order-wide sequence makes missing pieces visible at assembly."}
+          </p>
+        </div>
+        <div className="flex gap-2 text-xs font-bold">
+          <button
+            type="button"
+            onClick={() =>
+              setSelectedTags(
+                allSelected
+                  ? []
+                  : tags.map(
+                      (tag) => tag.containerId || tag.unitId || tag.tagNumber,
+                    ),
+              )
+            }
+            className="rounded-lg border border-[#263f44]/15 bg-white px-3 py-2"
+          >
+            {allSelected ? "Clear" : "Select all"}
+          </button>
+          <span className="rounded-lg bg-[#eaf3ef] px-3 py-2 text-[#2e6a60]">
+            {selectedRows.length} selected
+          </span>
+        </div>
+      </div>
+      <div className="mt-5 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+        {tags.map((tag) => {
+          const id = tag.containerId || tag.unitId || tag.tagNumber;
+          return (
+              <TagPreview
+                key={id}
+                tag={tag}
+                template={template}
+                selected={selectedTags.includes(id)}
+              onToggle={() =>
+                setSelectedTags(
+                  selectedTags.includes(id)
+                    ? selectedTags.filter((item) => item !== id)
+                    : [...selectedTags, id],
+                )
+              }
+            />
+          );
+        })}
+      </div>
+      {!tags.length ? (
+        <div className="mt-5 rounded-2xl border border-dashed border-[#9cb5ac] px-6 py-14 text-center text-sm text-[#718087]">
+          {container
+            ? "No explicit bag/container tags were created for this order. Add a bag count when booking a weight or bulk line."
+            : "This order has no physical garment tags. Weight-based items do not fabricate piece tags."}
+        </div>
+      ) : null}
+    </>
+  );
+}
+function TagPreview({
+  tag,
+  template,
+  selected,
+  onToggle,
+}: {
+  tag: PrintTag;
+  template: PrintSettings["tagTemplate"];
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const [qr, setQr] = useState("");
+  const [barcode, setBarcode] = useState("");
+  const codeFormat = template?.codeFormat || "qr";
+  const showQr = codeFormat === "qr" || codeFormat === "qr+code128";
+  const showBarcode = codeFormat === "code128" || codeFormat === "qr+code128";
+  useEffect(() => {
+    if (!showQr) {
+      setQr("");
+      return;
+    }
+    QRCode.toDataURL(
+      tag.tagPayload ||
+        `${tag.tagKind === "container" ? "ELB" : "ELT"}:v1:${tag.tagNumber}`,
+      { width: 160, margin: 1, errorCorrectionLevel: "M" },
+    )
+      .then(setQr)
+      .catch(() => setQr(""));
+  }, [showQr, tag.tagPayload, tag.tagNumber, tag.tagKind]);
+  useEffect(() => {
+    if (!showBarcode) {
+      setBarcode("");
+      return;
+    }
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    try {
+      JsBarcode(svg, tag.tagNumber, {
+        format: "CODE128",
+        displayValue: true,
+        width: 1.1,
+        height: 24,
+        margin: 0,
+        fontSize: 8,
+        lineColor: "#123039",
+      });
+      setBarcode(svg.outerHTML);
+    } catch {
+      setBarcode("");
+    }
+  }, [showBarcode, tag.tagNumber]);
+  const container = tag.tagKind === "container";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={`relative rounded-[18px] border bg-white p-4 text-left shadow-[0_8px_22px_rgba(37,48,43,.04)] transition hover:-translate-y-0.5 ${selected ? "border-[#3a7d78] ring-2 ring-[#b9ded6]" : "border-[#263f44]/10"}`}
+    >
+      <span
+        className={`absolute right-3 top-3 grid h-5 w-5 place-items-center rounded-md border ${selected ? "border-[#3a7d78] bg-[#3a7d78] text-white" : "border-[#b8c9c1] bg-white"}`}
+      >
+        {selected ? <Check className="h-3.5 w-3.5" /> : null}
+      </span>
+      <div className="flex items-center justify-between gap-3">
+        <span
+          className={`text-[10px] font-black uppercase tracking-[.14em] ${container ? "text-[#9b6d1d]" : "text-[#39786f]"}`}
+        >
+          {container ? "Epic Laundry · container" : "Epic Laundry"}
+        </span>
+        {template?.showSequence !== false ? <span className="font-mono text-sm font-bold text-[#17353c]">{tag.sequence} / {tag.total}</span> : null}
+      </div>
+      <div className="mt-5 flex items-end justify-between gap-4">
+        <div className="min-w-0">
+          {template?.showGarment !== false ? <p className="text-lg font-extrabold leading-tight text-[#17353c]">{tag.garment}</p> : null}
+          {template?.showService !== false ? <p className="mt-1 text-xs font-semibold text-[#39786f]">{tag.service}</p> : null}
+          {template?.showOrder !== false || template?.showCustomer !== false ? <p className="mt-4 truncate text-[11px] text-[#617178]">{template?.showOrder !== false ? tag.orderNumber : ""}{template?.showOrder !== false && template?.showCustomer !== false ? " · " : ""}{template?.showCustomer !== false ? tag.customer.split(" ")[0] : ""}</p> : null}
+          {template?.showDueDate !== false ? <p className="mt-1 text-[10px] font-bold uppercase tracking-[.1em] text-[#855815]">Due {tag.expectedDeliveryDate}</p> : null}
+        </div>
+        {qr ? (
+          <img src={qr} alt="Opaque tag QR" className="h-20 w-20 shrink-0" />
+        ) : showQr ? (
+          <span className="h-20 w-20 shrink-0 rounded-lg bg-[#f4f6f1]" />
+        ) : null}
+      </div>
+      {barcode ? <div aria-label="Barcode preview" className="mt-3 overflow-hidden border-t border-[#e4ebe6] pt-2" dangerouslySetInnerHTML={{ __html: barcode }} /> : null}
+      {template?.showTagCode !== false || tag.state ? <div className="mt-4 flex justify-between border-t border-[#e4ebe6] pt-3 font-mono text-[9px] text-[#718087]"><span>{template?.showTagCode !== false ? tag.tagNumber : ""}</span><span>{tag.state || "Intake"}</span></div> : null}
+    </button>
+  );
+}
+function InvoicePreview({
+  order,
+  compact,
+}: {
+  order: Detail;
+  compact: boolean;
+}) {
+  return (
+    <div
+      className={`mx-auto mt-6 rounded-xl border border-dashed border-[#9cb5ac] bg-white p-5 ${compact ? "max-w-sm" : "max-w-xl"}`}
+    >
+      <div className="flex items-start justify-between border-b border-[#263f44]/10 pb-4">
+        <div>
+          <p className="font-serif text-xl text-[#17353c]">Epic Laundry</p>
+          <p className="mt-1 text-xs text-[#718087]">
+            {order.fulfillmentMode} · Due {order.expectedDeliveryDate}
+          </p>
+        </div>
+        <span className="rounded-lg bg-[#eaf3ef] px-2 py-1 text-[10px] font-bold text-[#39786f]">
+          {compact ? "MINI" : "RECEIPT"}
+        </span>
+      </div>
+      <div className="mt-4 space-y-2">
+        {order.receipt.items.map((item) => (
+          <div
+            key={`${item.garmentName}:${item.serviceName}`}
+            className="flex justify-between text-sm"
+          >
+            <span>
+              {item.garmentName} × {item.qty}
+              <small className="ml-1 text-xs text-[#718087]">
+                {item.serviceName}
+              </small>
+            </span>
+            <strong>{formatINR(item.amount)}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 border-t border-[#263f44]/10 pt-3">
+        <div className="flex justify-between text-sm">
+          <span>Subtotal</span>
+          <span>{formatINR(order.receipt.subtotal)}</span>
+        </div>
+        <div className="mt-2 flex justify-between border-t border-[#263f44]/10 pt-2 font-serif text-xl">
+          <span>Total</span>
+          <span>{formatINR(order.receipt.grandTotal)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+function PrintHistory({ jobs }: { jobs: PrintJob[] }) {
+  return (
+    <div className="mt-5 overflow-hidden rounded-xl border border-[#263f44]/10 bg-white">
+      <div className="grid grid-cols-[1fr_110px_110px] gap-3 border-b border-[#263f44]/10 bg-[#fafaf7] px-4 py-3 text-[10px] font-bold uppercase tracking-[.12em] text-[#718087]">
+        <span>Document</span>
+        <span>Status</span>
+        <span>When</span>
+      </div>
+      {jobs.length ? (
+        jobs.map((job) => (
+          <div
+            key={job.id}
+            className="grid grid-cols-[1fr_110px_110px] gap-3 border-b border-[#263f44]/8 px-4 py-3 text-xs"
+          >
+            <span>
+              <strong className="block text-[#17353c]">
+                {job.documentType}
+              </strong>
+              <span className="text-[#718087]">
+                {job.requestedCopies} copies · {job.templateId}
+              </span>
+            </span>
+            <span className="font-bold text-[#39786f]">{job.status}</span>
+            <span className="text-[#718087]">
+              {new Date(job.createdAt).toLocaleString()}
+            </span>
+          </div>
+        ))
+      ) : (
+        <p className="px-4 py-12 text-center text-sm text-[#718087]">
+          No print actions recorded for this order.
+        </p>
+      )}
+    </div>
+  );
 }

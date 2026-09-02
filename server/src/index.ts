@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { registerApi } from './api.js';
 import { registerSeedAutomations } from './automations/seed.js';
 import { listRows } from './kernel/entity-service.js';
-import { assignLaundryOrder, bookLaundryOrder, createLaundryRider, laundryCatalogue, seedLaundryDefaults, transitionLaundryOrder } from './modules/laundry/domain.js';
+import { assignLaundryOrder, bookLaundryOrder, createLaundryRider, laundryCatalogue, scanLaundryGarment, seedLaundryDefaults, transitionLaundryOrder } from './modules/laundry/domain.js';
 import { laundryBusinessDate } from './modules/laundry/dates.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
@@ -17,6 +17,11 @@ const WORKSPACE_MODE = process.env.EPIC_WORKSPACE_MODE === 'demo' ? 'demo' : 'pr
 const app = Fastify({ logger: true });
 const configuredCorsOrigins = String(process.env.EPIC_CORS_ORIGIN || '').split(',').map((origin) => origin.trim()).filter(Boolean);
 await app.register(cors, { origin: configuredCorsOrigins.length ? configuredCorsOrigins : false });
+
+const DEMO_ASSEMBLY_STATES = ['Sorted', 'Processing', 'QC', 'Assembly', 'Racked'] as const;
+function completeDemoAssembly(units: Array<{ tagCode: string; sequence: number }>, batch: string) {
+  for (const [unitIndex, unit] of units.entries()) for (const [stateIndex, nextState] of DEMO_ASSEMBLY_STATES.entries()) scanLaundryGarment(TENANT, 'demo-seed', { tagCode: unit.tagCode, nextState, location: nextState === 'Racked' ? `DEMO-RACK-${batch}-${unitIndex}` : `Demo ${nextState} station`, note: `Demo assembly step ${stateIndex + 1}` });
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await app.register(fastifyStatic, {
@@ -74,16 +79,19 @@ function seedLaundryDemo() {
     } else if (targetState === 'Ready') {
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'Picked Up', 'Demo pickup complete');
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'In Process', 'Demo wash started');
+      completeDemoAssembly(result.garmentUnits, String(index));
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'Ready', 'Demo quality check passed');
     } else if (targetState === 'Out for Delivery') {
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'Picked Up', 'Demo pickup complete');
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'In Process', 'Demo wash started');
+      completeDemoAssembly(result.garmentUnits, String(index));
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'Ready', 'Demo quality check passed');
       assignLaundryOrder(TENANT, 'demo-seed', result.order.id, { stage: 'delivery', riderId: rider.id });
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'Out for Delivery', 'Demo rider dispatched');
     } else if (targetState === 'Delivered') {
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'Picked Up', 'Demo pickup complete');
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'In Process', 'Demo wash started');
+      completeDemoAssembly(result.garmentUnits, String(index));
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'Ready', 'Demo quality check passed');
       transitionLaundryOrder(TENANT, 'demo-seed', result.order.id, 'Delivered', 'Demo customer handoff complete');
     }

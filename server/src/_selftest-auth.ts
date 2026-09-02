@@ -58,7 +58,7 @@ try {
   assert.throws(() => signIn('processing-user', 'ProcessingPassword!26'), /invalid username or password/, 'disabled staff cannot sign in');
   const lastOwnerDisable = await app.inject({ method: 'POST', url: `/api/settings/staff/${owner.id}/enabled`, headers, payload: { enabled: false } });
   assert.equal(lastOwnerDisable.statusCode, 400, 'the final enabled owner cannot be disabled');
-  const settingsSave = await app.inject({ method: 'POST', url: '/api/settings/store', headers, payload: { businessName: 'Auth Test Laundry', upiId: 'auth-test@upi', qrOnPrint: true, logoDataUrl: 'data:image/svg+xml;base64,PHN2Zy8+', taxMode: 'gst', gstin: '22AAAAA0000A1Z5', currency: 'INR', timezone: 'Asia/Kolkata', printerProfile: 'thermal-80mm' } });
+  const settingsSave = await app.inject({ method: 'POST', url: '/api/settings/store', headers, payload: { businessName: 'Auth Test Laundry', upiId: 'auth-test@upi', qrOnPrint: true, logoDataUrl: 'data:image/svg+xml;base64,PHN2Zy8+', taxMode: 'gst', gstin: '22AAAAA0000A1Z5', currency: 'INR', timezone: 'Asia/Kolkata', printerProfile: 'thermal-80mm', afterBooking: 'open-print-centre', printerProfiles: [{ id: 'tag-58', name: 'Tag printer 58', kind: 'tag', connection: 'usb', device: 'USB001', paperWidthMm: 58, paperHeightMm: 51, orientation: 'portrait', marginMm: 3, dpi: 203, copies: 1, silentPrintEnabled: false, supportsQr: true, supportsBarcode: true }], tagTemplate: { preset: 'thermal-50x25', widthMm: 50, heightMm: 25, columns: 1, rows: 1, codeFormat: 'qr+code128', showCustomer: false, showOrder: true, showDueDate: false, showSequence: true } } });
   assert.equal(settingsSave.statusCode, 200, 'owner can persist scoped store settings');
   const settingsRead = await app.inject({ method: 'GET', url: '/api/settings/store', headers });
   assert.equal(settingsRead.json().upiId, 'auth-test@upi', 'stored settings round-trip through the scoped API');
@@ -66,6 +66,10 @@ try {
   assert.equal(settingsRead.json().taxMode, 'gst', 'tax mode is persisted in the scoped store profile');
   assert.equal(settingsRead.json().gstin, '22AAAAA0000A1Z5', 'GSTIN is normalized and persisted');
   assert.equal(settingsRead.json().printerProfile, 'thermal-80mm', 'printer profile is persisted without claiming a hardware connection');
+  assert.equal(settingsRead.json().afterBooking, 'open-print-centre', 'post-booking print behavior is persisted per store');
+  assert.equal(settingsRead.json().printerProfiles[0].device, 'USB001', 'printer profile device metadata is persisted without claiming connection');
+  assert.equal(settingsRead.json().tagTemplate.preset, 'thermal-50x25', 'tag template preset is persisted per store');
+  assert.equal(settingsRead.json().tagTemplate.codeFormat, 'qr+code128', 'tag template code format is persisted per store');
   assert.throws(() => store.saveStoreSettings('AUTH', 'owner-test', { taxMode: 'gst', gstin: 'not-a-gstin' }, 'STORE-A'), /GSTIN/, 'invalid GSTIN is rejected before persistence');
   assert.throws(() => store.saveStoreSettings('AUTH', 'owner-test', { timezone: 'Not/AZone' }, 'STORE-A'), /timezone/, 'invalid timezone is rejected before persistence');
   assert.equal(store.withStoreScope('AUTH', 'STORE-A', () => store.auditOf('AUTH').some((entry) => entry.action === 'settings:store-updated')), true, 'store settings changes create an audit record in their own branch');

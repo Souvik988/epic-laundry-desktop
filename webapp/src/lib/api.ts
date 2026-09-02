@@ -29,6 +29,27 @@ export class OfflineQueuedError extends Error {
   constructor(public readonly commandId: string) { super('The local server is unavailable. This action was saved to the offline queue and will retry when the connection returns.'); this.name = 'OfflineQueuedError'; }
 }
 
+export class ApiError extends Error {
+  constructor(message: string, readonly code?: string, readonly details?: Record<string, unknown>) { super(message); this.name = 'ApiError'; }
+}
+
+const operatorMessages: Record<string, string> = {
+  TAG_NOT_FOUND: 'That tag was not found in this branch. Check the code and scan the active store tag.',
+  TAG_RETIRED: 'This tag was replaced. Scan the current active tag shown in the history.',
+  INVALID_GARMENT_TRANSITION: 'That garment cannot move to the selected stage from its current stage.',
+  INVALID_CONTAINER_TRANSITION: 'That container cannot move to the selected stage from its current stage.',
+  ASSEMBLY_INCOMPLETE: 'Assembly is blocked until every tracked garment or container reaches its required ready state.',
+  STALE_ORDER_VERSION: 'This order changed in another workspace. Refresh it before trying again.',
+  ORDER_NOT_FOUND: 'This order is no longer available in the active store.',
+  PRINT_JOB_INVALID: 'The print request is invalid. Check the selected document, tags, and copy count.',
+  PRINT_JOB_FAILED: 'The print job failed. Record the failure reason and retry from Print Centre.',
+};
+
+export function operatorErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof ApiError) return (error.code && operatorMessages[error.code]) || error.message || fallback;
+  return error instanceof Error ? error.message || fallback : fallback;
+}
+
 function readOfflineQueue(): OfflineQueueItem[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -104,8 +125,8 @@ export async function apiPost<T = any>(path: string, body?: any, options: Reques
   });
   if (res.status === 401) notifyUnauthorized();
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `POST ${path} -> ${res.status}`);
+    const err = await res.json().catch(() => ({ error: res.statusText })) as { error?: string; code?: string; details?: Record<string, unknown> };
+    throw new ApiError(err.error || `POST ${path} -> ${res.status}`, err.code, err.details);
   }
   return res.json();
 }
@@ -119,8 +140,8 @@ export async function apiPatch<T = any>(path: string, body?: any): Promise<T> {
   });
   if (res.status === 401) notifyUnauthorized();
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `PATCH ${path} -> ${res.status}`);
+    const err = await res.json().catch(() => ({ error: res.statusText })) as { error?: string; code?: string; details?: Record<string, unknown> };
+    throw new ApiError(err.error || `PATCH ${path} -> ${res.status}`, err.code, err.details);
   }
   return res.json();
 }

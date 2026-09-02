@@ -12,7 +12,11 @@ function appVersion() {
 contextBridge.exposeInMainWorld('epic', {
   platform: process.platform,           // 'win32' | 'darwin' | 'linux'
   version: appVersion(),
-  isDev: !require('electron').app.isPackaged,
+  // `app` is a main-process-only module and is not available in every
+  // Electron preload context. `process.defaultApp` is the supported preload
+  // signal for a development launch and keeps the bridge alive in packaged
+  // builds.
+  isDev: process.defaultApp === true,
   quit: () => ipcRenderer.send('app:quit'),
 
   // --- Native desktop actions (all handled in main.js) ---
@@ -27,6 +31,7 @@ contextBridge.exposeInMainWorld('epic', {
   exportPdf: (suggestedName) => ipcRenderer.invoke('epic:export-pdf', suggestedName),
   // Print an isolated, escaped HTML document through the native system dialog.
   printHtml: (html) => ipcRenderer.invoke('epic:print-html', html),
+  exportHtmlPdf: (html, suggestedName) => ipcRenderer.invoke('epic:export-html-pdf', { html, suggestedName }),
   // Save arbitrary text/CSV content to disk via the OS "Save As" dialog.
   saveFile: (opts) => ipcRenderer.invoke('epic:save-file', opts),
   // Fire an OS-level (native) notification.

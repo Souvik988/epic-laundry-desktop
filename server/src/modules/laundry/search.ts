@@ -1,7 +1,7 @@
 import { store } from '../../kernel/store.js';
 
 export type LaundrySearchResult = {
-  kind: 'customer' | 'order' | 'garment';
+  kind: 'customer' | 'order' | 'invoice' | 'garment' | 'container';
   id: string;
   label: string;
   detail: string;
@@ -30,16 +30,27 @@ export function searchLaundryWorkspace(tenant: string, query: unknown, access: S
   }
   if (access.orders !== false) {
     for (const row of store.rowsOf(tenant, 'laundry_order')) {
-      const orderNumber = String(row.data.order_number || row.id);
-      const invoice = String(row.data.invoice_number || row.data.invoice || '');
-      const customer = String(row.data.customer_name || row.data.customer || '');
+      const orderNumber = String(row.data.order_number || row.data.name || row.id);
+      const invoiceRow = row.data.invoice ? store.getRow(tenant, String(row.data.invoice)) : undefined;
+      const invoice = String(row.data.invoice_number || invoiceRow?.data.name || row.data.invoice || '');
+      const customerRow = row.data.customer ? store.getRow(tenant, String(row.data.customer)) : undefined;
+      const customer = String(row.data.customer_name || customerRow?.data.name || row.data.customer || '');
       const state = String(row.data.state || row.status || '');
       add({ kind: 'order', id: row.id, label: orderNumber, detail: [customer, state, invoice].filter(Boolean).join(' · ') || 'Laundry order', path: `/laundry/orders?order=${encodeURIComponent(row.id)}` }, `${orderNumber} ${invoice} ${customer} ${row.id} ${state}`.toLowerCase());
+      if (invoice) add({ kind: 'invoice', id: invoice, label: invoice, detail: `${orderNumber} · ${customer || 'Laundry order'} · ${state || 'Active'}`, path: `/laundry/orders?order=${encodeURIComponent(row.id)}` }, invoice.toLowerCase());
     }
   }
   if (access.garments !== false) {
     for (const unit of store.listGarmentUnits(tenant)) {
       add({ kind: 'garment', id: unit.id, label: unit.activeTagCode || unit.code, detail: `${unit.garmentId} · ${unit.state} · ${unit.location}`, path: `/laundry/garment-tracking?tag=${encodeURIComponent(unit.activeTagCode)}` }, `${unit.activeTagCode} ${unit.code} ${unit.garmentId} ${unit.orderId} ${unit.state} ${unit.location}`.toLowerCase());
+    }
+  }
+  if (access.garments !== false) {
+    for (const container of store.listLaundryContainers(tenant)) {
+      const order = store.getRow(tenant, container.orderId);
+      const customerRow = order?.data.customer ? store.getRow(tenant, String(order.data.customer)) : undefined;
+      const customer = order ? String(order.data.customer_name || customerRow?.data.name || order.data.customer || '') : '';
+      add({ kind: 'container', id: container.id, label: container.tagCode, detail: `${order?.data.name || container.orderId} · ${customer} · ${container.state}`, path: `/laundry/garment-tracking?tag=${encodeURIComponent(container.tagCode)}&kind=container` }, `${container.tagCode} ${container.id} ${container.orderId} ${order?.data.name || ''} ${customer} ${container.state}`.toLowerCase());
     }
   }
   return results.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label)).slice(0, 30).map(({ score: _score, ...result }) => result);

@@ -4,7 +4,7 @@ import { ALL_DESTINATIONS, type Destination } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { apiGet } from "@/lib/api";
 
-type RecordResult = { kind: 'customer' | 'order' | 'garment'; id: string; label: string; detail: string; path: string };
+type RecordResult = { kind: 'customer' | 'order' | 'invoice' | 'garment' | 'container'; id: string; label: string; detail: string; path: string };
 
 /** Command palette (Ctrl/Cmd+K) — jump to any module, ERP power-user style. */
 export function CommandPalette({ destinations = ALL_DESTINATIONS, recordSearchPath }: { destinations?: Destination[]; recordSearchPath?: string }) {

@@ -39,7 +39,7 @@ export function App() {
   return (
     <AuthGate>
     <Routes>
-      <Route path="/" element={<Navigate to="/laundry/dashboard" replace />} />
+      <Route path="/" element={<LaundryLanding />} />
       <Route path="/laundry" element={<LaundryShell />}>
         <Route index element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard" element={<PermissionGate permission="orders.read"><LaundryDashboard /></PermissionGate>} />
@@ -71,6 +71,22 @@ export function App() {
     </Routes>
     </AuthGate>
   );
+}
+
+function LaundryLanding() {
+  const session = useQuery({ queryKey: ['auth-session'], queryFn: () => apiGet<{ user: { roles: string[] } | null }>('/auth/session') })
+  if (session.isLoading) return <div className="grid h-screen place-items-center text-sm text-muted-foreground">Opening your laundry workspace…</div>
+  const roles = session.data?.user?.roles || []
+  const target = roles.includes('owner')
+    ? '/laundry/dashboard'
+    : roles.includes('counter_staff')
+      ? '/laundry/new-order'
+      : roles.includes('processing_staff')
+        ? '/laundry/production-queue'
+        : roles.includes('rider')
+          ? '/laundry/routes'
+          : '/laundry/dashboard'
+  return <Navigate to={target} replace />
 }
 
 function PermissionGate({ permission, children }: { permission: UiPermission; children: ReactNode }) {

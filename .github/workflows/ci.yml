@@ -39,8 +39,18 @@ jobs:
       - name: Typecheck server
         run: npm run typecheck
         working-directory: server
-      - name: Run server boundary tests
-        run: npm run test:diagnostics && npm run test:backup-crypto && npm run test:money && npm run test:reconciliation && npm run test:customer && npm run test:garment-traceability && npm run test:cash-shift && npm run test:routes && npm run test:hardware && npm run test:financial-normalization && npm run test:recovery-drill && npm run test:e2e
+      - name: Run full server regression and V3 tagging gates
+        run: >-
+          npm run test:laundry && npm run test:auth && npm run test:store-migration &&
+          npm run test:customer && npm run test:package && npm run test:catalogue &&
+          npm run test:payment && npm run test:ops && npm run test:restart &&
+          npm run test:recovery-drill && npm run test:workspace-mode &&
+          npm run test:startup-handshake && npm run test:garment-traceability &&
+          npm run test:garment-backfill && npm run test:money && npm run test:reconciliation &&
+          npm run test:cash-shift && npm run test:routes && npm run test:hardware &&
+          npm run test:diagnostics && npm run test:backup-crypto &&
+          npm run test:financial-normalization && npm run test:entity-normalization &&
+          npm run test:e2e
         working-directory: server
       - name: Install web dependencies
         run: npm ci
@@ -61,6 +71,12 @@ jobs:
         working-directory: webapp
       - name: Run static accessibility audit
         run: npm run audit:a11y
+        working-directory: webapp
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: webapp
+      - name: Run frontend interaction smoke test
+        run: npm run test:e2e
         working-directory: webapp
       - name: Install desktop dependencies
         run: npm ci

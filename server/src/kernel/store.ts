@@ -19,6 +19,10 @@ export interface DbShape {
   garmentUnits?: GarmentUnitRecord[];
   garmentUnitEvents?: GarmentUnitEventRecord[];
   tagReprints?: TagReprintRecord[];
+  tagHistory?: TagHistoryRecord[];
+  printJobs?: TagPrintJobRecord[];
+  laundryContainers?: LaundryContainerRecord[];
+  laundryContainerEvents?: LaundryContainerEventRecord[];
   financialEntries?: FinancialEntryRecord[];
   financialDocuments?: FinancialDocumentRecord[];
   customerLedgerEntries?: CustomerLedgerRecord[];
@@ -70,6 +74,9 @@ export type StoreSettings = {
   currency: string;
   timezone: string;
   printerProfile: string;
+  afterBooking: 'ask' | 'open-print-centre' | 'auto-print' | 'none';
+  printerProfiles: PrinterProfileSettings[];
+  tagTemplate: TagTemplateSettings;
   stationCapacities: Record<string, number>;
   setupProgress: {
     business: boolean;
@@ -83,6 +90,54 @@ export type StoreSettings = {
   updatedAt: string;
   updatedBy: string;
 };
+export type PrinterProfileSettings = {
+  id: string;
+  name: string;
+  kind: 'receipt' | 'tag';
+  connection: 'system-dialog' | 'usb' | 'network' | 'file';
+  device: string;
+  paperWidthMm: number;
+  paperHeightMm: number;
+  orientation: 'portrait' | 'landscape';
+  marginMm: number;
+  dpi: number;
+  copies: number;
+  silentPrintEnabled: boolean;
+  active: boolean;
+  supportsQr: boolean;
+  supportsBarcode: boolean;
+  lastVerifiedAt?: string;
+  verificationEvidence?: string;
+};
+export type TagTemplateSettings = {
+  preset: 'a4-4' | 'a4-6' | 'a4-8' | 'a4-10' | 'thermal-50.8x51.4' | 'thermal-50x25' | 'custom';
+  widthMm: number;
+  heightMm: number;
+  columns: number;
+  rows: number;
+  orientation: 'portrait' | 'landscape';
+  pageSize: 'A4' | 'thermal';
+  marginMm: number;
+  fontScale: number;
+  lineSpacing: number;
+  codeFormat: 'qr' | 'code128' | 'qr+code128';
+  showLogo: boolean;
+  showGarment: boolean;
+  showService: boolean;
+  showInvoiceNumber: boolean;
+  showPhone: boolean;
+  showOrderDate: boolean;
+  showTagCode: boolean;
+  showStoreName: boolean;
+  showCustomer: boolean;
+  showOrder: boolean;
+  showDueDate: boolean;
+  showSequence: boolean;
+  showNotes: boolean;
+  showExpress: boolean;
+  showSpecialCare: boolean;
+};
+export const DEFAULT_TAG_TEMPLATE: TagTemplateSettings = { preset: 'a4-6', widthMm: 96, heightMm: 84, columns: 2, rows: 3, orientation: 'portrait', pageSize: 'A4', marginMm: 8, fontScale: 1, lineSpacing: 1, codeFormat: 'qr', showLogo: true, showGarment: true, showService: true, showInvoiceNumber: false, showPhone: false, showOrderDate: false, showTagCode: true, showStoreName: true, showCustomer: true, showOrder: true, showDueDate: true, showSequence: true, showNotes: false, showExpress: true, showSpecialCare: true };
 export const DEFAULT_STATION_CAPACITIES: Record<string, number> = {
   Intake: 20,
   Sorting: 20,
@@ -107,6 +162,29 @@ export type GarmentUnitEventRecord = {
 export type TagReprintRecord = {
   id: string; tenant: string; storeId: string; unitId: string; previousTagCode: string; newTagCode: string;
   station: string; reason: string; actor: string; createdAt: string;
+};
+export type TagHistoryStatus = 'Active' | 'Retired' | 'Lost' | 'Damaged' | 'Replaced';
+export type TagHistoryRecord = {
+  id: string; tenant: string; storeId: string; garmentUnitId: string; tagCode: string; status: TagHistoryStatus;
+  issuedAt: string; issuedBy: string; retiredAt?: string; retiredBy?: string; retirementReason?: string;
+  replacementTagId?: string; version: number; createdAt: string;
+};
+export type TagPrintJobStatus = 'Queued' | 'Rendering' | 'Printed' | 'Downloaded' | 'Failed' | 'Cancelled';
+export type TagPrintJobRecord = {
+  id: string; tenant: string; storeId: string; orderId: string; templateId: string; templateVersion: string;
+  printerProfile: string; tagIds: string[]; documentType: string; requestedCopies: number; requestedBy: string;
+  createdAt: string; status: TagPrintJobStatus; startedAt?: string; completedAt?: string; failureReason?: string;
+  outputHash?: string; evidence?: string;
+};
+export type LaundryContainerState = 'Intake' | 'Processing' | 'Ready' | 'Dispatched' | 'Delivered' | 'Missing' | 'Damaged' | 'Cancelled';
+export type LaundryContainerRecord = {
+  id: string; tenant: string; storeId: string; orderId: string; customerId: string;
+  sequence: number; total: number; weightKg?: number; tagCode: string; state: LaundryContainerState;
+  location: string; condition: string; createdBy: string; createdAt: string; updatedAt: string; deliveredAt?: string;
+};
+export type LaundryContainerEventRecord = {
+  id: string; tenant: string; storeId: string; containerId: string; event: string; fromState?: LaundryContainerState;
+  toState?: LaundryContainerState; location?: string; actor: string; note?: string; createdAt: string;
 };
 export type FinancialEntryRecord = {
   id: string; tenant: string; storeId: string; kind: string; sourceEntity: string; sourceId: string;
@@ -188,6 +266,31 @@ function normalizeStationCapacities(value: unknown) {
     result[name] = capacity;
   }
   return result;
+}
+function normalizeTagTemplate(value: unknown): TagTemplateSettings {
+  const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const preset = ['a4-4', 'a4-6', 'a4-8', 'a4-10', 'thermal-50.8x51.4', 'thermal-50x25', 'custom'].includes(String(input.preset)) ? String(input.preset) as TagTemplateSettings['preset'] : DEFAULT_TAG_TEMPLATE.preset;
+  const number = (key: keyof TagTemplateSettings, fallback: number, min: number, max: number) => { const value = Number(input[key]); return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value * 10) / 10)) : fallback; };
+  const codeFormat = ['qr', 'code128', 'qr+code128'].includes(String(input.codeFormat)) ? String(input.codeFormat) as TagTemplateSettings['codeFormat'] : DEFAULT_TAG_TEMPLATE.codeFormat;
+  const orientation = input.orientation === 'landscape' ? 'landscape' : 'portrait';
+  const pageSize = input.pageSize === 'thermal' ? 'thermal' : 'A4';
+  const boolean = (key: keyof TagTemplateSettings) => input[key] === undefined ? DEFAULT_TAG_TEMPLATE[key] as boolean : Boolean(input[key]);
+  return { preset, widthMm: number('widthMm', DEFAULT_TAG_TEMPLATE.widthMm, 20, 200), heightMm: number('heightMm', DEFAULT_TAG_TEMPLATE.heightMm, 15, 280), columns: Math.round(number('columns', DEFAULT_TAG_TEMPLATE.columns, 1, 6)), rows: Math.round(number('rows', DEFAULT_TAG_TEMPLATE.rows, 1, 12)), orientation, pageSize, marginMm: number('marginMm', DEFAULT_TAG_TEMPLATE.marginMm, 0, 25), fontScale: number('fontScale', DEFAULT_TAG_TEMPLATE.fontScale, 0.7, 1.5), lineSpacing: number('lineSpacing', DEFAULT_TAG_TEMPLATE.lineSpacing, 0.8, 2), codeFormat, showLogo: boolean('showLogo'), showGarment: boolean('showGarment'), showService: boolean('showService'), showInvoiceNumber: boolean('showInvoiceNumber'), showPhone: boolean('showPhone'), showOrderDate: boolean('showOrderDate'), showTagCode: boolean('showTagCode'), showStoreName: boolean('showStoreName'), showCustomer: boolean('showCustomer'), showOrder: boolean('showOrder'), showDueDate: boolean('showDueDate'), showSequence: boolean('showSequence'), showNotes: boolean('showNotes'), showExpress: boolean('showExpress'), showSpecialCare: boolean('showSpecialCare') };
+}
+function normalizePrinterProfiles(value: unknown): PrinterProfileSettings[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value.map((raw): PrinterProfileSettings | null => {
+    const input = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+    const id = String(input.id || '').trim().slice(0, 80);
+    const name = String(input.name || '').trim().slice(0, 120);
+    if (!id || !name || seen.has(id)) return null;
+    seen.add(id);
+    const kind = input.kind === 'tag' ? 'tag' : 'receipt';
+    const connection = ['system-dialog', 'usb', 'network', 'file'].includes(String(input.connection)) ? String(input.connection) as PrinterProfileSettings['connection'] : 'system-dialog';
+    const width = Number(input.paperWidthMm); const height = Number(input.paperHeightMm); const dpi = Number(input.dpi); const margin = Number(input.marginMm); const copies = Number(input.copies);
+    return { id, name, kind, connection, device: String(input.device || '').trim().slice(0, 200), paperWidthMm: Number.isFinite(width) ? Math.max(25, Math.min(300, Math.round(width * 10) / 10)) : 80, paperHeightMm: Number.isFinite(height) ? Math.max(15, Math.min(300, Math.round(height * 10) / 10)) : 80, orientation: input.orientation === 'landscape' ? 'landscape' : 'portrait', marginMm: Number.isFinite(margin) ? Math.max(0, Math.min(30, Math.round(margin * 10) / 10)) : 5, dpi: Number.isSafeInteger(dpi) ? Math.max(72, Math.min(1200, dpi)) : 203, copies: Number.isSafeInteger(copies) ? Math.max(1, Math.min(500, copies)) : 1, silentPrintEnabled: input.silentPrintEnabled === true, active: input.active !== false, supportsQr: input.supportsQr !== false, supportsBarcode: Boolean(input.supportsBarcode), lastVerifiedAt: input.lastVerifiedAt ? String(input.lastVerifiedAt).slice(0, 40) : undefined, verificationEvidence: input.verificationEvidence ? String(input.verificationEvidence).trim().slice(0, 500) : undefined };
+  }).filter((profile): profile is PrinterProfileSettings => Boolean(profile)).slice(0, 50);
 }
 const decode = <T>(value: string): T => JSON.parse(value) as T;
 
@@ -280,6 +383,39 @@ export class Store {
         actor TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(tenant, store_id, new_tag_code)
       );
       CREATE INDEX IF NOT EXISTS tag_reprints_unit ON tag_reprints(tenant, store_id, unit_id, created_at);
+      CREATE TABLE IF NOT EXISTS tag_history (
+        id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, garment_unit_id TEXT NOT NULL,
+        tag_code TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('Active','Retired','Lost','Damaged','Replaced')),
+        issued_at TEXT NOT NULL, issued_by TEXT NOT NULL, retired_at TEXT, retired_by TEXT, retirement_reason TEXT,
+        replacement_tag_id TEXT, version INTEGER NOT NULL CHECK(version > 0), created_at TEXT NOT NULL,
+        UNIQUE(tenant, store_id, tag_code)
+      );
+      CREATE INDEX IF NOT EXISTS tag_history_unit ON tag_history(tenant, store_id, garment_unit_id, created_at);
+      CREATE INDEX IF NOT EXISTS tag_history_lookup ON tag_history(tenant, store_id, tag_code, status);
+      CREATE TABLE IF NOT EXISTS tag_print_jobs (
+        id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL,
+        template_id TEXT NOT NULL, template_version TEXT NOT NULL, printer_profile TEXT NOT NULL,
+        tag_ids_json TEXT NOT NULL, document_type TEXT NOT NULL CHECK(document_type IN ('invoice','mini-invoice','garment-tags','bag-tags','correction')),
+        requested_copies INTEGER NOT NULL CHECK(typeof(requested_copies) = 'integer' AND requested_copies BETWEEN 1 AND 500),
+        requested_by TEXT NOT NULL, created_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('Queued','Rendering','Printed','Downloaded','Failed','Cancelled')),
+        started_at TEXT, completed_at TEXT, failure_reason TEXT, output_hash TEXT, evidence TEXT
+      );
+      CREATE INDEX IF NOT EXISTS tag_print_jobs_scope_time ON tag_print_jobs(tenant, store_id, created_at DESC);
+      CREATE TABLE IF NOT EXISTS laundry_containers (
+        id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, customer_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK(sequence > 0), total INTEGER NOT NULL CHECK(total > 0), weight_milli INTEGER,
+        tag_code TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('Intake','Processing','Ready','Dispatched','Delivered','Missing','Damaged','Cancelled')),
+        location TEXT NOT NULL DEFAULT 'Intake', condition TEXT NOT NULL DEFAULT 'Normal', created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL, delivered_at TEXT, UNIQUE(tenant, store_id, tag_code), UNIQUE(tenant, store_id, order_id, sequence)
+      );
+      CREATE INDEX IF NOT EXISTS laundry_containers_scope_order ON laundry_containers(tenant, store_id, order_id, sequence);
+      CREATE INDEX IF NOT EXISTS laundry_containers_tag_lookup ON laundry_containers(tenant, store_id, tag_code, state);
+      CREATE TABLE IF NOT EXISTS laundry_container_events (
+        id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, container_id TEXT NOT NULL, event TEXT NOT NULL,
+        from_state TEXT, to_state TEXT, location TEXT, actor TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS laundry_container_events_container ON laundry_container_events(tenant, store_id, container_id, created_at);
       CREATE TABLE IF NOT EXISTS financial_entries (
         id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, kind TEXT NOT NULL,
         source_entity TEXT NOT NULL, source_id TEXT NOT NULL, direction TEXT NOT NULL CHECK(direction IN ('IN','OUT')),
@@ -358,6 +494,9 @@ export class Store {
       { version: 14, name: 'financial-normalization-wallet-evidence', sql: "ALTER TABLE financial_normalization_runs ADD COLUMN wallet_entries_applied INTEGER NOT NULL DEFAULT 0 CHECK(wallet_entries_applied >= 0);" },
       { version: 15, name: 'audited-pos-hold-ownership', sql: "ALTER TABLE laundry_order_holds ADD COLUMN owner_actor TEXT NOT NULL DEFAULT ''; ALTER TABLE laundry_order_holds ADD COLUMN ownership_updated_at TEXT NOT NULL DEFAULT ''; UPDATE laundry_order_holds SET owner_actor = created_by WHERE owner_actor = ''; UPDATE laundry_order_holds SET ownership_updated_at = updated_at WHERE ownership_updated_at = ''; CREATE INDEX IF NOT EXISTS laundry_order_holds_scope_owner ON laundry_order_holds(tenant, store_id, owner_actor, status, updated_at DESC);" },
       { version: 16, name: 'normalized-customer-order-projections', sql: "CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, name TEXT NOT NULL, phone TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', preferred_contact TEXT NOT NULL DEFAULT 'Phone', service_preferences TEXT NOT NULL DEFAULT '', marketing_consent INTEGER NOT NULL DEFAULT 0 CHECK(marketing_consent IN (0,1)), source_version INTEGER NOT NULL CHECK(source_version > 0), source_updated_at TEXT NOT NULL, source_hash TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(tenant, store_id, phone)); CREATE INDEX IF NOT EXISTS customers_scope_name ON customers(tenant, store_id, name COLLATE NOCASE); CREATE TABLE IF NOT EXISTS laundry_orders (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, customer_id TEXT NOT NULL, order_number TEXT NOT NULL, state TEXT NOT NULL, order_date TEXT NOT NULL, expected_delivery_date TEXT NOT NULL, fulfillment_mode TEXT NOT NULL, grand_total_paise INTEGER NOT NULL CHECK(grand_total_paise >= 0), payment_status TEXT NOT NULL, data_json TEXT NOT NULL, source_version INTEGER NOT NULL CHECK(source_version > 0), source_updated_at TEXT NOT NULL, source_hash TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(tenant, store_id, order_number), FOREIGN KEY(customer_id) REFERENCES customers(id)); CREATE INDEX IF NOT EXISTS laundry_orders_scope_state_due ON laundry_orders(tenant, store_id, state, expected_delivery_date, updated_at DESC); CREATE INDEX IF NOT EXISTS laundry_orders_scope_customer ON laundry_orders(tenant, store_id, customer_id, order_date DESC); CREATE TABLE IF NOT EXISTS laundry_order_items (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, item_index INTEGER NOT NULL CHECK(item_index >= 0), garment_id TEXT NOT NULL, service_id TEXT NOT NULL, unit TEXT NOT NULL, quantity_milli INTEGER NOT NULL CHECK(quantity_milli > 0), rate_paise INTEGER NOT NULL CHECK(rate_paise >= 0), amount_paise INTEGER NOT NULL CHECK(amount_paise >= 0), data_json TEXT NOT NULL, UNIQUE(tenant, store_id, order_id, item_index), FOREIGN KEY(order_id) REFERENCES laundry_orders(id)); CREATE INDEX IF NOT EXISTS laundry_order_items_scope_order ON laundry_order_items(tenant, store_id, order_id, item_index); CREATE TABLE IF NOT EXISTS compatibility_migration_runs (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, entity TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('running','completed','failed')), cursor INTEGER NOT NULL CHECK(cursor >= 0), total INTEGER NOT NULL CHECK(total >= 0), applied INTEGER NOT NULL CHECK(applied >= 0), invalid INTEGER NOT NULL CHECK(invalid >= 0), conflicts INTEGER NOT NULL CHECK(conflicts >= 0), source_hash TEXT NOT NULL, actor TEXT NOT NULL, started_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, error TEXT); CREATE INDEX IF NOT EXISTS compatibility_migration_scope ON compatibility_migration_runs(tenant, store_id, entity, updated_at DESC);" },
+      { version: 17, name: 'durable-tag-history-and-print-jobs', sql: "CREATE TABLE IF NOT EXISTS tag_history (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, garment_unit_id TEXT NOT NULL, tag_code TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('Active','Retired','Lost','Damaged','Replaced')), issued_at TEXT NOT NULL, issued_by TEXT NOT NULL, retired_at TEXT, retired_by TEXT, retirement_reason TEXT, replacement_tag_id TEXT, version INTEGER NOT NULL CHECK(version > 0), created_at TEXT NOT NULL, UNIQUE(tenant, store_id, tag_code)); CREATE INDEX IF NOT EXISTS tag_history_unit ON tag_history(tenant, store_id, garment_unit_id, created_at); CREATE INDEX IF NOT EXISTS tag_history_lookup ON tag_history(tenant, store_id, tag_code, status); CREATE TABLE IF NOT EXISTS tag_print_jobs (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, template_id TEXT NOT NULL, template_version TEXT NOT NULL, printer_profile TEXT NOT NULL, tag_ids_json TEXT NOT NULL, document_type TEXT NOT NULL, requested_copies INTEGER NOT NULL CHECK(requested_copies > 0), requested_by TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT, completed_at TEXT, failure_reason TEXT, output_hash TEXT, evidence TEXT); CREATE INDEX IF NOT EXISTS tag_print_jobs_scope_time ON tag_print_jobs(tenant, store_id, created_at DESC); INSERT INTO tag_history(id,tenant,store_id,garment_unit_id,tag_code,status,issued_at,issued_by,version,created_at) SELECT 'th_legacy_' || id,tenant,store_id,id,active_tag_code,'Active',created_at,created_by,1,created_at FROM garment_units WHERE NOT EXISTS (SELECT 1 FROM tag_history h WHERE h.tenant = garment_units.tenant AND h.store_id = garment_units.store_id AND h.tag_code = garment_units.active_tag_code);" },
+      { version: 18, name: 'hardened-print-job-state-and-document-constraints', sql: "CREATE TABLE tag_print_jobs_hardened (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, template_id TEXT NOT NULL, template_version TEXT NOT NULL, printer_profile TEXT NOT NULL, tag_ids_json TEXT NOT NULL, document_type TEXT NOT NULL CHECK(document_type IN ('invoice','mini-invoice','garment-tags','bag-tags','correction')), requested_copies INTEGER NOT NULL CHECK(typeof(requested_copies) = 'integer' AND requested_copies BETWEEN 1 AND 500), requested_by TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('Queued','Rendering','Printed','Downloaded','Failed','Cancelled')), started_at TEXT, completed_at TEXT, failure_reason TEXT, output_hash TEXT, evidence TEXT); INSERT INTO tag_print_jobs_hardened(id,tenant,store_id,order_id,template_id,template_version,printer_profile,tag_ids_json,document_type,requested_copies,requested_by,created_at,status,started_at,completed_at,failure_reason,output_hash,evidence) SELECT id,tenant,store_id,order_id,template_id,template_version,printer_profile,tag_ids_json,document_type,requested_copies,requested_by,created_at,status,started_at,completed_at,failure_reason,output_hash,evidence FROM tag_print_jobs; DROP TABLE tag_print_jobs; ALTER TABLE tag_print_jobs_hardened RENAME TO tag_print_jobs; CREATE INDEX tag_print_jobs_scope_time ON tag_print_jobs(tenant, store_id, created_at DESC);" },
+      { version: 19, name: 'explicit-laundry-container-tags', sql: "CREATE TABLE IF NOT EXISTS laundry_containers (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, customer_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence > 0), total INTEGER NOT NULL CHECK(total > 0), weight_milli INTEGER, tag_code TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('Intake','Processing','Ready','Dispatched','Delivered','Missing','Damaged','Cancelled')), location TEXT NOT NULL DEFAULT 'Intake', condition TEXT NOT NULL DEFAULT 'Normal', created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, delivered_at TEXT, UNIQUE(tenant, store_id, tag_code), UNIQUE(tenant, store_id, order_id, sequence)); CREATE INDEX IF NOT EXISTS laundry_containers_scope_order ON laundry_containers(tenant, store_id, order_id, sequence); CREATE INDEX IF NOT EXISTS laundry_containers_tag_lookup ON laundry_containers(tenant, store_id, tag_code, state); CREATE TABLE IF NOT EXISTS laundry_container_events (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, container_id TEXT NOT NULL, event TEXT NOT NULL, from_state TEXT, to_state TEXT, location TEXT, actor TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS laundry_container_events_container ON laundry_container_events(tenant, store_id, container_id, created_at);" },
     ];
     this.db.transaction(() => {
       for (const migration of migrations) {
@@ -511,6 +650,7 @@ export class Store {
       const currency = String(saved.currency || 'INR').trim().toUpperCase();
       let timezone = String(saved.timezone || 'Asia/Kolkata').trim() || 'Asia/Kolkata';
       try { new Intl.DateTimeFormat('en-IN', { timeZone: timezone }).format(); } catch { timezone = 'Asia/Kolkata'; }
+      const afterBooking = ['ask', 'open-print-centre', 'auto-print', 'none'].includes(String(saved.afterBooking)) ? saved.afterBooking : 'ask';
       return {
         ...saved,
         logoDataUrl: saved.logoDataUrl || '',
@@ -519,6 +659,9 @@ export class Store {
         currency: /^[A-Z]{3}$/.test(currency) ? currency : 'INR',
         timezone,
         printerProfile: String(saved.printerProfile || '').trim().slice(0, 80),
+        afterBooking,
+        printerProfiles: normalizePrinterProfiles(saved.printerProfiles),
+        tagTemplate: normalizeTagTemplate(saved.tagTemplate),
         stationCapacities: normalizeStationCapacities(saved.stationCapacities),
         setupProgress: {
           business: Boolean(saved.setupProgress?.business),
@@ -531,7 +674,7 @@ export class Store {
         },
       };
     }
-    return { businessName: 'Epic Laundry', address: '', phone: '', email: '', upiId: '', qrOnPrint: false, logoDataUrl: '', taxMode: 'none', gstin: '', currency: 'INR', timezone: 'Asia/Kolkata', printerProfile: '', stationCapacities: { ...DEFAULT_STATION_CAPACITIES }, setupProgress: { business: false, owner: false, operations: false, catalogue: false, recovery: false, updatedAt: '', updatedBy: '' }, updatedAt: '', updatedBy: '' };
+    return { businessName: 'Epic Laundry', address: '', phone: '', email: '', upiId: '', qrOnPrint: false, logoDataUrl: '', taxMode: 'none', gstin: '', currency: 'INR', timezone: 'Asia/Kolkata', printerProfile: '', afterBooking: 'ask', printerProfiles: [], tagTemplate: { ...DEFAULT_TAG_TEMPLATE }, stationCapacities: { ...DEFAULT_STATION_CAPACITIES }, setupProgress: { business: false, owner: false, operations: false, catalogue: false, recovery: false, updatedAt: '', updatedBy: '' }, updatedAt: '', updatedBy: '' };
   }
   saveStoreSettings(tenant: string, actor: string, input: Partial<StoreSettings>, storeId = this.currentStore(tenant)) {
     const previous = this.getStoreSettings(tenant, storeId);
@@ -544,6 +687,9 @@ export class Store {
       currency: /^[A-Z]{3}$/.test(String(input.currency ?? (previous.currency || 'INR')).trim().toUpperCase()) ? String(input.currency ?? (previous.currency || 'INR')).trim().toUpperCase() : 'INR',
       timezone: String(input.timezone ?? (previous.timezone || 'Asia/Kolkata')).trim() || 'Asia/Kolkata',
       printerProfile: String(input.printerProfile ?? (previous.printerProfile || '')).trim().slice(0, 80),
+      afterBooking: ['ask', 'open-print-centre', 'auto-print', 'none'].includes(String(input.afterBooking ?? previous.afterBooking)) ? String(input.afterBooking ?? previous.afterBooking) as StoreSettings['afterBooking'] : 'ask',
+      printerProfiles: normalizePrinterProfiles(input.printerProfiles ?? previous.printerProfiles),
+      tagTemplate: normalizeTagTemplate(input.tagTemplate ?? previous.tagTemplate),
       stationCapacities: normalizeStationCapacities(input.stationCapacities ?? previous.stationCapacities),
       setupProgress: previous.setupProgress,
       updatedAt: new Date().toISOString(), updatedBy: actor,
@@ -709,12 +855,12 @@ export class Store {
         rows: this.readRows('SELECT * FROM entity_rows WHERE tenant = ? AND store_id = ? ORDER BY created_at', [tenant, storeId]),
         gl: scopedRecords<GLEntry>('gl'), audit: scopedRecords<AuditEntry>('audit'), outbox: scopedRecords<OutboxEvent>('outbox'),
         stock: scopedRecords<StockLedgerEntry>('stock'), ims: scopedRecords<ImsAction>('ims'), seq,
-        garmentUnits: this.listGarmentUnits(tenant), garmentUnitEvents: this.listGarmentUnitEvents(tenant), tagReprints: this.listTagReprints(tenant), financialEntries: this.listFinancialEntries(tenant), financialDocuments: this.listFinancialDocuments(tenant), customerLedgerEntries: this.listCustomerLedgerEntries(tenant), walletEntries: this.listWalletEntries(tenant), customerAddresses: this.listCustomerAddresses(tenant), orderHolds: this.listOrderHolds(tenant, true), cashShiftCloses: this.listCashShiftCloses(tenant), financialNormalizationRuns: this.listFinancialNormalizationRuns(tenant, 10000), normalizedCustomers: this.listNormalizedCustomers(tenant), normalizedOrders: this.listNormalizedOrders(tenant),
+        garmentUnits: this.listGarmentUnits(tenant), garmentUnitEvents: this.listGarmentUnitEvents(tenant), tagReprints: this.listTagReprints(tenant), tagHistory: this.listTagHistory(tenant), printJobs: this.listPrintJobs(tenant), laundryContainers: this.listLaundryContainers(tenant), laundryContainerEvents: this.listLaundryContainerEvents(tenant), financialEntries: this.listFinancialEntries(tenant), financialDocuments: this.listFinancialDocuments(tenant), customerLedgerEntries: this.listCustomerLedgerEntries(tenant), walletEntries: this.listWalletEntries(tenant), orderHolds: this.listOrderHolds(tenant, true), customerAddresses: this.listCustomerAddresses(tenant), cashShiftCloses: this.listCashShiftCloses(tenant), financialNormalizationRuns: this.listFinancialNormalizationRuns(tenant, 10000), normalizedCustomers: this.listNormalizedCustomers(tenant), normalizedOrders: this.listNormalizedOrders(tenant),
       };
     });
   }
   replaceAll(input: DbShape) {
-    this.db.exec('DELETE FROM entity_rows; DELETE FROM records; DELETE FROM sequences; DELETE FROM garment_unit_events; DELETE FROM tag_reprints; DELETE FROM garment_units; DELETE FROM financial_entries; DELETE FROM financial_documents; DELETE FROM customer_ledger_entries; DELETE FROM wallet_entries; DELETE FROM customer_addresses; DELETE FROM laundry_order_holds; DELETE FROM cash_shift_closes; DELETE FROM financial_normalization_runs; DELETE FROM laundry_order_items; DELETE FROM laundry_orders; DELETE FROM customers; DELETE FROM compatibility_migration_runs; DELETE FROM idempotency_commands;');
+    this.db.exec('DELETE FROM entity_rows; DELETE FROM records; DELETE FROM sequences; DELETE FROM garment_unit_events; DELETE FROM tag_reprints; DELETE FROM tag_history; DELETE FROM tag_print_jobs; DELETE FROM laundry_container_events; DELETE FROM laundry_containers; DELETE FROM garment_units; DELETE FROM financial_entries; DELETE FROM financial_documents; DELETE FROM customer_ledger_entries; DELETE FROM wallet_entries; DELETE FROM customer_addresses; DELETE FROM laundry_order_holds; DELETE FROM cash_shift_closes; DELETE FROM financial_normalization_runs; DELETE FROM laundry_order_items; DELETE FROM laundry_orders; DELETE FROM customers; DELETE FROM compatibility_migration_runs; DELETE FROM idempotency_commands;');
     for (const row of input.rows || []) this.insertRow(row);
     for (const entry of input.gl || []) this.appendGL(entry);
     for (const entry of input.audit || []) this.appendAudit(entry);
@@ -725,6 +871,10 @@ export class Store {
     for (const unit of input.garmentUnits || []) this.createGarmentUnit(unit);
     for (const event of input.garmentUnitEvents || []) this.appendGarmentUnitEvent(event);
     for (const reprint of input.tagReprints || []) this.createTagReprint(reprint);
+    for (const history of input.tagHistory || []) this.createTagHistory(history);
+    for (const job of input.printJobs || []) this.createPrintJob(job);
+    for (const container of input.laundryContainers || []) this.createLaundryContainer(container);
+    for (const event of input.laundryContainerEvents || []) this.appendLaundryContainerEvent(event);
     for (const entry of input.financialEntries || []) this.appendFinancialEntry(entry);
     for (const document of input.financialDocuments || []) this.appendFinancialDocument(document);
     for (const entry of input.customerLedgerEntries || []) this.appendCustomerLedgerEntry(entry);
@@ -742,6 +892,10 @@ export class Store {
       this.db.prepare('DELETE FROM records WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM garment_unit_events WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM tag_reprints WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM tag_history WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM tag_print_jobs WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM laundry_container_events WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM laundry_containers WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM garment_units WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM financial_entries WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM financial_documents WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
@@ -772,6 +926,10 @@ export class Store {
       for (const unit of input.garmentUnits || []) { if (unit.tenant !== tenant || unit.storeId !== storeId) throw new Error('backup contains a garment unit from another store'); this.createGarmentUnit(unit); }
       for (const event of input.garmentUnitEvents || []) { if (event.tenant !== tenant || event.storeId !== storeId) throw new Error('backup contains a garment event from another store'); this.appendGarmentUnitEvent(event); }
       for (const reprint of input.tagReprints || []) { if (reprint.tenant !== tenant || reprint.storeId !== storeId) throw new Error('backup contains a tag reprint from another store'); this.createTagReprint(reprint); }
+      for (const history of input.tagHistory || []) { if (history.tenant !== tenant || history.storeId !== storeId) throw new Error('backup contains tag history from another store'); this.createTagHistory(history); }
+      for (const job of input.printJobs || []) { if (job.tenant !== tenant || job.storeId !== storeId) throw new Error('backup contains a print job from another store'); this.createPrintJob(job); }
+      for (const container of input.laundryContainers || []) { if (container.tenant !== tenant || container.storeId !== storeId) throw new Error('backup contains a laundry container from another store'); this.createLaundryContainer(container); }
+      for (const event of input.laundryContainerEvents || []) { if (event.tenant !== tenant || event.storeId !== storeId) throw new Error('backup contains a laundry container event from another store'); this.appendLaundryContainerEvent(event); }
       for (const entry of input.financialEntries || []) { if (entry.tenant !== tenant || entry.storeId !== storeId) throw new Error('backup contains a financial entry from another store'); this.appendFinancialEntry(entry); }
       for (const document of input.financialDocuments || []) { if (document.tenant !== tenant || document.storeId !== storeId) throw new Error('backup contains a financial document from another store'); this.appendFinancialDocument(document); }
       for (const entry of input.customerLedgerEntries || []) { if (entry.tenant !== tenant || entry.storeId !== storeId) throw new Error('backup contains a customer ledger entry from another store'); this.appendCustomerLedgerEntry(entry); }
@@ -839,6 +997,75 @@ export class Store {
   listTagReprints(tenant: string, unitId?: string) {
     const rows = this.db.prepare('SELECT * FROM tag_reprints WHERE tenant = ? AND store_id = ? ORDER BY created_at').all(tenant, this.currentStore(tenant)) as Array<Record<string, unknown>>;
     return rows.filter((row) => !unitId || String(row.unit_id) === unitId).map((row) => ({ id: String(row.id), tenant: String(row.tenant), storeId: String(row.store_id), unitId: String(row.unit_id), previousTagCode: String(row.previous_tag_code), newTagCode: String(row.new_tag_code), station: String(row.station), reason: String(row.reason), actor: String(row.actor), createdAt: String(row.created_at) } satisfies TagReprintRecord));
+  }
+  private tagHistoryFromRow(row: Record<string, unknown>): TagHistoryRecord {
+    return { id: String(row.id), tenant: String(row.tenant), storeId: String(row.store_id), garmentUnitId: String(row.garment_unit_id), tagCode: String(row.tag_code), status: String(row.status) as TagHistoryStatus, issuedAt: String(row.issued_at), issuedBy: String(row.issued_by), retiredAt: row.retired_at ? String(row.retired_at) : undefined, retiredBy: row.retired_by ? String(row.retired_by) : undefined, retirementReason: row.retirement_reason ? String(row.retirement_reason) : undefined, replacementTagId: row.replacement_tag_id ? String(row.replacement_tag_id) : undefined, version: Number(row.version), createdAt: String(row.created_at) };
+  }
+  createTagHistory(history: TagHistoryRecord) {
+    this.db.prepare(`INSERT INTO tag_history(id,tenant,store_id,garment_unit_id,tag_code,status,issued_at,issued_by,retired_at,retired_by,retirement_reason,replacement_tag_id,version,created_at)
+      VALUES (@id,@tenant,@storeId,@garmentUnitId,@tagCode,@status,@issuedAt,@issuedBy,@retiredAt,@retiredBy,@retirementReason,@replacementTagId,@version,@createdAt)`).run({ ...history, storeId: history.storeId || this.currentStore(history.tenant), retiredAt: history.retiredAt || null, retiredBy: history.retiredBy || null, retirementReason: history.retirementReason || null, replacementTagId: history.replacementTagId || null });
+    return history;
+  }
+  getTagHistoryByCode(tenant: string, tagCode: string) {
+    const row = this.db.prepare('SELECT * FROM tag_history WHERE tenant = ? AND store_id = ? AND tag_code = ?').get(tenant, this.currentStore(tenant), String(tagCode || '').trim()) as Record<string, unknown> | undefined;
+    return row ? this.tagHistoryFromRow(row) : undefined;
+  }
+  listTagHistory(tenant: string, unitId?: string) {
+    const rows = this.db.prepare('SELECT * FROM tag_history WHERE tenant = ? AND store_id = ? ORDER BY created_at DESC').all(tenant, this.currentStore(tenant)) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.tagHistoryFromRow(row)).filter((row) => !unitId || row.garmentUnitId === unitId);
+  }
+  updateTagHistory(history: TagHistoryRecord) {
+    this.db.prepare(`UPDATE tag_history SET status=@status,retired_at=@retiredAt,retired_by=@retiredBy,retirement_reason=@retirementReason,replacement_tag_id=@replacementTagId,version=@version WHERE tenant=@tenant AND store_id=@storeId AND id=@id`).run({ ...history, retiredAt: history.retiredAt || null, retiredBy: history.retiredBy || null, retirementReason: history.retirementReason || null, replacementTagId: history.replacementTagId || null });
+    return history;
+  }
+  private printJobFromRow(row: Record<string, unknown>): TagPrintJobRecord {
+    return { id: String(row.id), tenant: String(row.tenant), storeId: String(row.store_id), orderId: String(row.order_id), templateId: String(row.template_id), templateVersion: String(row.template_version), printerProfile: String(row.printer_profile), tagIds: decode<string[]>(String(row.tag_ids_json)), documentType: String(row.document_type), requestedCopies: Number(row.requested_copies), requestedBy: String(row.requested_by), createdAt: String(row.created_at), status: String(row.status) as TagPrintJobStatus, startedAt: row.started_at ? String(row.started_at) : undefined, completedAt: row.completed_at ? String(row.completed_at) : undefined, failureReason: row.failure_reason ? String(row.failure_reason) : undefined, outputHash: row.output_hash ? String(row.output_hash) : undefined, evidence: row.evidence ? String(row.evidence) : undefined };
+  }
+  createPrintJob(job: TagPrintJobRecord) {
+    this.db.prepare(`INSERT INTO tag_print_jobs(id,tenant,store_id,order_id,template_id,template_version,printer_profile,tag_ids_json,document_type,requested_copies,requested_by,created_at,status,started_at,completed_at,failure_reason,output_hash,evidence)
+      VALUES (@id,@tenant,@storeId,@orderId,@templateId,@templateVersion,@printerProfile,@tagIdsJson,@documentType,@requestedCopies,@requestedBy,@createdAt,@status,@startedAt,@completedAt,@failureReason,@outputHash,@evidence)`).run({ ...job, storeId: job.storeId || this.currentStore(job.tenant), tagIdsJson: encode(job.tagIds), startedAt: job.startedAt || null, completedAt: job.completedAt || null, failureReason: job.failureReason || null, outputHash: job.outputHash || null, evidence: job.evidence || null });
+    return job;
+  }
+  listPrintJobs(tenant: string, orderId?: string) {
+    const rows = this.db.prepare('SELECT * FROM tag_print_jobs WHERE tenant = ? AND store_id = ? ORDER BY created_at DESC').all(tenant, this.currentStore(tenant)) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.printJobFromRow(row)).filter((row) => !orderId || row.orderId === orderId);
+  }
+  private laundryContainerFromRow(row: Record<string, unknown>): LaundryContainerRecord {
+    return {
+      id: String(row.id), tenant: String(row.tenant), storeId: String(row.store_id), orderId: String(row.order_id), customerId: String(row.customer_id),
+      sequence: Number(row.sequence), total: Number(row.total), weightKg: row.weight_milli === null || row.weight_milli === undefined ? undefined : Number(row.weight_milli) / 1000,
+      tagCode: String(row.tag_code), state: String(row.state) as LaundryContainerState, location: String(row.location), condition: String(row.condition),
+      createdBy: String(row.created_by), createdAt: String(row.created_at), updatedAt: String(row.updated_at), deliveredAt: row.delivered_at ? String(row.delivered_at) : undefined,
+    };
+  }
+  createLaundryContainer(container: LaundryContainerRecord) {
+    const weightMilli = container.weightKg === undefined ? null : Math.round(container.weightKg * 1000);
+    this.db.prepare(`INSERT INTO laundry_containers(id,tenant,store_id,order_id,customer_id,sequence,total,weight_milli,tag_code,state,location,condition,created_by,created_at,updated_at,delivered_at)
+      VALUES (@id,@tenant,@storeId,@orderId,@customerId,@sequence,@total,@weightMilli,@tagCode,@state,@location,@condition,@createdBy,@createdAt,@updatedAt,@deliveredAt)`).run({ ...container, storeId: container.storeId || this.currentStore(container.tenant), weightMilli, deliveredAt: container.deliveredAt || null });
+    return container;
+  }
+  getLaundryContainer(tenant: string, idOrTag: string) {
+    const value = String(idOrTag || '').trim();
+    if (!value) return undefined;
+    const row = this.db.prepare('SELECT * FROM laundry_containers WHERE tenant = ? AND store_id = ? AND (id = ? OR tag_code = ?)').get(tenant, this.currentStore(tenant), value, value) as Record<string, unknown> | undefined;
+    return row ? this.laundryContainerFromRow(row) : undefined;
+  }
+  listLaundryContainers(tenant: string, orderId?: string) {
+    const rows = this.db.prepare('SELECT * FROM laundry_containers WHERE tenant = ? AND store_id = ? ORDER BY order_id, sequence').all(tenant, this.currentStore(tenant)) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.laundryContainerFromRow(row)).filter((row) => !orderId || row.orderId === orderId);
+  }
+  updateLaundryContainer(container: LaundryContainerRecord) {
+    this.db.prepare('UPDATE laundry_containers SET state=@state,location=@location,condition=@condition,updated_at=@updatedAt,delivered_at=@deliveredAt WHERE tenant=@tenant AND store_id=@storeId AND id=@id').run({ ...container, deliveredAt: container.deliveredAt || null });
+    return container;
+  }
+  appendLaundryContainerEvent(event: LaundryContainerEventRecord) {
+    this.db.prepare(`INSERT INTO laundry_container_events(id,tenant,store_id,container_id,event,from_state,to_state,location,actor,note,created_at)
+      VALUES (@id,@tenant,@storeId,@containerId,@event,@fromState,@toState,@location,@actor,@note,@createdAt)`).run({ ...event, storeId: event.storeId || this.currentStore(event.tenant), fromState: event.fromState || null, toState: event.toState || null, location: event.location || null, note: event.note || null });
+    return event;
+  }
+  listLaundryContainerEvents(tenant: string, containerId?: string) {
+    const rows = this.db.prepare('SELECT * FROM laundry_container_events WHERE tenant = ? AND store_id = ? ORDER BY created_at').all(tenant, this.currentStore(tenant)) as Array<Record<string, unknown>>;
+    return rows.filter((row) => !containerId || String(row.container_id) === containerId).map((row) => ({ id: String(row.id), tenant: String(row.tenant), storeId: String(row.store_id), containerId: String(row.container_id), event: String(row.event), fromState: row.from_state ? String(row.from_state) as LaundryContainerState : undefined, toState: row.to_state ? String(row.to_state) as LaundryContainerState : undefined, location: row.location ? String(row.location) : undefined, actor: String(row.actor), note: row.note ? String(row.note) : undefined, createdAt: String(row.created_at) } satisfies LaundryContainerEventRecord));
   }
   appendFinancialEntry(entry: FinancialEntryRecord) {
     if (!Number.isInteger(entry.amountPaise) || entry.amountPaise < 0) throw new Error('financial entry amount must be a non-negative integer number of paise');
@@ -1157,6 +1384,10 @@ export class Store {
         garmentUnits: scalar('garment_units'),
         garmentUnitEvents: scalar('garment_unit_events'),
         tagReprints: scalar('tag_reprints'),
+        tagHistory: scalar('tag_history'),
+        printJobs: scalar('tag_print_jobs'),
+        laundryContainers: scalar('laundry_containers'),
+        laundryContainerEvents: scalar('laundry_container_events'),
         financialEntries: scalar('financial_entries'),
         financialDocuments: scalar('financial_documents'),
         customerLedgerEntries: scalar('customer_ledger_entries'),

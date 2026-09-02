@@ -9,6 +9,17 @@ process.env.EPIC_DB_FILE = join(tempDir, 'epic.sqlite');
 process.env.EPIC_LEGACY_JSON_FILE = join(tempDir, 'legacy.json');
 
 let closeStore: (() => void) | undefined;
+
+async function waitForExport(app: any, id: string, headers: Record<string, string>) {
+  const deadline = Date.now() + 5_000;
+  let job: any;
+  do {
+    job = (await app.inject({ method: 'GET', url: `/api/laundry/report-exports/${id}`, headers })).json();
+    if (['Completed', 'Failed', 'Expired'].includes(job.status)) return job;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  } while (Date.now() < deadline);
+  return job;
+}
 try {
   const Fastify = (await import('fastify')).default;
   const { store } = await import('./kernel/store.js');
@@ -126,6 +137,42 @@ try {
   const duplicate = await app.inject({ method: 'POST', url: '/api/laundry/orders', headers, payload: body });
   assert.equal(booked.statusCode, 201, 'E2E booking succeeds');
   assert.equal(duplicate.json().order.id, booked.json().order.id, 'E2E duplicate booking is idempotent');
+  const unauthenticatedPrintJobs = await app.inject({ method: 'GET', url: '/api/laundry/print-jobs' });
+  assert.equal(unauthenticatedPrintJobs.statusCode, 401, 'E2E print history requires an authenticated session');
+  const bookedUnits = booked.json().garmentUnits;
+  const bookedUnit = bookedUnits[0];
+  const printJob = await app.inject({ method: 'POST', url: '/api/laundry/print-jobs', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-print-job-001' }, payload: { orderId: booked.json().order.id, documentType: 'garment-tags', tagIds: [bookedUnit.tagCode], requestedCopies: 1, status: 'Printed', evidence: 'E2E native print accepted' } });
+  assert.equal(printJob.statusCode, 201, 'E2E authenticated operator can record a tag print job');
+  assert.equal(printJob.json().tagIds[0], bookedUnit.id, 'E2E print history stores the durable garment-unit identity');
+  const printHistory = await app.inject({ method: 'GET', url: `/api/laundry/print-jobs?orderId=${encodeURIComponent(booked.json().order.id)}`, headers: sessionHeaders });
+  assert.ok(printHistory.json().some((job: any) => job.id === printJob.json().id && job.status === 'Printed'), 'E2E print history returns the recorded job for its order');
+  const malformedScan = await app.inject({ method: 'POST', url: '/api/laundry/garment-units/scan', headers: sessionHeaders, payload: { tagCode: bookedUnit.tagCode, nextState: 'not-a-garment-state' } });
+  assert.equal(malformedScan.statusCode, 400, 'E2E schema validation rejects an unknown garment state before domain execution');
+  const batchPrintJob = await app.inject({ method: 'POST', url: '/api/laundry/print-jobs', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-print-job-batch-001' }, payload: { orderId: booked.json().order.id, documentType: 'garment-tags', tagIds: bookedUnits.map((unit: any) => unit.tagCode), status: 'Printed' } });
+  assert.equal(batchPrintJob.statusCode, 201, 'E2E batch print job accepts multiple distinct garment tags');
+  assert.equal(batchPrintJob.json().tagIds.length, bookedUnits.length, 'E2E batch print job preserves physical tag count separately');
+  assert.equal(batchPrintJob.json().requestedCopies, 1, 'E2E batch print job records one document copy, not one copy per tag');
+  const unknownPrintTag = await app.inject({ method: 'POST', url: '/api/laundry/print-jobs', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-print-job-unknown-001' }, payload: { orderId: booked.json().order.id, documentType: 'garment-tags', tagIds: ['ELT-UNKNOWN'], requestedCopies: 1 } });
+  assert.equal(unknownPrintTag.statusCode, 400, 'E2E print job rejects an unknown tag reference');
+  assert.equal(unknownPrintTag.json().code, 'PRINT_JOB_INVALID', 'E2E print job rejection exposes a stable domain code');
+  const bulkGarment = cat.garments.find((garment: any) => garment.unit === 'Kilogram');
+  const bulkPrice = bulkGarment && cat.prices.find((price: any) => price.garment === bulkGarment.id);
+  if (bulkGarment && bulkPrice) {
+    const bulkBooking = await app.inject({ method: 'POST', url: '/api/laundry/orders', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-bulk-booking-001' }, payload: { customer: { name: 'E2E Bulk Customer', phone: '9000000799' }, items: [{ garment: bulkGarment.id, service: bulkPrice.service, qty: 4.5 }], containerCount: 2, expectedDeliveryDate: '2026-09-04', fulfillmentMode: 'Home Delivery', paymentMode: 'Pay Later' } });
+    assert.equal(bulkBooking.statusCode, 201, 'E2E weighted booking accepts an explicit container count');
+    assert.equal(bulkBooking.json().garmentUnits.length, 0, 'E2E weighted booking does not fabricate garment-piece tags');
+    assert.equal(bulkBooking.json().containerTags.length, 2, 'E2E weighted booking returns explicit bag/container tags');
+    const containerTag = bulkBooking.json().containerTags[0].tagNumber;
+    const containerDetail = await app.inject({ method: 'GET', url: `/api/laundry/containers/${encodeURIComponent(containerTag)}`, headers: sessionHeaders });
+    assert.equal(containerDetail.statusCode, 200, 'E2E container tag resolves through the authenticated detail route');
+    const containerSearch = await app.inject({ method: 'GET', url: `/api/laundry/search?q=${encodeURIComponent(containerTag)}`, headers: sessionHeaders });
+    assert.ok(containerSearch.json().some((result: any) => result.kind === 'container' && result.path.includes('kind=container')), 'E2E global search resolves a bag tag into container tracking');
+    const containerScan = await app.inject({ method: 'POST', url: '/api/laundry/containers/scan', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-container-scan-001' }, payload: { tagCode: containerTag, nextState: 'Processing', location: 'Bulk wash' } });
+    assert.equal(containerScan.statusCode, 201, 'E2E container scan advances the bulk lifecycle');
+    const bagJob = await app.inject({ method: 'POST', url: '/api/laundry/print-jobs', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-bag-print-001' }, payload: { orderId: bulkBooking.json().order.id, documentType: 'bag-tags', containerIds: [containerTag], status: 'Printed' } });
+    assert.equal(bagJob.statusCode, 201, 'E2E bag-tag print history accepts explicit containers');
+    assert.equal(bagJob.json().tagIds[0], containerDetail.json().id, 'E2E bag-tag print history stores the durable container identity');
+  }
   const customerNormalizationPreview = await app.inject({ method: 'GET', url: '/api/ops/entity-normalization?entity=party', headers: sessionHeaders });
   assert.equal(customerNormalizationPreview.statusCode, 200, 'E2E owner can preview customer normalization');
   assert.equal(customerNormalizationPreview.json().invalid, 0, 'E2E customer normalization preflight is clean');
@@ -149,6 +196,8 @@ try {
   assert.ok(globalSearch.json().some((result: any) => result.kind === 'customer' && result.label === 'E2E Customer'), 'E2E global search finds the customer record');
   const orderSearch = await app.inject({ method: 'GET', url: `/api/laundry/search?q=${encodeURIComponent(booked.json().order.orderNumber)}`, headers: sessionHeaders });
   assert.ok(orderSearch.json().some((result: any) => result.kind === 'order' && result.id === booked.json().order.id), 'E2E global search finds the order record');
+  const invoiceSearch = await app.inject({ method: 'GET', url: `/api/laundry/search?q=${encodeURIComponent(booked.json().order.invoiceNumber || booked.json().order.invoice || '')}`, headers: sessionHeaders });
+  assert.ok(invoiceSearch.json().some((result: any) => result.kind === 'invoice' && result.path.includes(booked.json().order.id)), 'E2E global search resolves an invoice to its order workflow');
   const offlineOrderBody = { ...body, customer: { name: 'Offline Order', phone: '9000000889', address: 'Offline Street' }, paymentMode: 'Pay Later' };
   const offlineOrder = await app.inject({ method: 'POST', url: '/api/sync/push', headers: sessionHeaders, payload: { docs: [{ entity: 'laundry_order', clientId: 'offline-order-001', data: offlineOrderBody }] } });
   assert.equal(offlineOrder.json().applied, 1, 'E2E offline order replay applies the authoritative booking command');
@@ -179,11 +228,27 @@ try {
   assert.equal(versionedTransition.json().version, 1, 'E2E transition increments the order version');
   const staleTransition = await app.inject({ method: 'POST', url: `/api/laundry/orders/${orderId}/transition`, headers: sessionHeaders, payload: { state: 'Ready', expectedVersion: 0 } });
   assert.equal(staleTransition.statusCode, 400, 'E2E stale transition is rejected instead of overwriting newer state');
+  assert.equal(staleTransition.json().code, 'STALE_ORDER_VERSION', 'E2E stale transition exposes a stable domain code');
   assert.match(staleTransition.json().error, /stale order version/, 'E2E stale transition explains the concurrency conflict');
-  const offlineTransition = await app.inject({ method: 'POST', url: '/api/sync/push', headers: sessionHeaders, payload: { docs: [{ entity: 'laundry_order_transition', clientId: 'offline-transition-001', data: { orderId, state: 'Ready', expectedVersion: 1, note: 'Offline floor completion' } }] } });
+  const assemblyFixture = await app.inject({ method: 'POST', url: '/api/laundry/orders', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-assembly-fixture-001' }, payload: { ...body, customer: { name: 'E2E Assembly', phone: '9000000788' }, paymentMode: 'Pay Later' } });
+  assert.equal(assemblyFixture.statusCode, 201, 'E2E assembly guard fixture booking succeeds');
+  const assemblyOrderId = assemblyFixture.json().order.id;
+  const assemblyInProcess = await app.inject({ method: 'POST', url: `/api/laundry/orders/${assemblyOrderId}/transition`, headers: sessionHeaders, payload: { state: 'In Process' } });
+  assert.equal(assemblyInProcess.statusCode, 200, 'E2E assembly guard fixture enters processing');
+  const incompleteAssembly = await app.inject({ method: 'POST', url: `/api/laundry/orders/${assemblyOrderId}/transition`, headers: sessionHeaders, payload: { state: 'Ready', expectedVersion: 1 } });
+  assert.equal(incompleteAssembly.statusCode, 400, 'E2E final Ready transition rejects incomplete tracked-piece assembly');
+  assert.equal(incompleteAssembly.json().code, 'ASSEMBLY_INCOMPLETE', 'E2E assembly guard exposes a stable domain code');
+  assert.match(incompleteAssembly.json().error, /assembly incomplete/, 'E2E assembly guard explains the blocked completion');
+  for (const [index, unit] of assemblyFixture.json().garmentUnits.entries()) {
+    for (const [stateIndex, nextState] of ['Sorted', 'Processing', 'QC', 'Assembly', 'Racked'].entries()) {
+      const scan = await app.inject({ method: 'POST', url: '/api/laundry/garment-units/scan', headers: { ...sessionHeaders, 'idempotency-key': `e2e-assembly-scan-${index}-${stateIndex}` }, payload: { tagCode: unit.tagCode, nextState, location: nextState === 'Racked' ? `E2E-RACK-${index}` : `${nextState} station`, note: 'E2E assembly completion' } });
+      assert.equal(scan.statusCode, 201, `E2E assembly scan advances unit ${index + 1} to ${nextState}`);
+    }
+  }
+  const offlineTransition = await app.inject({ method: 'POST', url: '/api/sync/push', headers: sessionHeaders, payload: { docs: [{ entity: 'laundry_order_transition', clientId: 'offline-transition-001', data: { orderId: assemblyOrderId, state: 'Ready', expectedVersion: 1, note: 'Offline floor completion' } }] } });
   assert.equal(offlineTransition.json().applied, 1, 'E2E offline replay accepts a versioned order transition');
-  assert.equal(offlineTransition.json().results[0].id, orderId, 'E2E offline transition returns the order identity');
-  const staleOfflineTransition = await app.inject({ method: 'POST', url: '/api/sync/push', headers: sessionHeaders, payload: { docs: [{ entity: 'laundry_order_transition', clientId: 'offline-transition-stale-001', data: { orderId, state: 'Out for Delivery', expectedVersion: 1 } }] } });
+  assert.equal(offlineTransition.json().results[0].id, assemblyOrderId, 'E2E offline transition returns the order identity');
+  const staleOfflineTransition = await app.inject({ method: 'POST', url: '/api/sync/push', headers: sessionHeaders, payload: { docs: [{ entity: 'laundry_order_transition', clientId: 'offline-transition-stale-001', data: { orderId: assemblyOrderId, state: 'Out for Delivery', expectedVersion: 1 } }] } });
   assert.equal(staleOfflineTransition.json().applied, 0, 'E2E offline replay rejects a stale versioned transition');
   assert.match(staleOfflineTransition.json().results[0].error, /stale order version/, 'E2E offline stale transition explains the conflict');
   const productionQueue = await app.inject({ method: 'GET', url: '/api/laundry/production-queue?status=Open', headers: sessionHeaders });
@@ -228,6 +293,8 @@ try {
   const overdueDate = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
   const overdueBooking = await app.inject({ method: 'POST', url: '/api/laundry/orders', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-booking-overdue-001' }, payload: { ...body, customer: { name: 'E2E Overdue', phone: '9000000779' }, expectedDeliveryDate: overdueDate } });
   assert.equal(overdueBooking.statusCode, 201, 'E2E overdue fixture booking succeeds');
+  const outOfOrderPrintTag = await app.inject({ method: 'POST', url: '/api/laundry/print-jobs', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-print-job-out-of-order-001' }, payload: { orderId: booked.json().order.id, documentType: 'garment-tags', tagIds: [overdueBooking.json().garmentUnits[0].tagCode], requestedCopies: 1 } });
+  assert.equal(outOfOrderPrintTag.statusCode, 400, 'E2E print job rejects a tag belonging to another order');
   const overdueQueue = await app.inject({ method: 'GET', url: '/api/laundry/production-queue?overdue=true', headers: sessionHeaders });
   assert.ok(overdueQueue.json().some((task: any) => task.orderId === overdueBooking.json().order.id && task.overdue === true), 'E2E production queue identifies an SLA-overdue task');
   const overdueTask = overdueQueue.json().find((task: any) => task.orderId === overdueBooking.json().order.id);
@@ -290,11 +357,7 @@ try {
   assert.equal(exportedReport.json().totalRows >= exportedReport.json().rows.length, true, 'E2E report export preserves the untruncated total row count');
   const queuedExport = await app.inject({ method: 'POST', url: '/api/laundry/report-exports', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-report-export-001' }, payload: { kind: 'collection' } });
   assert.equal(queuedExport.statusCode, 202, 'E2E large report export can be queued');
-  let exportJob = queuedExport.json();
-  for (let attempt = 0; attempt < 20 && !['Completed', 'Failed', 'Expired'].includes(exportJob.status); attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    exportJob = (await app.inject({ method: 'GET', url: `/api/laundry/report-exports/${exportJob.id}`, headers: sessionHeaders })).json();
-  }
+  const exportJob = await waitForExport(app, queuedExport.json().id, sessionHeaders);
   assert.equal(exportJob.status, 'Completed', 'E2E queued report export completes asynchronously');
   assert.equal(exportJob.executor, 'worker_thread', 'E2E report export is executed in a dedicated worker thread');
   assert.equal(typeof exportJob.fileName, 'string', 'E2E completed report export persists a safe file name');
@@ -305,11 +368,7 @@ try {
   assert.equal(queuedDownload.body.endsWith('\r\n'), true, 'E2E report export uses deterministic CRLF termination');
   const cursorExport = await app.inject({ method: 'POST', url: '/api/laundry/report-exports', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-report-export-cursor-001' }, payload: { kind: 'invoice' } });
   assert.equal(cursorExport.statusCode, 202, 'E2E row-oriented report export can be queued for cursor execution');
-  let cursorJob = cursorExport.json();
-  for (let attempt = 0; attempt < 20 && !['Completed', 'Failed', 'Expired'].includes(cursorJob.status); attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    cursorJob = (await app.inject({ method: 'GET', url: `/api/laundry/report-exports/${cursorJob.id}`, headers: sessionHeaders })).json();
-  }
+  const cursorJob = await waitForExport(app, cursorExport.json().id, sessionHeaders);
   assert.equal(cursorJob.status, 'Completed', 'E2E cursor-backed report export completes asynchronously');
   assert.equal(cursorJob.executor, 'worker_thread_cursor', 'E2E row-oriented export records cursor-backed worker execution');
   assert.equal(cursorJob.totalRows >= 1, true, 'E2E cursor-backed export reports rows written from the iterator');

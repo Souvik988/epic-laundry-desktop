@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, Loader2, Printer, ShieldCheck } from 'lucide-react'
 import { apiGet, apiPost } from '@/lib/api'
-import { lndryBrand } from '@/assets/generated/manifest'
+import { buildLaundryCorrectionPrintHtml, type PrintSettings } from '@/lib/laundryPrint'
 
 type Correction = { id: string; customerId: string; orderId: string; claimId: string; garmentUnitId: string; decision: string; status: string; summary: string; customerMessage: string; issuedAt: string; issuedBy: string }
 
@@ -13,9 +13,8 @@ export default function LaundryCorrections() {
 }
 
 async function printCorrection(correction: Correction) {
-  const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
-  const logo = lndryBrand.mark.startsWith('data:image/') ? lndryBrand.mark : ''
-  const html = `<!doctype html><html><head><title>Customer correction · Epic Laundry</title><style>body{font-family:Arial,sans-serif;color:#17353c;max-width:640px;margin:36px auto;padding:0 24px}header{display:flex;align-items:center;gap:12px;border-bottom:2px solid #39786f;padding-bottom:12px}header strong{display:block;font-size:24px}header small{display:block;color:#718087;margin-top:3px}.brand-mark{width:42px;height:42px;object-fit:contain}h1{font-size:24px;margin-top:28px}dl{display:grid;grid-template-columns:130px 1fr;gap:8px;font-size:13px}dt{color:#718087}dd{margin:0;font-weight:600}blockquote{margin:24px 0;padding:18px;border-left:4px solid #e6bc65;background:#f7faf7;line-height:1.6}@media print{button{display:none}}</style></head><body><header>${logo ? `<img src="${logo}" alt="Lndry" class="brand-mark">` : ''}<div><strong>Epic Laundry</strong><small>Customer quality correction</small></div></header><h1>${escape(correction.decision)} resolution</h1><dl><dt>Document</dt><dd>${escape(correction.id)}</dd><dt>Order</dt><dd>${escape(correction.orderId)}</dd><dt>Garment unit</dt><dd>${escape(correction.garmentUnitId)}</dd><dt>Issued</dt><dd>${escape(new Date(correction.issuedAt).toLocaleString('en-IN'))}</dd></dl><blockquote>${escape(correction.customerMessage)}</blockquote><p style="color:#718087;font-size:11px">This printed copy is a customer-safe communication. The original quality claim remains immutable in the Epic Laundry audit trail.</p></body></html>`
+  const settings = await apiGet<PrintSettings>('/laundry/print-settings').catch(() => ({} as PrintSettings))
+  const html = await buildLaundryCorrectionPrintHtml(correction, settings)
   if (window.epic?.printHtml) {
     const result = await window.epic.printHtml(html)
     try { await apiPost('/ops/hardware-receipts', { kind: 'receipt-printer', operation: 'print-correction', status: result.ok ? 'Completed' : 'Cancelled', device: 'electron-system-dialog', sourceEntity: 'laundry_customer_correction', sourceId: correction.id, evidence: result.ok ? 'Electron print callback reported success' : 'Operator cancelled the native print dialog' }) } catch (error) { console.warn('Correction print receipt could not be recorded', error) }

@@ -464,6 +464,30 @@ ipcMain.handle('epic:print-html', async (event, html) => {
   }
 });
 
+// Export the same controlled print document to PDF. The hidden window keeps the
+// renderer shell out of the output and makes preview, native print, and PDF use
+// one authoritative HTML renderer.
+ipcMain.handle('epic:export-html-pdf', async (event, { html, suggestedName } = {}) => {
+  assertTrustedIpc(event);
+  if (typeof html !== 'string' || html.length > 2_000_000) throw new Error('Print document is invalid or too large');
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWin, {
+    title: 'Download PDF',
+    defaultPath: path.join(app.getPath('documents'), `${String(suggestedName || 'EpicLaundry').replace(/[^\w.-]/g, '_')}.pdf`),
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+  if (canceled || !filePath) return { ok: false, canceled: true };
+  const printWin = new BrowserWindow({ show: false, width: 900, height: 1100, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  try {
+    await printWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    const data = await printWin.webContents.printToPDF({ printBackground: true });
+    fs.writeFileSync(filePath, data);
+    nativeNotify('PDF downloaded', `Saved to ${path.basename(filePath)}`);
+    return { ok: true, path: filePath };
+  } finally {
+    if (!printWin.isDestroyed()) printWin.close();
+  }
+});
+
 // Send the loaded Laundry Desk to a specific React hash route. Legacy static ERP pages retain
 // their original URLs so the existing generic surface is still reachable when needed.
 function navigate(route) {

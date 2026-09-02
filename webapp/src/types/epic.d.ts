@@ -8,6 +8,7 @@ declare global {
       encryptedBackup: (passphrase: string) => Promise<{ ok: boolean; canceled?: boolean; path?: string }>
       encryptedRestore: (passphrase: string) => Promise<{ ok: boolean; canceled?: boolean; restored?: string }>
       printHtml: (html: string) => Promise<{ ok: boolean; canceled?: boolean }>
+      exportHtmlPdf: (html: string, suggestedName?: string) => Promise<{ ok: boolean; canceled?: boolean; path?: string }>
       saveFile: (opts: { content: string; suggestedName?: string; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ ok: boolean; canceled?: boolean; path?: string }>
       openBackupsFolder: () => Promise<string | undefined>
       backupLocation: () => Promise<{ configured: boolean; path: string }>

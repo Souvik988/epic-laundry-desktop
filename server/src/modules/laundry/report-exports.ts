@@ -1,5 +1,7 @@
-import { closeSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { audit } from '../../kernel/audit.js';
 import { createRow } from '../../kernel/entity-service.js';
 import { store } from '../../kernel/store.js';
@@ -81,12 +83,17 @@ function markWorkerFailure(tenant: string, storeId: string, id: string, message:
 }
 
 function launchWorker(tenant: string, storeId: string, id: string) {
-  void import('node:worker_threads').then(({ Worker }) => {
-    const worker = new Worker(new URL('./report-export-worker.js', import.meta.url), { workerData: { tenant, storeId, id, databaseFile: process.env.EPIC_DB_FILE || '' } });
+  try {
+    const builtWorker = new URL('./report-export-worker.js', import.meta.url);
+    const sourceWorker = new URL('./report-export-worker.ts', import.meta.url);
+    const workerUrl = existsSync(fileURLToPath(builtWorker)) ? builtWorker : sourceWorker;
+    const worker = new Worker(workerUrl, { workerData: { tenant, storeId, id, databaseFile: process.env.EPIC_DB_FILE || '' }, execArgv: process.execArgv });
     worker.once('error', (error) => markWorkerFailure(tenant, storeId, id, error instanceof Error ? error.message : 'report export worker failed'));
     worker.once('exit', (code) => { if (code !== 0) markWorkerFailure(tenant, storeId, id, `report export worker exited with code ${code}`); });
     worker.unref();
-  }).catch((error) => { markWorkerFailure(tenant, storeId, id, error instanceof Error ? error.message : 'report export worker could not start'); });
+  } catch (error) {
+    markWorkerFailure(tenant, storeId, id, error instanceof Error ? error.message : 'report export worker could not start');
+  }
 }
 
 /** Worker entrypoint; kept exported so the worker has no privileged API surface. */

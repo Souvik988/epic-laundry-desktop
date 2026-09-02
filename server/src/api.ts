@@ -48,7 +48,7 @@ import {
 } from './modules/crm/engagement.js';
 import { dashboardSummary } from './modules/analytics/dashboard.js';
 import {
-  applyLaundryGarmentBackfill, assignLaundryOrder, bookLaundryOrder, cancelLaundryExpense, cancelLaundryOrder, createLaundryExpense, createLaundryRider, editLaundryExpense, editLaundryOrder, getLaundryOrder, importLaundryCatalogue, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard, listLaundryFulfillment, recordLaundryFulfillment, listLaundryGarmentUnits, getLaundryGarmentUnit, previewLaundryGarmentBackfill, scanLaundryGarment, reprintLaundryTag,
+  applyLaundryGarmentBackfill, assignLaundryOrder, bookLaundryOrder, cancelLaundryExpense, cancelLaundryOrder, createLaundryExpense, createLaundryRider, editLaundryExpense, editLaundryOrder, getLaundryOrder, importLaundryCatalogue, importLaundryCustomers, importLaundryPrices, laundryCatalogue, laundryDashboard, listLaundryFulfillment, recordLaundryFulfillment, listLaundryGarmentUnits, getLaundryGarmentUnit, previewLaundryGarmentBackfill, scanLaundryGarment, scanLaundryContainer, getLaundryContainerDetail, reprintLaundryTag, replaceLaundryTag, createLaundryPrintJob, listLaundryPrintJobs, LaundryDomainError, TagRetiredError,
   laundryDispatch, laundryReportDetail, laundryReports, laundryStatistics, listLaundryExpenses, listLaundryImportJobs, listLaundryOrders, listLaundryRiderSettlements, listLaundryRiders, quoteLaundryOrder, saveLaundryCategory, saveLaundryChargeRule, saveLaundryDiscountRule,
   saveLaundryGarment, saveLaundryPrice, saveLaundryRiderSettlement, saveLaundryService, saveLaundryTaxRule, searchLaundryCustomers, seedLaundryDefaults, transitionLaundryOrder,
 } from './modules/laundry/domain.js';
@@ -82,6 +82,72 @@ const USER = process.env.EPIC_USER || 'admin@epic.local';
 const requestTenant = (req: any) => req?.auth?.tenant || TENANT;
 const requestActor = (req: any) => req?.auth?.actor || USER;
 declare module 'fastify' { interface FastifyRequest { auth?: AuthContext } }
+
+const laundryIdParams = {
+  type: 'object',
+  required: ['id'],
+  properties: { id: { type: 'string', minLength: 1, maxLength: 120 } },
+} as const;
+const laundrySearchQuery = {
+  type: 'object',
+  properties: { q: { type: 'string', maxLength: 80 } },
+  additionalProperties: false,
+} as const;
+const laundryTransitionBody = {
+  type: 'object',
+  required: ['state'],
+  properties: {
+    state: { type: 'string', enum: ['Booked', 'Picked Up', 'In Process', 'Ready', 'Out for Delivery', 'Delivered', 'Cancelled'] },
+    note: { type: 'string', maxLength: 500 },
+    expectedVersion: { type: 'integer', minimum: 0 },
+  },
+  additionalProperties: false,
+} as const;
+const laundryScanBody = {
+  type: 'object',
+  required: ['tagCode'],
+  properties: {
+    tagCode: { type: 'string', minLength: 1, maxLength: 120 },
+    nextState: { type: 'string', enum: ['Intake', 'Sorted', 'Processing', 'QC', 'Rewash', 'Assembly', 'Racked', 'Dispatched', 'Delivered', 'Missing', 'Damaged', 'Cancelled'] },
+    location: { type: 'string', maxLength: 80 },
+    note: { type: 'string', maxLength: 500 },
+    condition: { type: 'string', maxLength: 40 },
+  },
+  additionalProperties: false,
+} as const;
+const laundryContainerScanBody = {
+  ...laundryScanBody,
+  properties: { ...laundryScanBody.properties, nextState: { type: 'string', enum: ['Intake', 'Processing', 'Ready', 'Dispatched', 'Delivered', 'Missing', 'Damaged', 'Cancelled'] } },
+} as const;
+const laundryLifecycleBody = {
+  type: 'object',
+  required: ['reason'],
+  properties: {
+    station: { type: 'string', maxLength: 80 },
+    reason: { type: 'string', minLength: 3, maxLength: 240 },
+    status: { type: 'string', enum: ['Lost', 'Damaged', 'Replaced'] },
+  },
+  additionalProperties: false,
+} as const;
+const laundryPrintJobBody = {
+  type: 'object',
+  required: ['orderId'],
+  properties: {
+    orderId: { type: 'string', minLength: 1, maxLength: 120 },
+    templateId: { type: 'string', maxLength: 120 },
+    templateVersion: { type: 'string', maxLength: 40 },
+    printerProfile: { type: 'string', maxLength: 120 },
+    tagIds: { type: 'array', maxItems: 500, items: { type: 'string', minLength: 1, maxLength: 120 } },
+    containerIds: { type: 'array', maxItems: 500, items: { type: 'string', minLength: 1, maxLength: 120 } },
+    documentType: { type: 'string', enum: ['invoice', 'mini-invoice', 'garment-tags', 'bag-tags', 'correction'] },
+    requestedCopies: { type: 'integer', minimum: 1, maximum: 1000 },
+    status: { type: 'string', enum: ['Queued', 'Rendering', 'Printed', 'Downloaded', 'Failed', 'Cancelled'] },
+    failureReason: { type: 'string', maxLength: 500 },
+    outputHash: { type: 'string', maxLength: 128 },
+    evidence: { type: 'string', maxLength: 500 },
+  },
+  additionalProperties: false,
+} as const;
 
 function sessionCookie(token: string, maxAgeSeconds: number) {
   return `epic_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAgeSeconds}`;
@@ -152,6 +218,11 @@ export function registerApi(app: FastifyInstance) {
     return result;
   };
   const inStore = <T>(req: any, work: () => T) => store.withStoreScope(req.auth!.tenant, req.auth!.storeId, work);
+  const laundryFailure = (rep: any, error: unknown) => {
+    if (error instanceof TagRetiredError) return rep.code(409).send({ code: error.code, error: error.message, details: error.details });
+    if (error instanceof LaundryDomainError) return rep.code(error.code === 'TAG_RETIRED' ? 409 : 400).send({ code: error.code, error: error.message, details: error.details });
+    return rep.code(400).send({ error: error instanceof Error ? error.message : String(error || 'laundry operation failed') });
+  };
 
   app.get('/api/auth/bootstrap-status', async () => ({ needsBootstrap: store.authIdentityCount() === 0 }));
   app.post('/api/auth/bootstrap', async (req: any, rep: any) => {
@@ -298,7 +369,7 @@ export function registerApi(app: FastifyInstance) {
 
   // ---- Laundry desk: dedicated domain API, kept separate from generic ERP screens ----
   app.get('/api/laundry/catalogue', { preHandler: [guard, allow('catalogue.read')] }, async (req: any) => inStore(req, () => laundryCatalogue(req.auth!.tenant)));
-  app.get('/api/laundry/search', { preHandler: [guard, allowAny('orders.read', 'customers.read', 'garments.read')] }, async (req: any) => inStore(req, () => searchLaundryWorkspace(req.auth!.tenant, (req.query as any)?.q, {
+  app.get('/api/laundry/search', { schema: { querystring: laundrySearchQuery }, preHandler: [guard, allowAny('orders.read', 'customers.read', 'garments.read')] }, async (req: any) => inStore(req, () => searchLaundryWorkspace(req.auth!.tenant, (req.query as any)?.q, {
     customers: can(req.auth!, 'customers.read'), orders: can(req.auth!, 'orders.read'), garments: can(req.auth!, 'garments.read'),
   })));
   app.post('/api/laundry/catalogue/categories', { preHandler: [guard, allow('catalogue.manage')] }, async (req: any, rep: any) => {
@@ -469,7 +540,7 @@ export function registerApi(app: FastifyInstance) {
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
   app.get('/api/laundry/orders', { preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => listLaundryOrders(req.auth!.tenant, req.query as any)));
-  app.get('/api/laundry/orders/:id', { preHandler: [guard, allow('orders.read')] }, async (req: any, rep: any) => {
+  app.get('/api/laundry/orders/:id', { schema: { params: laundryIdParams }, preHandler: [guard, allow('orders.read')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => getLaundryOrder(req.auth!.tenant, req.params.id)); }
     catch (error: any) { return rep.code(404).send({ error: error.message }); }
   });
@@ -485,11 +556,11 @@ export function registerApi(app: FastifyInstance) {
     try { return inStore(req, () => idempotent(req, `laundry.payment-reversal:${req.params.id}`, () => reverseLaundryPayment(req.auth!.tenant, req.auth!.actor, req.params.id, String((req.body as any)?.reason || '')))); }
     catch (error: any) { return rep.code(400).send({ error: error.message }); }
   });
-  app.post('/api/laundry/orders/:id/transition', { preHandler: [guard, allow('orders.transition')] }, async (req: any, rep: any) => {
+  app.post('/api/laundry/orders/:id/transition', { schema: { params: laundryIdParams, body: laundryTransitionBody }, preHandler: [guard, allow('orders.transition')] }, async (req: any, rep: any) => {
     try {
       const body = req.body as any;
       return inStore(req, () => transitionLaundryOrder(req.auth!.tenant, req.auth!.actor, req.params.id, body?.state, body?.note, body?.expectedVersion));
-    } catch (error: any) { return rep.code(400).send({ error: error.message }); }
+    } catch (error: any) { return laundryFailure(rep, error); }
   });
   app.post('/api/laundry/orders/:id/cancel', { preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => cancelLaundryOrder(req.auth!.tenant, req.auth!.actor, req.params.id, String((req.body as any)?.reason || ''), (req.body as any)?.expectedVersion)); }
@@ -512,17 +583,34 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/laundry/rack-profiles', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listRackProfiles(req.auth!.tenant, true)));
   app.post('/api/laundry/rack-profiles', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => { try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.rack-profile-create', () => createRackProfile(req.auth!.tenant, req.auth!.actor, req.body || {})))); } catch (error: any) { return rep.code(400).send({ error: error.message }); } });
   app.patch('/api/laundry/rack-profiles/:id', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => inStore(req, () => { try { return updateRackProfile(req.auth!.tenant, req.auth!.actor, req.params.id, req.body || {}); } catch (error: any) { rep.code(400); return { error: error.message }; } }));
-  app.get('/api/laundry/garment-units/:id', { preHandler: [guard, allow('garments.read')] }, async (req: any, rep: any) => {
+  app.get('/api/laundry/garment-units/:id', { schema: { params: laundryIdParams }, preHandler: [guard, allow('garments.read')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => getLaundryGarmentUnit(req.auth!.tenant, req.params.id)); }
     catch (error: any) { return rep.code(404).send({ error: error.message }); }
   });
-  app.post('/api/laundry/garment-units/scan', { preHandler: [guard, allow('garments.scan')] }, async (req: any, rep: any) => {
+  app.post('/api/laundry/garment-units/scan', { schema: { body: laundryScanBody }, preHandler: [guard, allow('garments.scan')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.garment-scan', () => scanLaundryGarment(req.auth!.tenant, req.auth!.actor, req.body as any)))); }
-    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+    catch (error: any) { return laundryFailure(rep, error); }
   });
-  app.post('/api/laundry/garment-units/:id/reprint', { preHandler: [guard, allow('tags.reprint')] }, async (req: any, rep: any) => {
+  app.get('/api/laundry/containers/:id', { schema: { params: laundryIdParams }, preHandler: [guard, allow('garments.read')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => getLaundryContainerDetail(req.auth!.tenant, req.params.id)); }
+    catch (error: any) { return rep.code(404).send({ error: error.message }); }
+  });
+  app.post('/api/laundry/containers/scan', { schema: { body: laundryContainerScanBody }, preHandler: [guard, allow('garments.scan')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.container-scan', () => scanLaundryContainer(req.auth!.tenant, req.auth!.actor, req.body as any)))); }
+    catch (error: any) { return laundryFailure(rep, error); }
+  });
+  app.post('/api/laundry/garment-units/:id/reprint', { schema: { params: laundryIdParams, body: laundryLifecycleBody }, preHandler: [guard, allow('tags.reprint')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `laundry.tag-reprint:${req.params.id}`, () => reprintLaundryTag(req.auth!.tenant, req.auth!.actor, req.params.id, req.body as any)))); }
-    catch (error: any) { return rep.code(400).send({ error: error.message }); }
+    catch (error: any) { return laundryFailure(rep, error); }
+  });
+  app.post('/api/laundry/garment-units/:id/replace-tag', { schema: { params: laundryIdParams, body: laundryLifecycleBody }, preHandler: [guard, allow('tags.replace')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `laundry.tag-replace:${req.params.id}`, () => replaceLaundryTag(req.auth!.tenant, req.auth!.actor, req.params.id, req.body as any)))); }
+    catch (error: any) { return laundryFailure(rep, error); }
+  });
+  app.get('/api/laundry/print-jobs', { schema: { querystring: { type: 'object', properties: { orderId: { type: 'string', maxLength: 120 } }, additionalProperties: false } }, preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => listLaundryPrintJobs(req.auth!.tenant, String(req.query?.orderId || '') || undefined)));
+  app.post('/api/laundry/print-jobs', { schema: { body: laundryPrintJobBody }, preHandler: [guard, allow('orders.read')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `laundry.print-job:${String(req.body?.orderId || '')}`, () => createLaundryPrintJob(req.auth!.tenant, req.auth!.actor, req.body || {})))); }
+    catch (error: any) { return laundryFailure(rep, error); }
   });
   app.get('/api/laundry/production-queue', { preHandler: [guard, allow('production.read')] }, async (req: any) => inStore(req, () => listProductionTasks(req.auth!.tenant, req.query as any)));
   app.get('/api/laundry/production-load', { preHandler: [guard, allow('production.read')] }, async (req: any) => inStore(req, () => productionLoad(req.auth!.tenant)));
@@ -613,6 +701,9 @@ export function registerApi(app: FastifyInstance) {
       currency: settings.currency,
       timezone: settings.timezone,
       printerProfile: settings.printerProfile,
+      afterBooking: settings.afterBooking,
+      printerProfiles: settings.printerProfiles,
+      tagTemplate: settings.tagTemplate,
     };
   }));
   app.post('/api/laundry/orders/:id/fulfillment', { preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {

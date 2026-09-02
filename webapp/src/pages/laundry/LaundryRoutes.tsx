@@ -360,8 +360,11 @@ function RouteCard({
     note?: string,
   ) => void;
 }) {
+  const [skipTarget, setSkipTarget] = useState<{ id: string; orderNumber: string } | null>(null);
+  const [skipNote, setSkipNote] = useState("");
   return (
-    <article className="overflow-hidden rounded-[24px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]">
+    <>
+      <article className="overflow-hidden rounded-[24px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]">
       <header className="flex flex-col gap-3 border-b border-[#263f44]/10 bg-[#fafaf7] p-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -423,11 +426,8 @@ function RouteCard({
                   type="button"
                   disabled={completing}
                   onClick={() => {
-                    const note = window.prompt(
-                      "Why is this stop being skipped?",
-                    );
-                    if (note?.trim())
-                      onComplete(stop.id, "Skipped", note.trim());
+                    setSkipTarget({ id: stop.id, orderNumber: stop.orderNumber });
+                    setSkipNote("");
                   }}
                   className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700"
                 >
@@ -444,6 +444,44 @@ function RouteCard({
           </div>
         ))}
       </div>
-    </article>
+      </article>
+      {skipTarget ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[#102b33]/55 p-4 backdrop-blur-sm">
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="skip-stop-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const note = skipNote.trim();
+              if (note.length < 3) return;
+              onComplete(skipTarget.id, "Skipped", note);
+              setSkipTarget(null);
+              setSkipNote("");
+            }}
+            className="w-full max-w-md rounded-[24px] bg-[#fffdf8] p-5 shadow-2xl"
+          >
+            <p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#9a513b]">Controlled route exception</p>
+            <h2 id="skip-stop-title" className="mt-1 font-serif text-2xl text-[#17353c]">Skip {skipTarget.orderNumber}?</h2>
+            <p className="mt-2 text-sm leading-5 text-[#617178]">Record why this stop was skipped. The note remains attached to the route handoff audit.</p>
+            <label className="mt-4 block text-xs font-bold uppercase tracking-[.12em] text-[#617178]">
+              Required reason
+              <textarea
+                autoFocus
+                aria-label="Skip reason"
+                value={skipNote}
+                onChange={(event) => setSkipNote(event.target.value)}
+                minLength={3}
+                className="mt-1.5 min-h-24 w-full rounded-xl border border-[#263f44]/15 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none focus:ring-2 focus:ring-[#3a7d78]"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setSkipTarget(null)} className="rounded-xl border border-[#263f44]/15 px-3 py-2 text-sm font-semibold text-[#617178]">Keep stop</button>
+              <button type="submit" disabled={completing || skipNote.trim().length < 3} className="rounded-xl bg-rose-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-50">Confirm skip</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+    </>
   );
 }
