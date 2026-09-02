@@ -20,6 +20,7 @@
     "test:canonical-tax": "tsx src/_selftest-canonical-tax.ts",
     "test:invoice-snapshot": "tsx src/_selftest-invoice-snapshot.ts",
     "test:provider-events": "tsx src/_selftest-provider-events.ts",
+    "test:provider-events-api": "tsx src/_selftest-provider-events-api.ts",
     "test:marketplace-notifications": "tsx src/_selftest-marketplace-notifications.ts",
     "test:marketplace-cash": "tsx src/_selftest-marketplace-cash.ts",
     "test:customer": "tsx src/_selftest-customer.ts",

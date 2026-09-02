@@ -78,6 +78,7 @@ import { marketplaceAvailability, saveMarketplaceAvailability } from './modules/
 import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMarketplaceReassessment, marketplaceOrderTruth, recordMarketplaceIntake } from './modules/marketplace/order-truth.js';
 import { createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
 import { marketplaceSettlement, recordMarketplaceCashCollection, recordMarketplaceSettlement } from './modules/marketplace/settlements.js';
+import { recordProviderPaymentEvent, verifyProviderWebhook, type ProviderPaymentEvent } from './modules/marketplace/provider-events.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const USER = process.env.EPIC_USER || 'admin@epic.local';
@@ -171,6 +172,22 @@ const marketplaceIntakeBody = {
 } as const;
 const marketplaceReassessmentBody = {
   type: 'object', required: ['previousAmountPaise', 'revisedAmountPaise', 'reason'], properties: { previousAmountPaise: { type: 'integer', minimum: 0 }, revisedAmountPaise: { type: 'integer', minimum: 0 }, reason: { type: 'string', minLength: 3, maxLength: 500 }, tolerancePaise: { type: 'integer', minimum: 0 } }, additionalProperties: false,
+} as const;
+const marketplacePaymentWebhookParams = {
+  type: 'object', required: ['provider'],
+  properties: { provider: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}$' } }, additionalProperties: false,
+} as const;
+const marketplacePaymentWebhookBody = {
+  type: 'object', required: ['eventId', 'paymentIntent', 'status', 'amountPaise', 'currency', 'occurredAt', 'payload'],
+  properties: {
+    eventId: { type: 'string', minLength: 1, maxLength: 200 },
+    paymentIntent: { type: 'string', minLength: 1, maxLength: 200 },
+    status: { type: 'string', enum: ['Captured', 'Failed', 'Refunded', 'Chargeback'] },
+    amountPaise: { type: 'integer', minimum: 0 },
+    currency: { type: 'string', enum: ['INR'] },
+    occurredAt: { type: 'string', minLength: 1, maxLength: 80 },
+    payload: { type: 'object', additionalProperties: true },
+  }, additionalProperties: false,
 } as const;
 
 function sessionCookie(token: string, maxAgeSeconds: number) {
@@ -551,6 +568,30 @@ export function registerApi(app: FastifyInstance) {
   app.post('/api/marketplace/cash-collections', { schema: { body: { type: 'object', required: ['collectionId', 'externalOrderId', 'amountPaise', 'method', 'collectedBy', 'evidence'], properties: { collectionId: { type: 'string', minLength: 1, maxLength: 160 }, externalOrderId: { type: 'string', minLength: 1, maxLength: 160 }, amountPaise: { type: 'integer', minimum: 0 }, method: { type: 'string', enum: ['CashOnPickup', 'CashOnDelivery'] }, collectedBy: { type: 'string', minLength: 1, maxLength: 160 }, evidence: { type: 'string', minLength: 1, maxLength: 500 } }, additionalProperties: false } }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.cash-collection:${req.body.collectionId}`, () => recordMarketplaceCashCollection(req.auth!.tenant, req.auth!.actor, req.body)))); }
     catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  // Provider callbacks are machine-to-machine and intentionally bypass the human
+  // session guard. They remain disabled until the operator explicitly configures
+  // the secret and the single local tenant/store that owns this edge adapter.
+  // Fastify has already parsed JSON by this point, so this contract signs the
+  // canonical JSON serialization of the validated body. A provider-specific raw
+  // body adapter must be added before enabling a provider that signs raw bytes.
+  app.post('/api/marketplace/payments/webhook/:provider', { schema: { params: marketplacePaymentWebhookParams, body: marketplacePaymentWebhookBody } }, async (req: any, rep: any) => {
+    const secret = String(process.env.EPIC_MARKETPLACE_PROVIDER_SECRET || '');
+    const tenant = String(process.env.EPIC_MARKETPLACE_WEBHOOK_TENANT || '');
+    const storeId = String(process.env.EPIC_MARKETPLACE_WEBHOOK_STORE_ID || '');
+    if (!secret || !tenant || !storeId) return rep.code(503).send({ code: 'PAYMENT_PROVIDER_UNVERIFIED', error: 'provider webhook is not configured for a tenant and store' });
+    try {
+      const body = req.body as Omit<ProviderPaymentEvent, 'provider'>;
+      const rawBody = JSON.stringify(body);
+      verifyProviderWebhook({ secret, signature: String(req.headers['x-provider-signature'] || ''), timestamp: String(req.headers['x-provider-timestamp'] || ''), rawBody });
+      const event: ProviderPaymentEvent = { ...body, provider: String(req.params.provider) };
+      const row = store.withStoreScope(tenant, storeId, () => recordProviderPaymentEvent(tenant, `provider-webhook:${event.provider}`, event));
+      return rep.code(202).send({ accepted: true, eventId: event.eventId, rowId: row.id, idempotent: true });
+    } catch (error: any) {
+      const code = String(error?.message || 'PAYMENT_PROVIDER_EVENT_INVALID');
+      const status = code.startsWith('PAYMENT_WEBHOOK_') ? 401 : 400;
+      return rep.code(status).send({ code, error: code });
+    }
   });
   app.post('/api/marketplace/orders/:externalOrderId/intake', { schema: { params: marketplaceOrderParams, body: marketplaceIntakeBody }, preHandler: [guard, allow('orders.edit')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => idempotent(req, `marketplace.intake:${req.params.externalOrderId}`, () => recordMarketplaceIntake(req.auth!.tenant, req.auth!.actor, { externalOrderId: req.params.externalOrderId, actual: req.body.actual, reason: req.body.reason }))); }
