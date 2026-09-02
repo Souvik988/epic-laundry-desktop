@@ -1,10 +1,11 @@
 # Canonical invoice document model
 
 Status: **PARTIAL / NEEDS_LEGAL_VALIDATION.** Configured-store laundry
-bookings now create one immutable canonical snapshot and link it to the
-operational order. The legacy tax-print endpoint resolves through that
-snapshot and fails closed when supplier profile or effective classification
-evidence is missing. Full laundry cancellation and controlled supersession now
+bookings and configured POS invoices now create one immutable canonical snapshot
+and link it to the originating operational record. POS defaults to Product/HSN
+only when its catalogue line does not explicitly declare a service/SAC mapping;
+the legacy tax-print endpoint resolves through that snapshot and fails closed
+when supplier profile or effective classification evidence is missing. Full laundry cancellation and controlled supersession now
 create a submitted legacy credit note first, avoid double-reversing the invoice,
 and link an immutable canonical credit-note snapshot when V4 tax evidence is
 available. Provider IRN evidence and legal approval remain outside this bridge.

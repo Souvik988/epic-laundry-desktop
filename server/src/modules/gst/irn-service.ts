@@ -38,13 +38,13 @@ function einvoiceArgs(tenant: string, row: EntityRow) {
   if (!configured.gstin) throw new Error('TAX_PROFILE_INCOMPLETE');
   if (configured.einvoiceState === 'NotApplicable') throw new Error('EINVOICE_NOT_APPLICABLE');
   if (!['Ready', 'Sandbox'].includes(configured.einvoiceState)) throw new Error('EINVOICE_PROVIDER_UNAVAILABLE');
-  const linked = row.entity === 'sales_invoice' && row.data.canonical_snapshot_id ? store.getRow(tenant, String(row.data.canonical_snapshot_id)) : undefined;
+  const linked = row.data.canonical_snapshot_id ? store.getRow(tenant, String(row.data.canonical_snapshot_id)) : undefined;
   const snapshot = linked?.entity === 'canonical_invoice_snapshot' ? linked : undefined;
   const gst = snapshot ? canonicalGst(snapshot.data) : row.data.__gst;
   if (!gst) throw new Error('TAX_CLASSIFICATION_MISSING');
   const comp = { gstin: configured.gstin, name: configured.legalName, addr: configured.address, state: configured.stateCode, pincode: configured.pincode };
   let party: any = { name: 'Walk-in Customer', pos: comp.state };
-  if (row.entity === 'sales_invoice' && row.data.customer) {
+  if (row.data.customer) {
     const p = store.getRow(tenant, row.data.customer);
     party = {
       name: p?.data?.name || 'Customer',
@@ -65,7 +65,7 @@ export async function generateIrnForInvoice(tenant: string, id: string) {
   if (!row.data.__gst) throw new Error('no GST computed (post the invoice)');
   const configured = supplierTaxProfile(tenant);
   if (!configured) throw new Error('TAX_PROFILE_INCOMPLETE');
-  if (row.entity === 'sales_invoice' && !row.data.canonical_snapshot_id) ensureCanonicalInvoiceForLegacy(tenant, 'system', row.id);
+  if (['sales_invoice', 'pos_invoice'].includes(row.entity) && !row.data.canonical_snapshot_id) ensureCanonicalInvoiceForLegacy(tenant, 'system', row.id);
   if (row.data.__einvoice?.status === 'GENERATED' && row.data.__einvoice?.environment === (configured.einvoiceState === 'Sandbox' ? 'sandbox' : 'production')) return row.data.__einvoice;
 
   const { payload, comp, environment } = einvoiceArgs(tenant, row);

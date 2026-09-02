@@ -1116,7 +1116,7 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/gst/print/:id', { preHandler: guard }, async (req: any, rep: any) => {
     const tenant = requestTenant(req);
     const row = store.getRow(tenant, req.params.id);
-    if (!row || !['sales_invoice', 'credit_note'].includes(row.entity) || row.status !== 'Submitted') return rep.code(404).send({ error: 'submitted invoice or credit note not found' });
+    if (!row || !['sales_invoice', 'pos_invoice', 'credit_note'].includes(row.entity) || row.status !== 'Submitted') return rep.code(404).send({ error: 'submitted invoice or credit note not found' });
     if (row.entity === 'credit_note') {
       const linked = row.data.canonical_snapshot_id ? store.getRow(tenant, String(row.data.canonical_snapshot_id)) : undefined;
       if (linked?.entity !== 'canonical_invoice_snapshot') return rep.code(409).send({ code: 'TAX_PROFILE_INCOMPLETE', error: 'canonical credit-note evidence is not available' });
@@ -1136,7 +1136,7 @@ export function registerApi(app: FastifyInstance) {
       if (linked?.entity !== 'canonical_invoice_snapshot') return { data: row.data, gst: row.data.__gst, canonical: false };
       return { data: { ...row.data, name: linked.data.invoiceNumber, posting_date: linked.data.issuedAt.slice(0, 10) }, gst: gstFromCanonicalSnapshot(linked.data), canonical: true };
     };
-    const invs = store.rowsOf(tenant, 'sales_invoice')
+    const invs = [...store.rowsOf(tenant, 'sales_invoice'), ...store.rowsOf(tenant, 'pos_invoice')]
       .filter((r) => r.status === 'Submitted')
       .map(canonicalFor);
     const cns = store.rowsOf(tenant, 'credit_note')
@@ -1148,14 +1148,14 @@ export function registerApi(app: FastifyInstance) {
       return linked?.entity === 'canonical_invoice_snapshot' ? linked.data.invoiceNumber : original?.data?.name || '';
     };
     return {
-      ...buildGstr1(invs, (data) => !!store.getRow(tenant, data.customer)?.data?.gstin),
+      ...buildGstr1(invs, (data) => Boolean(data.customer && store.getRow(tenant, data.customer)?.data?.gstin)),
       ...buildCdnr(cns, originalInvoiceNumber),
       evidence: { canonicalInvoices: invs.filter((row) => row.canonical).length, canonicalCreditNotes: cns.filter((row) => row.canonical).length, legacyFallbackInvoices: invs.filter((row) => !row.canonical).length, legacyFallbackCreditNotes: cns.filter((row) => !row.canonical).length },
     };
   });
   app.get('/api/gst/cockpit', { preHandler: guard }, async (req: any) => {
     const cockpitTenant = requestTenant(req);
-    const invs = store.rowsOf(cockpitTenant, 'sales_invoice').filter((r) => r.status === 'Submitted');
+    const invs = [...store.rowsOf(cockpitTenant, 'sales_invoice'), ...store.rowsOf(cockpitTenant, 'pos_invoice')].filter((r) => r.status === 'Submitted');
     let cgst = 0, sgst = 0, igst = 0, taxable = 0;
     for (const r of invs) { const linked = r.data.canonical_snapshot_id ? store.getRow(cockpitTenant, String(r.data.canonical_snapshot_id)) : undefined; const g = linked?.entity === 'canonical_invoice_snapshot' ? gstFromCanonicalSnapshot(linked.data) : r.data.__gst; if (!g) continue; cgst += g.totalCgst; sgst += g.totalSgst; igst += g.totalIgst; taxable += g.totalTaxable; }
     const configuredProfile = supplierTaxProfile(cockpitTenant);

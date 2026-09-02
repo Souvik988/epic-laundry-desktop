@@ -10,7 +10,7 @@ export function shouldAttemptCanonicalInvoice(tenant: string) {
 }
 
 /**
- * Convert a submitted legacy sales invoice into the immutable V4 snapshot.
+ * Convert a submitted legacy sales/POS invoice into the immutable V4 snapshot.
  *
  * Legacy invoices remain readable for local compatibility, but once a store
  * has a supplier tax profile, tax output must be backed by an approved,
@@ -19,7 +19,7 @@ export function shouldAttemptCanonicalInvoice(tenant: string) {
  */
 export function ensureCanonicalInvoiceForLegacy(tenant: string, actor: string, invoiceId: string, sourceOrderId?: string) {
   const invoice = store.getRow(tenant, invoiceId);
-  if (!invoice || invoice.entity !== 'sales_invoice' || invoice.status !== 'Submitted') throw new Error('submitted sales invoice not found');
+  if (!invoice || !['sales_invoice', 'pos_invoice'].includes(invoice.entity) || invoice.status !== 'Submitted') throw new Error('submitted invoice not found');
   const linkedId = String(invoice.data.canonical_snapshot_id || '').trim();
   if (linkedId) {
     const linked = store.getRow(tenant, linkedId);
@@ -34,8 +34,10 @@ export function ensureCanonicalInvoiceForLegacy(tenant: string, actor: string, i
   if (!rawItems.length) throw new Error('TAX_CLASSIFICATION_MISSING');
   const lines = rawItems.map((item, index) => {
     const linkedItem = item.item ? store.getRow(tenant, String(item.item)) : undefined;
-    const classificationCode = String(item.hsn || linkedItem?.data?.hsn || '').trim();
-    const rule = resolveTaxPolicyRule(tenant, { classificationType: 'SAC', classificationCode, supplyType: 'Service', asOf: String(invoice.data.posting_date) });
+    const classificationType = String(item.classificationType || linkedItem?.data?.classificationType || (invoice.entity === 'pos_invoice' ? 'HSN' : 'SAC')) as 'SAC' | 'HSN';
+    const supplyType = String(item.supplyType || linkedItem?.data?.supplyType || (invoice.entity === 'pos_invoice' ? 'Product' : 'Service')) as 'Service' | 'Product';
+    const classificationCode = String(item.hsn || item.classificationCode || linkedItem?.data?.hsn || '').trim();
+    const rule = resolveTaxPolicyRule(tenant, { classificationType, classificationCode, supplyType, asOf: String(invoice.data.posting_date) });
     if (!rule) throw new Error('TAX_CLASSIFICATION_MISSING');
     const quantity = Number(item.qty || 0);
     if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isSafeInteger(Math.round(quantity * 1000))) throw new Error('TAX_CLASSIFICATION_MISSING');
@@ -50,19 +52,20 @@ export function ensureCanonicalInvoiceForLegacy(tenant: string, actor: string, i
       taxRateBps: rule.rateBps,
     } as const;
   });
-  const tax = calculateCanonicalTax({ supplierStateCode: supplier.stateCode, placeOfSupplyStateCode: String(invoice.data.place_of_supply || '').trim(), lines });
+  const placeOfSupplyStateCode = String(invoice.data.place_of_supply || supplier.stateCode).trim();
+  const tax = calculateCanonicalTax({ supplierStateCode: supplier.stateCode, placeOfSupplyStateCode, lines });
   const legacyTotalPaise = parseMoney(invoice.data.grand_total, 'legacy invoice total');
   if (tax.totals.totalPaise !== legacyTotalPaise) throw new Error('TAX_RECONCILIATION_FAILED');
-  const paidPaise = store.rowsOf(tenant, 'payment_entry')
+  const paidPaise = invoice.entity === 'pos_invoice' ? legacyTotalPaise : store.rowsOf(tenant, 'payment_entry')
     .filter((payment) => payment.status === 'Submitted' && payment.data.payment_type === 'Receive' && String(payment.data.against_sales || '') === invoice.id)
     .reduce((sum, payment) => sum + parseMoney(payment.data.amount, `payment ${payment.id}`), 0);
-  const order = sourceOrderId || store.rowsOf(tenant, 'laundry_order').find((candidate) => String(candidate.data.invoice || '') === invoice.id)?.id;
+  const order = sourceOrderId || (invoice.entity === 'sales_invoice' ? store.rowsOf(tenant, 'laundry_order').find((candidate) => String(candidate.data.invoice || '') === invoice.id)?.id : undefined);
   const snapshot = createCanonicalInvoiceSnapshot(tenant, actor, {
-    sourceOrderId: order || `sales-invoice:${invoice.id}`,
+    sourceOrderId: order || `${invoice.entity === 'pos_invoice' ? 'pos-invoice' : 'sales-invoice'}:${invoice.id}`,
     issuedAt,
     supplier,
     customer: (() => {
-      const customer = store.getRow(tenant, String(invoice.data.customer || ''));
+      const customer = invoice.data.customer ? store.getRow(tenant, String(invoice.data.customer)) : undefined;
       return { name: String(customer?.data?.name || 'Customer'), address: String(customer?.data?.address || ''), stateCode: String(customer?.data?.state || invoice.data.place_of_supply || '').trim(), gstin: customer?.data?.gstin ? String(customer.data.gstin).trim() : undefined };
     })(),
     tax,
