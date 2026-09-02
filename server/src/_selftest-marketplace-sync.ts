@@ -13,7 +13,7 @@ let closeStore: (() => void) | undefined;
 try {
   const { Store, store } = await import('./kernel/store.js');
   closeStore = () => store.close();
-  const { actOnMarketplaceOrder, createDeviceEnrollment, marketplaceSyncStatus, queueMarketplaceEvent, receiveMarketplaceOrder, registerMarketplaceDevice, relayMarketplaceOutbox, replayHeldMarketplaceOrder } = await import('./modules/marketplace/edge-sync.js');
+  const { actOnMarketplaceOrder, createDeviceEnrollment, marketplaceSyncStatus, queueMarketplaceEvent, receiveMarketplaceOrder, receiveMarketplacePayment, receiveMarketplaceSettlement, registerMarketplaceDevice, relayMarketplaceOutbox, replayHeldMarketplaceOrder } = await import('./modules/marketplace/edge-sync.js');
   const { MarketplaceIntegrationSimulator } = await import('./modules/marketplace/simulator.js');
 
   const tenant = 'MARKETPLACE-TEST'; const storeId = 'STORE-A'; const vendorId = 'VENDOR-A'; const actor = 'marketplace-test';
@@ -79,6 +79,23 @@ try {
   const rejected = store.withStoreScope(tenant, storeId, () => actOnMarketplaceOrder(tenant, actor, 'WEB-1002', { action: 'reject', reason: 'Capacity full for the requested slot' }));
   assert.equal(rejected.order.state, 'Rejected', 'vendor rejection is explicit and retains its operator reason');
   assert.equal(rejected.event.state, 'Pending', 'vendor action produces a separately acknowledged outbound command');
+
+  const paymentEnvelope = simulator.enqueuePayment(device.id, { tenantId: tenant, vendorId, storeId, aggregateVersion: 1, eventVersion: 1, correlationId: 'corr-pay-1001', paymentIntent: 'pi-web-1001', provider: 'simulator', status: 'Captured', amountPaise: 12_500, payload: { providerEventId: 'provider-event-web-1001' } });
+  const paymentBatch = simulator.pull(device.id);
+  const paymentApplied = store.withStoreScope(tenant, storeId, () => receiveMarketplacePayment(tenant, actor, paymentBatch.find((event) => event.eventId === paymentEnvelope.eventId)!));
+  assert.equal(paymentApplied.duplicate, false, 'provider payment event is applied once through the sync inbox');
+  assert.equal((paymentApplied.local?.data as any).status, 'Captured', 'captured payment state is retained as provider evidence');
+  simulator.enqueueDuplicate(device.id, paymentEnvelope, 5);
+  for (const event of simulator.pull(device.id)) store.withStoreScope(tenant, storeId, () => receiveMarketplacePayment(tenant, actor, event));
+  assert.equal(store.withStoreScope(tenant, storeId, () => store.rowsOf(tenant, 'provider_payment_event').length), 1, 'duplicate provider event delivery cannot duplicate payment evidence');
+
+  const settlementEnvelope = simulator.enqueueSettlement(device.id, { tenantId: tenant, vendorId, storeId, aggregateVersion: 1, eventVersion: 1, correlationId: 'corr-set-1001', externalOrderId: 'WEB-1001', payload: { policyVersion: 'sim-policy-1', customerCollectedPaise: 12_500, refundPaise: 0, vendorServiceGrossPaise: 10_000, commissionBps: 1_500 } });
+  const settlementApplied = store.withStoreScope(tenant, storeId, () => receiveMarketplaceSettlement(tenant, actor, simulator.pull(device.id).find((event) => event.eventId === settlementEnvelope.eventId)!));
+  assert.equal(settlementApplied.duplicate, false, 'marketplace settlement event is applied through the durable inbox');
+  assert.equal((settlementApplied.local?.data as any).reconciled, true, 'settlement evidence is reconciled before local application');
+  simulator.enqueueDuplicate(device.id, settlementEnvelope, 5);
+  for (const event of simulator.pull(device.id)) store.withStoreScope(tenant, storeId, () => receiveMarketplaceSettlement(tenant, actor, event));
+  assert.equal(store.withStoreScope(tenant, storeId, () => store.rowsOf(tenant, 'marketplace_settlement').length), 1, 'duplicate settlement delivery cannot create a second settlement');
 
   store.withStoreScope(tenant, storeId, () => store.saveSyncCheckpoint({ tenant, storeId, deviceId: device.id, remoteStream: 'marketplace.orders', cursor: 'cursor-42', lastPullAt: '2026-09-02T12:10:00.000Z', serverTimeOffsetMs: 35, updatedAt: '2026-09-02T12:10:00.000Z' }));
   assert.equal(store.withStoreScope(tenant, storeId, () => store.getSyncCheckpoint(tenant, device.id, 'marketplace.orders')?.cursor), 'cursor-42', 'sync stream cursors are durable per store/device');

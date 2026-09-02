@@ -26,6 +26,10 @@ export class MarketplaceIntegrationSimulator implements SyncTransport {
     pending.push(structuredClone(envelope));
     this.inboxes.set(deviceId, pending);
   }
+  enqueueDuplicate(deviceId: string, envelope: MarketplaceEnvelope, count = 2) {
+    for (let index = 0; index < Math.max(1, Math.min(10, count)); index += 1) this.enqueue(deviceId, envelope);
+    return envelope;
+  }
   enqueueOrder(deviceId: string, input: Omit<MarketplaceEnvelope, 'eventId' | 'source' | 'deviceId' | 'aggregateType' | 'aggregateId' | 'occurredAt'> & { externalOrderId: string; payload: Record<string, unknown> }) {
     const envelope: MarketplaceEnvelope = {
       eventId: `sim_evt_${randomUUID()}`,
@@ -43,6 +47,16 @@ export class MarketplaceIntegrationSimulator implements SyncTransport {
       correlationId: input.correlationId,
       payload: { externalOrderId: input.externalOrderId, ...input.payload },
     };
+    this.enqueue(deviceId, envelope);
+    return envelope;
+  }
+  enqueuePayment(deviceId: string, input: Omit<MarketplaceEnvelope, 'eventId' | 'source' | 'deviceId' | 'aggregateType' | 'aggregateId' | 'occurredAt' | 'eventType' | 'payload'> & { paymentIntent: string; provider: string; status: 'Captured' | 'Failed' | 'Refunded' | 'Chargeback'; amountPaise: number; payload?: Record<string, unknown> }) {
+    const envelope: MarketplaceEnvelope = { eventId: `sim_evt_payment_${randomUUID()}`, source: 'marketplace-simulator', tenantId: input.tenantId, vendorId: input.vendorId, storeId: input.storeId, deviceId, aggregateType: 'marketplace_payment', aggregateId: input.paymentIntent, aggregateVersion: input.aggregateVersion, eventType: `marketplace.payment.${input.status.toLowerCase()}.v1`, eventVersion: input.eventVersion, occurredAt: new Date().toISOString(), correlationId: input.correlationId, payload: { paymentIntent: input.paymentIntent, provider: input.provider, status: input.status, amountPaise: input.amountPaise, currency: 'INR', occurredAt: new Date().toISOString(), ...(input.payload || {}) } };
+    this.enqueue(deviceId, envelope);
+    return envelope;
+  }
+  enqueueSettlement(deviceId: string, input: Omit<MarketplaceEnvelope, 'eventId' | 'source' | 'deviceId' | 'aggregateType' | 'aggregateId' | 'occurredAt' | 'eventType'> & { externalOrderId: string; payload: Record<string, unknown> }) {
+    const envelope: MarketplaceEnvelope = { eventId: `sim_evt_settlement_${randomUUID()}`, source: 'marketplace-simulator', tenantId: input.tenantId, vendorId: input.vendorId, storeId: input.storeId, deviceId, aggregateType: 'marketplace_settlement', aggregateId: input.externalOrderId, aggregateVersion: input.aggregateVersion, eventType: 'marketplace.settlement.recorded.v1', eventVersion: input.eventVersion, occurredAt: new Date().toISOString(), correlationId: input.correlationId, payload: { externalOrderId: input.externalOrderId, ...input.payload } };
     this.enqueue(deviceId, envelope);
     return envelope;
   }

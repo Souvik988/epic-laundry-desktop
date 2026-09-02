@@ -1,7 +1,10 @@
 import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { store, type MarketplaceChannel, type MarketplaceDeviceRecord, type MarketplaceOrderProjectionRecord, type MarketplaceOrderState, type SyncInboxRecord, type SyncOutboxRecord } from '../../kernel/store.js';
+import type { EntityRow } from '../../kernel/types.js';
 import { audit } from '../../kernel/audit.js';
 import { createMarketplaceOrderRequest } from './order-truth.js';
+import { recordProviderPaymentEvent } from './provider-events.js';
+import { recordMarketplaceSettlement } from './settlements.js';
 
 export const SYNC_VERSION = 1;
 export const MARKETPLACE_ORDER_STATES = ['AwaitingAcceptance', 'Accepted', 'Rejected', 'Expired', 'PickupScheduled', 'IntakeRequired', 'CustomerApprovalRequired', 'Processing', 'Ready', 'DeliveryScheduled', 'Completed', 'Cancelled'] as const;
@@ -142,6 +145,24 @@ export function receiveMarketplaceOrder(tenant: string, actor: string, envelope:
     if (received.duplicate) return { duplicate: true, held: received.record.applyStatus === 'Held', order: store.getMarketplaceOrderProjection(tenant, input.channel, input.externalOrderId) || null };
     return applyMarketplaceOrderEnvelope(tenant, actor, envelope, input);
   });
+}
+function receiveFinancialEnvelope(tenant: string, actor: string, envelope: MarketplaceEnvelope, apply: (payload: Record<string, unknown>) => EntityRow) {
+  const device = requireRegisteredDevice(tenant); assertTarget(tenant, envelope, device);
+  const payload = object(envelope.payload); const now = new Date().toISOString();
+  if (!clean(envelope.eventId, 160) || !clean(envelope.source, 120) || !Number.isSafeInteger(envelope.aggregateVersion) || envelope.aggregateVersion < 1 || !Number.isSafeInteger(envelope.eventVersion) || envelope.eventVersion < 1) throw new Error('invalid marketplace financial event');
+  const inbox: SyncInboxRecord = { eventId: clean(envelope.eventId, 160), source: clean(envelope.source, 120), tenant, vendorId: envelope.vendorId, storeId: store.currentStore(tenant), deviceId: device.id, aggregateType: envelope.aggregateType, aggregateId: clean(envelope.aggregateId, 200), aggregateVersion: envelope.aggregateVersion, eventType: clean(envelope.eventType, 160), eventVersion: envelope.eventVersion, payloadHash: payloadHash(payload), payload, receivedAt: now, applyStatus: 'Received', correlationId: clean(envelope.correlationId || envelope.eventId, 160) };
+  return store.transaction(() => { const received = store.receiveSyncInbox(inbox); if (received.duplicate) return { duplicate: true, record: store.getSyncInboxEvent(tenant, inbox.eventId), local: undefined }; const local = apply(payload); store.updateSyncInbox(tenant, inbox.eventId, { applyStatus: 'Applied', appliedAt: now, localAggregateType: local.entity, localId: local.id }); return { duplicate: false, record: store.getSyncInboxEvent(tenant, inbox.eventId), local }; });
+}
+export function receiveMarketplacePayment(tenant: string, actor: string, envelope: MarketplaceEnvelope) {
+  if (envelope.aggregateType !== 'marketplace_payment' || !envelope.eventType.startsWith('marketplace.payment.')) throw new Error('unsupported marketplace payment event');
+  return receiveFinancialEnvelope(tenant, actor, envelope, (payload) => {
+    const provider = clean(payload.provider, 80); const paymentIntent = clean(payload.paymentIntent || envelope.aggregateId, 200); const status = clean(payload.status, 40) as 'Captured' | 'Failed' | 'Refunded' | 'Chargeback'; const amountPaise = Number(payload.amountPaise); const currency = clean(payload.currency || 'INR', 3); if (!provider || !paymentIntent || !['Captured', 'Failed', 'Refunded', 'Chargeback'].includes(status) || !Number.isSafeInteger(amountPaise) || amountPaise < 0 || currency !== 'INR') throw new Error('PAYMENT_PROVIDER_EVENT_INVALID');
+    return recordProviderPaymentEvent(tenant, actor, { eventId: clean(payload.providerEventId || envelope.eventId, 200), provider, paymentIntent, status, amountPaise, currency, occurredAt: clean(payload.occurredAt || envelope.occurredAt, 80), payload });
+  });
+}
+export function receiveMarketplaceSettlement(tenant: string, actor: string, envelope: MarketplaceEnvelope) {
+  if (envelope.aggregateType !== 'marketplace_settlement' || !envelope.eventType.startsWith('marketplace.settlement.')) throw new Error('unsupported marketplace settlement event');
+  return receiveFinancialEnvelope(tenant, actor, envelope, (payload) => recordMarketplaceSettlement(tenant, actor, payload as Parameters<typeof recordMarketplaceSettlement>[2]));
 }
 export function replayHeldMarketplaceOrder(tenant: string, actor: string, eventId: string) {
   const device = requireRegisteredDevice(tenant);
