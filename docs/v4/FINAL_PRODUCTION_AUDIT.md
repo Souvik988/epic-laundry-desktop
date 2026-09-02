@@ -1,6 +1,6 @@
 # Final production audit
 
-This is an updated V4 audit record, not production certification. Current local source checkpoint: `22971f4`.
+This is an updated V4 audit record, not production certification. Current local source checkpoint: `d8a0edf`.
 
 - Critical: a real marketplace cloud contract/transport, provider-backed payment/settlement integration, and production tax/legal policy are not available in this environment.
 - High: legacy invoice/quote paths are not fully routed through the canonical snapshot; debit/refund/settlement document paths remain; production signing/update trust is absent; six closely related generic/shared garment mappings need owner review; full-fixture deep offset paging measured 1.24 seconds and broader performance coverage remains.
