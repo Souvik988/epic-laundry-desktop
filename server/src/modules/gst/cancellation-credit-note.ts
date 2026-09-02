@@ -23,7 +23,8 @@ export function createLaundryCancellationCreditNote(tenant: string, actor: strin
 
   const profile = supplierTaxProfile(tenant);
   let canonicalInvoice = invoice.data.canonical_snapshot_id ? store.getRow(tenant, String(invoice.data.canonical_snapshot_id)) : undefined;
-  if (profile && !canonicalInvoice) canonicalInvoice = ensureCanonicalInvoiceForLegacy(tenant, actor, invoice.id, orderId);
+  const taxRulesConfigured = store.rowsOf(tenant, 'tax_policy_rule').some((row) => row.status === 'Approved' && row.data?.approvalStatus === 'Approved');
+  if (profile && taxRulesConfigured && !canonicalInvoice) canonicalInvoice = ensureCanonicalInvoiceForLegacy(tenant, actor, invoice.id, orderId);
   if (canonicalInvoice?.entity === 'canonical_invoice_snapshot') {
     const customer = store.getRow(tenant, String(invoice.data.customer || ''));
     const canonicalCredit = createCanonicalCreditNoteSnapshot(tenant, actor, {

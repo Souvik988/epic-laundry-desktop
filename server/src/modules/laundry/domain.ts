@@ -15,6 +15,10 @@ import { ensureCanonicalInvoiceForLegacy } from '../gst/legacy-invoice-bridge.js
 import { supplierTaxProfile } from '../gst/tax-policy.js';
 import { createLaundryCancellationCreditNote } from '../gst/cancellation-credit-note.js';
 
+function canonicalTaxEvidenceConfigured(tenant: string) {
+  return Boolean(supplierTaxProfile(tenant) && store.rowsOf(tenant, 'tax_policy_rule').some((row) => row.status === 'Approved' && row.data?.approvalStatus === 'Approved'));
+}
+
 export const LAUNDRY_STATES = ['Booked', 'Picked Up', 'In Process', 'Ready', 'Out for Delivery', 'Delivered', 'Cancelled'] as const;
 export type LaundryState = typeof LAUNDRY_STATES[number];
 
@@ -494,7 +498,7 @@ export function bookLaundryOrder(tenant: string, actor: string, input: BookInput
   });
   const invoiceDocument = store.listFinancialDocuments(tenant, { sourceId: submittedInvoice.id }).find((document) => document.documentType === 'invoice');
   if (invoiceDocument) store.appendFinancialDocument({ ...invoiceDocument, metadata: { ...(invoiceDocument.metadata || {}), orderId: order.id } });
-  if (supplierTaxProfile(tenant)) {
+  if (canonicalTaxEvidenceConfigured(tenant)) {
     const canonical = ensureCanonicalInvoiceForLegacy(tenant, actor, submittedInvoice.id, order.id);
     order.data.canonical_invoice_snapshot_id = canonical.id;
     store.updateRow(order);
@@ -668,7 +672,7 @@ export function editLaundryOrder(tenant: string, actor: string, id: string, inpu
     order.data.last_edit_by = actor;
     order.updated_at = new Date().toISOString();
     store.updateRow(order);
-    if (supplierTaxProfile(tenant)) {
+    if (canonicalTaxEvidenceConfigured(tenant)) {
       const canonical = ensureCanonicalInvoiceForLegacy(tenant, actor, submittedReplacement.id, order.id);
       order.data.canonical_invoice_snapshot_id = canonical.id;
       store.updateRow(order);
