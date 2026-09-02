@@ -89,6 +89,8 @@ type ImportPriceInput = {
   unit?: string;
   hsn?: string;
   gstRate?: number | string;
+  visualKey?: string;
+  photo?: string;
   customerPhone?: string;
 };
 
@@ -1316,9 +1318,11 @@ export function importLaundryPrices(tenant: string, actor: string, rows: ImportP
         String(row.data.name || '').trim().toLowerCase() === garmentName.toLowerCase() && row.data.category === category.id,
       );
       if (!garment) {
+        const visualKey = cleanVisualKey(input.visualKey);
+        if (!visualKey) throw new Error('new imported garments require an approved visual key before activation');
         garment = createRow(tenant, actor, 'laundry_garment', {
           name: garmentName, code: garmentName.toUpperCase().replace(/[^A-Z0-9]+/g, '-'), category: category.id, unit,
-          hsn: String(input.hsn || '9997').trim() || '9997', gst_rate: Math.max(0, round(Number(input.gstRate) || 0)), active: true,
+          hsn: String(input.hsn || '9997').trim() || '9997', gst_rate: Math.max(0, round(Number(input.gstRate) || 0)), visual_key: visualKey, photo: cleanImagePath(input.photo), active: true,
         });
       }
       const customerPhone = normPhone(input.customerPhone);

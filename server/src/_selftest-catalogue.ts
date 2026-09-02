@@ -15,6 +15,7 @@ try {
     saveLaundryCategory, saveLaundryChargeRule, saveLaundryDiscountRule, saveLaundryGarment, saveLaundryPrice,
     saveLaundryService, saveLaundryTaxRule, seedLaundryDefaults,
   } = await import('./modules/laundry/domain.js');
+  const { auditGarmentAssets } = await import('./modules/laundry/garment-assets.js');
 
   const tenant = 'CATALOGUE';
   const actor = 'catalogue-owner';
@@ -64,11 +65,11 @@ try {
     { garmentName: 'Imported cover', categoryName: 'Household', serviceName: 'Dry Cleaning', rate: 120, unit: 'Piece' },
     { garmentName: '', serviceName: 'Dry Cleaning', rate: 120 },
   ]);
-  assert.equal(imported.errors.length, 1, 'imports report row-level validation errors');
+  assert.equal(imported.errors.length, 2, 'imports report row-level validation errors including missing visual review');
   assert.equal(imported.job?.status, 'Completed with errors', 'imports create a durable job record');
   const jobs = listLaundryImportJobs(tenant, 'prices');
-  assert.equal(jobs[0]?.skippedRows, 1, 'import history retains actionable rejection counts');
-  assert.equal(jobs[0]?.errors[0]?.row, 3, 'import history retains worksheet row references');
+  assert.equal(jobs[0]?.skippedRows, 2, 'import history retains actionable rejection counts');
+  assert.equal(jobs[0]?.errors[0]?.row, 2, 'import history retains worksheet row references');
   const importedCatalogue = importLaundryCatalogue(tenant, actor, {
     categories: [{ id: 'owner-category-1', name: 'Imported premium', color: '#123456' }],
     services: [{ id: 'owner-service-1', name: 'Imported care', description: 'Owner supplied care', units: ['Piece'] }],
@@ -84,6 +85,8 @@ try {
   assert.equal(laundryCatalogue(tenant).garments.length, beforeFailedImport, 'failed catalogue import restores the pre-import branch snapshot');
   assert.equal(laundryCatalogue(tenant).serviceUnits.includes('Kilogram'), true, 'all required service units are exposed to the owner desk');
   assert.equal(mensWear.id.length > 0, true, 'default catalogue remains readable after owner configuration commands');
+  const assetAudit = auditGarmentAssets(tenant);
+  assert.equal(assetAudit.ok, true, 'all active catalogue garments resolve to an explicit valid visual asset');
 
   console.log('PASS  catalogue commands, governed pricing, snapshots, and import jobs self-test complete');
 } finally {
