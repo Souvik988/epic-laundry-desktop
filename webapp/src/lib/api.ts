@@ -146,6 +146,21 @@ export async function apiPatch<T = any>(path: string, body?: any): Promise<T> {
   return res.json();
 }
 
+export async function apiPut<T = any>(path: string, body?: any): Promise<T> {
+  const res = await fetch(BASE + path, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey() },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) notifyUnauthorized();
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText })) as { error?: string; code?: string; details?: Record<string, unknown> };
+    throw new ApiError(err.error || `PUT ${path} -> ${res.status}`, err.code, err.details);
+  }
+  return res.json();
+}
+
 // Convenience for entity CRUD
 export const listEntity = <T = any>(entity: string) => apiGet<T[]>(`/${entity}`);
 export const createEntity = <T = any>(entity: string, data: any) => apiPost<T>(`/${entity}`, { data });

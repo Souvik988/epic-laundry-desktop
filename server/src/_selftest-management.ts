@@ -36,6 +36,8 @@ try {
   assert.equal(installIndia2026Baseline(tenant, actor).installed >= 8, true, 'verified India 2026 statutory policy records install once per tenant');
   assert.equal(installIndia2026Baseline(tenant, actor).installed, 0, 'statutory baseline installation is replay-safe');
   assert.equal(financePolicyReadiness(tenant).checks.statutoryBaseline, true, 'readiness recognises the versioned statutory baseline');
+  assert.throws(() => saveEntityFinanceProfile(tenant, actor, { pan: 'invalid' }), /ENTITY_PAN_INVALID/, 'owner-entered PAN values are validated before storage');
+  assert.throws(() => saveEntityFinanceProfile(tenant, actor, { tan: 'invalid' }), /ENTITY_TAN_INVALID/, 'owner-entered TAN values are validated before storage');
   saveEntityFinanceProfile(tenant, actor, { legalName: 'Epic Laundry Test', pan: 'ABCDE1234F', tan: 'ABCD12345E', gstRegistrationStatus: 'Registered', epfStatus: 'CoveredGeneral12', esicStatus: 'Covered', workState: 'West Bengal', marketplaceModel: 'VENDOR_SUPPLIER' });
   assert.equal(financePolicyReadiness(tenant).checks.entityConfiguration, true, 'entity-specific facts are recorded separately from statutory rates');
   const payroll = calculatePayrollPreview([{ name: 'Basic', amountPaise: 2_000_000, statutoryWage: true, taxable: true, kind: 'earning' }, { name: 'HRA', amountPaise: 1_000_000, statutoryWage: false, taxable: true, kind: 'earning' }], { epfStatus: 'CoveredGeneral12', esicStatus: 'NotCovered', taxRegime: 'NEW_2026', remainingPeriods: 12 });
