@@ -1,6 +1,6 @@
 # V4 execution matrix
 
-Functional source checkpoint: local `main` at `cee2023` (2026-09-03). Remote `origin/main` remains `72767269e83d905c7f484d8ce08ae7d32a27b1bc`; no V4 work has been pushed.
+Functional source checkpoint: local `main` at `819b439` (2026-09-03). Remote `origin/main` remains `72767269e83d905c7f484d8ce08ae7d32a27b1bc`; no V4 work has been pushed.
 
 | Requirement group | Current implementation / evidence | Class | DB / API / UI / test | Remaining action |
 | --- | --- | --- | --- | --- |
@@ -33,3 +33,5 @@ Latest local evidence: complete server regression set passed (typecheck/build, c
 Execution order: (1) finish clean baseline evidence, (2) availability + request/intake/reassessment, (3) settlement, (4) tax/invoice, (5) UI/document/runtime/performance/security audit, (6) release evidence.
 
 Latest increment: migration 36 adds explicit, store-scoped `marketplace_customer_links` with strict channel validation, collision protection, audited revocation, idempotent owner APIs, and active-link-only marketplace order projection into Customer 360. Names and phone numbers are never merge keys. Evidence: `modules/marketplace/customer-links.ts`, `/api/marketplace/customer-links`, `test:marketplace-customer-links`, and the Customer 360 Marketplace identity panel. This remains a local edge capability until the real marketplace account-link contract is agreed.
+
+Post-increment package evidence: `npm run dist:win` produced an internally labelled 3,738-entry manifest; the previous installed copy was uninstalled, the new installer completed, and the launched installed executable SHA-256 matched the unpacked build (`16D5F1D5661650A99B03CEBC51CD92C662D078ACDDB0BBF611596730A8992A95`). Installed resources include migration 36, `customer-links.js`, and the Customer 360 identity UI. This is unsigned/internal packaging evidence, not production signing evidence.
