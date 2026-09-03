@@ -43,6 +43,10 @@ try {
   assert.equal(requestLaundryReturn(tenant, actor, { orderId: booking.order.id, amount: 1, reason: 'Quality issue' }).duplicate, true, 'same return retry does not duplicate a case');
   assert.throws(() => requestLaundryReturn(tenant, actor, { orderId: booking.order.id, amount: booking.order.grandTotal + 1, reason: 'Quality issue' }), /EXCEEDS/, 'return request cannot exceed the original order value');
   assert.equal(listLaundryReturns(tenant).length, 1, 'return case is durable and queryable');
+  const financeWithReturn = financeCommandCenter(tenant, { from: '2026-09-03', to: '2026-09-03' });
+  assert.equal(financeWithReturn.current.returns.cases, 1, 'finance return analytics counts the durable request without treating it as a paid refund');
+  assert.ok(financeWithReturn.current.composition.services[0].orderCount >= 1, 'service economics includes order volume alongside revenue');
+  assert.equal(financeWithReturn.current.tax.trend.length, 1, 'tax trend is gap-filled for every selected day');
   const snapshot = laundryManagementSnapshot(tenant);
   assert.equal(snapshot.ebitda.state, 'NOT_READY', 'management dashboard never invents EBITDA without classified costs');
   assert.equal(snapshot.withholding.state, 'NOT_CONFIGURED', 'TDS/TCS starts visibly unconfigured until a CA-approved policy exists');
