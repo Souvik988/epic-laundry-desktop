@@ -210,6 +210,26 @@ const gstTaxPolicyQuery = { type: 'object', properties: { asOf: { type: 'string'
 const gstSupplierProfileBody = {
   type: 'object', required: ['legalName', 'address', 'stateCode', 'pincode', 'registrationStatus'], properties: { legalName: { type: 'string', minLength: 1, maxLength: 240 }, tradeName: { type: 'string', maxLength: 240 }, address: { type: 'string', minLength: 1, maxLength: 1000 }, stateCode: { type: 'string', minLength: 2, maxLength: 2 }, pincode: { type: 'string', minLength: 6, maxLength: 6 }, registrationStatus: { type: 'string', enum: ['Registered', 'Unregistered'] }, gstin: { type: 'string', maxLength: 15 }, invoiceSeries: { type: 'string', maxLength: 80 }, einvoiceState: { type: 'string', enum: ['NotApplicable', 'NotConfigured', 'Sandbox', 'Ready', 'Pending', 'Generated', 'Failed', 'Cancelled', 'TimeRestricted'] } }, additionalProperties: false,
 } as const;
+const statutoryTdsBody = {
+  type: 'object', required: ['sourceReference', 'postingDate', 'category', 'basePaise'], properties: {
+    sourceReference: { type: 'string', minLength: 1, maxLength: 200 }, postingDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, category: { type: 'string', enum: ['CONTRACTOR', 'COMMISSION', 'RENT_EQUIPMENT', 'RENT_PROPERTY', 'PROFESSIONAL', 'TECHNICAL', 'GOODS_PURCHASE', 'ECOMMERCE'] }, payeeName: { type: 'string', maxLength: 240 }, payeeType: { type: 'string', enum: ['INDIVIDUAL_HUF', 'OTHER'] }, basePaise: { type: 'integer', minimum: 0 }, aggregatePaise: { type: 'integer', minimum: 0 }, panStatus: { type: 'string', enum: ['VALID', 'MISSING', 'INVALID', 'INOPERATIVE', 'UNKNOWN'] }, buyerTurnoverPaise: { type: 'integer', minimum: 0 }, participantExemptionEligible: { type: 'boolean' }, debitAccount: { type: 'string', maxLength: 160 },
+  }, additionalProperties: false,
+} as const;
+const statutoryTdsCalculateBody = { ...statutoryTdsBody, required: ['postingDate', 'category', 'basePaise'] } as const;
+const statutoryTcsBody = {
+  type: 'object', required: ['sourceReference', 'postingDate', 'category', 'taxableSupplyPaise'], properties: {
+    sourceReference: { type: 'string', minLength: 1, maxLength: 200 }, postingDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, category: { type: 'string', enum: ['GST_ECO_TCS', 'INCOME_TAX_TCS'] }, taxableSupplyPaise: { type: 'integer', minimum: 0 }, returnedSupplyPaise: { type: 'integer', minimum: 0 }, intraState: { type: 'boolean' }, debitAccount: { type: 'string', maxLength: 160 },
+  }, additionalProperties: false,
+} as const;
+const statutoryTcsCalculateBody = { ...statutoryTcsBody, required: ['category', 'taxableSupplyPaise'] } as const;
+const statutoryReturnPrepareBody = {
+  type: 'object', required: ['returnType', 'periodStart', 'periodEnd'], properties: {
+    returnType: { type: 'string', enum: ['TDS_138', 'TDS_140', 'TCS_143', 'GSTR_8'] }, periodStart: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, periodEnd: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+  }, additionalProperties: false,
+} as const;
+const statutoryReturnStatusBody = {
+  type: 'object', required: ['state'], properties: { state: { type: 'string', enum: ['Prepared', 'Validated', 'Exported', 'Submitted', 'Acknowledged', 'Accepted', 'Rejected', 'CorrectionRequired'] }, evidence: { type: 'string', maxLength: 500 }, acknowledgement: { type: 'string', maxLength: 200 } }, additionalProperties: false,
+} as const;
 const marketplaceIntakeBody = {
   type: 'object', required: ['actual'], properties: { actual: { type: 'object', additionalProperties: true }, reason: { type: 'string', maxLength: 500 } }, additionalProperties: false,
 } as const;
@@ -989,23 +1009,23 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/finance/command-center', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => financeCommandCenter(req.auth!.tenant, req.query || {})));
   app.get('/api/finance/statutory-dashboard', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => statutoryDashboard(req.auth!.tenant, req.query || {})));
   app.get('/api/finance/statutory-transactions', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listStatutoryTransactions(req.auth!.tenant, req.query || {})));
-  app.post('/api/finance/tds/calculate', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+  app.post('/api/finance/tds/calculate', { schema: { body: statutoryTdsCalculateBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => calculateTds(req.body)); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
-  app.post('/api/finance/tds/transactions', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+  app.post('/api/finance/tds/transactions', { schema: { body: statutoryTdsBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `finance.tds:${req.body.sourceReference}`, () => recordTdsTransaction(req.auth!.tenant, req.auth!.actor, { ...req.body, category: req.body.category as TdsCategory, payeeType: req.body.payeeType as TdsPayeeType, panStatus: req.body.panStatus as PanStatus })))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
-  app.post('/api/finance/tcs/calculate', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+  app.post('/api/finance/tcs/calculate', { schema: { body: statutoryTcsCalculateBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { if (req.body.category !== 'GST_ECO_TCS') throw new Error('TCS_POLICY_REQUIRES_EXPLICIT_RATE'); return inStore(req, () => calculateGstEcoTcs(req.body)); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
-  app.post('/api/finance/tcs/transactions', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+  app.post('/api/finance/tcs/transactions', { schema: { body: statutoryTcsBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `finance.tcs:${req.body.sourceReference}`, () => recordTcsTransaction(req.auth!.tenant, req.auth!.actor, { ...req.body, category: req.body.category as TcsCategory })))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/finance/statutory-returns', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => statutoryDashboard(req.auth!.tenant).returns));
-  app.post('/api/finance/statutory-returns/prepare', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+  app.post('/api/finance/statutory-returns/prepare', { schema: { body: statutoryReturnPrepareBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `finance.return:${req.body.returnType}:${req.body.periodStart}:${req.body.periodEnd}`, () => prepareStatutoryReturn(req.auth!.tenant, req.auth!.actor, { ...req.body, returnType: req.body.returnType as StatutoryReturnType })))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
-  app.post('/api/finance/statutory-returns/:id/status', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+  app.post('/api/finance/statutory-returns/:id/status', { schema: { params: laundryIdParams, body: statutoryReturnStatusBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => idempotent(req, `finance.return-status:${req.params.id}:${req.body.state}`, () => updateStatutoryReturn(req.auth!.tenant, req.auth!.actor, req.params.id, { ...req.body, state: req.body.state as StatutoryReturnState }))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/laundry/workforce', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => laundryWorkforceDashboard(req.auth!.tenant, String(req.query?.date || '').trim() || undefined)));
