@@ -45,6 +45,7 @@ test('operator can complete the core laundry desk journeys in a disposable works
   await expect(page.getByRole('heading', { name: 'The money behind every cleaned garment.' })).toBeVisible();
   await expect(page.getByText('Net revenue').first()).toBeVisible();
   await expect(page.getByText('From booked service to operating result')).toBeVisible();
+  await expect(page.getByText('Operating result waterfall')).toBeVisible();
   await expect(page.getByText('What customers still owe')).toBeVisible();
   await expect(page.getByText('Output GST by day')).toBeVisible();
   await expect(page.getByText('Recorded customer-impact signals')).toBeVisible();
