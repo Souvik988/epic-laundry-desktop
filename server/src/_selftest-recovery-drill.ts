@@ -20,6 +20,7 @@ try {
   child = start(); await waitForHealth();
   const bootstrap = await fetch(`http://127.0.0.1:${port}/api/auth/bootstrap`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'recovery-owner', password: 'RecoveryOwnerPassword!26', tenant: 'RECOVERY', storeId: 'STORE-DEFAULT', businessName: 'Recovery Drill Laundry', phone: '9000000122' }) });
   assert.equal(bootstrap.status, 200, 'recovery drill bootstraps a fresh workspace');
+  await api('/api/gst/tax-profile', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'idempotency-key': 'recovery-tax-profile-001' }, body: JSON.stringify({ legalName: 'Recovery Drill Laundry', address: 'Kolkata, West Bengal', stateCode: '19', pincode: '700001', registrationStatus: 'Unregistered', einvoiceState: 'NotApplicable', invoiceSeries: 'REC' }) });
   const catalogue = await api('/api/laundry/catalogue');
   assert.ok(Array.isArray(catalogue.garments) && catalogue.garments.length > 0, `recovery drill catalogue unavailable: ${JSON.stringify(catalogue)}`);
   const price = catalogue.prices[0];
