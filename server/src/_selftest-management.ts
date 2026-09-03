@@ -15,6 +15,7 @@ try {
   const { financePolicyReadiness, installIndia2026Baseline, saveEntityFinanceProfile } = await import('./modules/finance/regulatory-policy.js');
   const { calculatePayrollPreview, newRegimeTax2026 } = await import('./modules/finance/payroll-engine.js');
   const { financeCommandCenter } = await import('./modules/finance/intelligence.js');
+  const { saveFinancePlanningTarget } = await import('./modules/finance/planning.js');
   const tenant = 'MANAGEMENT'; const actor = 'owner';
   seedLaundryDefaults(tenant);
   const employee = createRow(tenant, actor, 'employee', { name: 'Anita Operator', department: 'Production', designation: 'Press operator', is_active: true });
@@ -33,6 +34,10 @@ try {
   assert.equal(finance.current.unitEconomics.revenuePerOrderPaise, finance.current.kpis.netRevenuePaise, 'unit economics revenue per order is derived from the canonical net revenue');
   assert.equal(finance.forecast.state, 'RUN_RATE', 'forecast is explicitly labelled as a deterministic run-rate when posted evidence exists');
   assert.ok(finance.health.some((item: { key: string; state: string }) => item.key === 'margin' && item.state === 'Healthy'), 'financial health reports the classified margin signal');
+  saveFinancePlanningTarget(tenant, actor, { periodStart: '2026-09-03', periodEnd: '2026-09-03', revenuePaise: finance.current.kpis.netRevenuePaise, collectionPaise: finance.current.kpis.collectedPaise, marginBps: 5000 });
+  const plannedFinance = financeCommandCenter(tenant, { from: '2026-09-03', to: '2026-09-03' });
+  assert.equal(plannedFinance.planning.state, 'CONFIGURED', 'finance planning targets are scoped to the selected period');
+  assert.equal(plannedFinance.planning.metrics.find((item: { key: string }) => item.key === 'revenue')?.variance, 0, 'actual-vs-target variance reconciles in fixed paise');
   const request = requestLaundryReturn(tenant, actor, { orderId: booking.order.id, amount: 1, reason: 'Quality issue', note: 'Counter evidence' });
   assert.equal(request.returnCase.data.status, 'Requested', 'return request does not fabricate a completed refund');
   assert.equal(requestLaundryReturn(tenant, actor, { orderId: booking.order.id, amount: 1, reason: 'Quality issue' }).duplicate, true, 'same return retry does not duplicate a case');

@@ -65,6 +65,7 @@ import { listLaundryReturns, requestLaundryReturn } from './modules/laundry/retu
 import { entityFinanceProfile, financePolicyReadiness, installIndia2026Baseline, listRegulatoryPolicies, saveEntityFinanceProfile } from './modules/finance/regulatory-policy.js';
 import { calculatePayrollPreview } from './modules/finance/payroll-engine.js';
 import { financeCommandCenter } from './modules/finance/intelligence.js';
+import { listFinancePlanningTargets, saveFinancePlanningTarget } from './modules/finance/planning.js';
 import { calculateGstEcoTcs, calculateTds, listStatutoryTransactions, prepareStatutoryReturn, recordTcsTransaction, recordTdsTransaction, statutoryDashboard, updateStatutoryReturn, type StatutoryReturnState, type StatutoryReturnType, type TdsCategory, type TdsPayeeType, type PanStatus, type TcsCategory } from './modules/finance/statutory.js';
 import { cancelLaundryOrderHold, claimLaundryOrderHold, createLaundryOrderHold, listLaundryOrderHolds, orderHoldPresence, releaseLaundryOrderHold, renewLaundryOrderHold, resumeLaundryOrderHold } from './modules/laundry/holds.js';
 import { completeRouteStop, createRouteRun, createServiceZone, listRouteRuns, listServiceZoneMaster, listServiceZones, routeCoverageAnalytics, startRouteRun, updateServiceZone } from './modules/laundry/routes.js';
@@ -229,6 +230,12 @@ const statutoryReturnPrepareBody = {
 } as const;
 const statutoryReturnStatusBody = {
   type: 'object', required: ['state'], properties: { state: { type: 'string', enum: ['Prepared', 'Validated', 'Exported', 'Submitted', 'Acknowledged', 'Accepted', 'Rejected', 'CorrectionRequired'] }, evidence: { type: 'string', maxLength: 500 }, acknowledgement: { type: 'string', maxLength: 200 } }, additionalProperties: false,
+} as const;
+const financePlanningTargetBody = {
+  type: 'object', required: ['periodStart', 'periodEnd'], properties: {
+    periodStart: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, periodEnd: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+    revenuePaise: { type: 'integer', minimum: 0 }, expensePaise: { type: 'integer', minimum: 0 }, ebitdaPaise: { type: 'integer', minimum: 0 }, collectionPaise: { type: 'integer', minimum: 0 }, marginBps: { type: 'integer', minimum: 0, maximum: 10000 }, payrollPaise: { type: 'integer', minimum: 0 }, note: { type: 'string', maxLength: 500 },
+  }, additionalProperties: false,
 } as const;
 const marketplaceIntakeBody = {
   type: 'object', required: ['actual'], properties: { actual: { type: 'object', additionalProperties: true }, reason: { type: 'string', maxLength: 500 } }, additionalProperties: false,
@@ -1007,6 +1014,11 @@ export function registerApi(app: FastifyInstance) {
     catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/finance/command-center', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => financeCommandCenter(req.auth!.tenant, req.query || {})));
+  app.get('/api/finance/planning-targets', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listFinancePlanningTargets(req.auth!.tenant)));
+  app.put('/api/finance/planning-targets', { schema: { body: financePlanningTargetBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `finance.planning-target:${req.body.periodStart}:${req.body.periodEnd}`, () => saveFinancePlanningTarget(req.auth!.tenant, req.auth!.actor, req.body))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
   app.get('/api/finance/statutory-dashboard', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => statutoryDashboard(req.auth!.tenant, req.query || {})));
   app.get('/api/finance/statutory-transactions', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listStatutoryTransactions(req.auth!.tenant, req.query || {})));
   app.post('/api/finance/tds/calculate', { schema: { body: statutoryTdsCalculateBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
