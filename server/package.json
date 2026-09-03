@@ -53,6 +53,7 @@
     "test:reconciliation": "tsx src/_selftest-reconciliation.ts",
     "test:cash-shift": "tsx src/_selftest-cash-shift.ts",
     "test:routes": "tsx src/_selftest-routes.ts",
+    "test:management": "tsx src/_selftest-management.ts",
     "test:hardware": "tsx src/_selftest-hardware.ts",
     "test:diagnostics": "tsx src/_selftest-diagnostics.ts",
     "test:backup-crypto": "tsx src/_selftest-backup-crypto.ts",

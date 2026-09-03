@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { Banknote, ClipboardCheck, FileWarning, Landmark, Printer, ReceiptText, Settings2, WalletCards } from 'lucide-react'
+import { Banknote, BarChart3, ClipboardCheck, FileWarning, Landmark, Printer, ReceiptText, Settings2, WalletCards } from 'lucide-react'
 
 type FinanceWorkstream = {
   to: string
@@ -10,6 +10,7 @@ type FinanceWorkstream = {
 }
 
 const workstreams: FinanceWorkstream[] = [
+  { to: '/laundry/management', title: 'Management control', description: 'See financial readiness, quality risk and workforce capacity without fabricated EBITDA or statutory outcomes.', action: 'Open control room', icon: BarChart3 },
   { to: '/laundry/cash-closing', title: 'Cash closing', description: 'Close the counter shift against actual cash collection and recorded payments.', action: 'Close a cash shift', icon: Banknote },
   { to: '/laundry/expenses', title: 'Store expenses', description: 'Record operating expenses with accountable amounts and supporting context.', action: 'Review expenses', icon: WalletCards },
   { to: '/laundry/settlements', title: 'Rider settlements', description: 'Reconcile rider collections and handoffs against the orders they completed.', action: 'Open settlements', icon: Landmark },

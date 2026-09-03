@@ -27,6 +27,8 @@ import LaundryOnlineOrders from "@/pages/laundry/LaundryOnlineOrders";
 import LaundrySyncStatus from "@/pages/laundry/LaundrySyncStatus";
 import LaundryOperationsHub from "@/pages/laundry/LaundryOperationsHub";
 import LaundryFinanceHub from "@/pages/laundry/LaundryFinanceHub";
+import LaundryManagement from "@/pages/laundry/LaundryManagement";
+import LaundryReturns from "@/pages/laundry/LaundryReturns";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { canUseUi, type UiPermission } from "@/components/laundry/LaundryShell";
 import { useQuery } from "@tanstack/react-query";
@@ -42,6 +44,7 @@ export function App() {
         <Route path="dashboard" element={<PermissionGate permission="orders.read"><LaundryDashboard /></PermissionGate>} />
         <Route path="operations" element={<PermissionGate permission="orders.read"><LaundryOperationsHub /></PermissionGate>} />
         <Route path="finance" element={<PermissionGate permission="orders.read"><LaundryFinanceHub /></PermissionGate>} />
+        <Route path="management" element={<PermissionGate permission="settings.manage"><LaundryManagement /></PermissionGate>} />
         <Route path="customers" element={<PermissionGate permission="customers.read"><LaundryCustomers /></PermissionGate>} />
         <Route path="customers/:id" element={<PermissionGate permission="customers.read"><LaundryCustomers /></PermissionGate>} />
         <Route path="packages" element={<PermissionGate permission="packages.read"><LaundryPackages /></PermissionGate>} />
@@ -54,6 +57,7 @@ export function App() {
         <Route path="production-queue" element={<PermissionGate permission="production.read"><LaundryProductionQueue /></PermissionGate>} />
         <Route path="quality-claims" element={<PermissionGate permission="quality.read"><LaundryQualityClaims /></PermissionGate>} />
         <Route path="corrections" element={<PermissionGate permission="quality.read"><LaundryCorrections /></PermissionGate>} />
+        <Route path="returns" element={<PermissionGate permission="quality.read"><LaundryReturns /></PermissionGate>} />
         <Route path="routes" element={<PermissionGate permission="routes.read"><LaundryRoutes /></PermissionGate>} />
         <Route path="print-centre" element={<PermissionGate permission="orders.read"><LaundryPrintCentre /></PermissionGate>} />
         <Route path="settlements" element={<PermissionGate permission="orders.read"><LaundrySettlements /></PermissionGate>} />

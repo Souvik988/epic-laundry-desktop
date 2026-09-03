@@ -1630,6 +1630,23 @@ export const ENTITIES: EntityDef[] = [
     permissions: [{ role: 'admin', read: true, write: true, submit: true, cancel: true }],
   },
   {
+    name: 'laundry_return_case',
+    label: 'Laundry Return Case',
+    kind: 'document',
+    module: 'laundry',
+    naming: { series: 'RET-{FY}-{#####}', example: 'RET-26-00001' },
+    fields: [
+      { name: 'order', type: 'link', target: 'laundry_order', required: true },
+      { name: 'customer', type: 'link', target: 'party' },
+      { name: 'amount', type: 'currency', required: true },
+      { name: 'reason', type: 'text', required: true },
+      { name: 'note', type: 'text' },
+      { name: 'status', type: 'select', options: ['Requested', 'Approved', 'Rejected', 'Refunded'] },
+      { name: 'decision_note', type: 'text' },
+    ],
+    permissions: [{ role: 'admin', read: true, write: true }],
+  },
+  {
     name: 'leave_type',
     label: 'Leave Type',
     kind: 'master',

@@ -60,6 +60,8 @@ import { cashCloseDrill, laundryFinancialReconciliation } from './modules/laundr
 import { closeCashShift, getCurrentCashShift, listCashShifts, openCashShift } from './modules/laundry/cash.js';
 import { applyProductionWorkloadRecommendations, assignProductionTask, listProductionTasks, productionLoad, productionSchedule, productionSupervisorMetrics, productionWorkload, startProductionTask } from './modules/laundry/production.js';
 import { listCustomerCorrections, listQualityClaims, openQualityClaim, qualityAnalytics, resolveQualityClaim } from './modules/laundry/quality.js';
+import { laundryManagementSnapshot, laundryWorkforceDashboard, markLaundryAttendance } from './modules/laundry/management.js';
+import { listLaundryReturns, requestLaundryReturn } from './modules/laundry/returns.js';
 import { cancelLaundryOrderHold, claimLaundryOrderHold, createLaundryOrderHold, listLaundryOrderHolds, orderHoldPresence, releaseLaundryOrderHold, renewLaundryOrderHold, resumeLaundryOrderHold } from './modules/laundry/holds.js';
 import { completeRouteStop, createRouteRun, createServiceZone, listRouteRuns, listServiceZoneMaster, listServiceZones, routeCoverageAnalytics, startRouteRun, updateServiceZone } from './modules/laundry/routes.js';
 import { createRackProfile, listRackProfiles, rackOccupancy, updateRackProfile } from './modules/laundry/rack.js';
@@ -959,6 +961,17 @@ export function registerApi(app: FastifyInstance) {
   });
   app.get('/api/laundry/quality-claims', { preHandler: [guard, allow('quality.read')] }, async (req: any) => inStore(req, () => listQualityClaims(req.auth!.tenant, req.query as any)));
   app.get('/api/laundry/quality-analytics', { preHandler: [guard, allow('quality.read')] }, async (req: any) => inStore(req, () => qualityAnalytics(req.auth!.tenant)));
+  app.get('/api/laundry/returns', { preHandler: [guard, allow('quality.read')] }, async (req: any) => inStore(req, () => listLaundryReturns(req.auth!.tenant)));
+  app.post('/api/laundry/returns', { preHandler: [guard, allow('quality.open')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.return-request', () => requestLaundryReturn(req.auth!.tenant, req.auth!.actor, req.body || {})))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/laundry/management-snapshot', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => laundryManagementSnapshot(req.auth!.tenant)));
+  app.get('/api/laundry/workforce', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => laundryWorkforceDashboard(req.auth!.tenant, String(req.query?.date || '').trim() || undefined)));
+  app.post('/api/laundry/workforce/attendance', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.workforce-attendance', () => markLaundryAttendance(req.auth!.tenant, req.auth!.actor, req.body || {})))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
   app.get('/api/laundry/customer-corrections', { preHandler: [guard, allow('quality.read')] }, async (req: any) => inStore(req, () => listCustomerCorrections(req.auth!.tenant, req.query as any)));
   app.post('/api/laundry/quality-claims', { preHandler: [guard, allow('quality.open')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => openQualityClaim(req.auth!.tenant, req.auth!.actor, req.body as any))); }
