@@ -76,6 +76,7 @@ import { createSavedReportView, deleteSavedReportView, listSavedReportViews } fr
 import { actOnMarketplaceOrder, createDeviceEnrollment, linkMarketplaceOrderToLocalOrder, marketplaceSyncStatus, materializeMarketplaceOrder, registerMarketplaceDevice, replayHeldMarketplaceOrder } from './modules/marketplace/edge-sync.js';
 import { marketplaceAvailability, saveMarketplaceAvailability } from './modules/marketplace/availability.js';
 import { listMarketplaceCatalogueMappings, saveMarketplaceCatalogueMapping } from './modules/marketplace/catalogue.js';
+import { listMarketplaceCustomerLinks, revokeMarketplaceCustomerLink, saveMarketplaceCustomerLink } from './modules/marketplace/customer-links.js';
 import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMarketplaceReassessment, marketplaceOrderTruth, recordMarketplaceIntake } from './modules/marketplace/order-truth.js';
 import { createCanonicalDebitNoteSnapshot, createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
 import { marketplaceSettlement, recordMarketplaceCashCollection, recordMarketplaceSettlement } from './modules/marketplace/settlements.js';
@@ -267,6 +268,13 @@ const marketplaceCatalogueMappingBody = {
   }, additionalProperties: false,
 } as const;
 const marketplaceCatalogueQuery = { type: 'object', properties: { vendorId: { type: 'string', maxLength: 120 }, visibleOnly: { type: 'boolean' } }, additionalProperties: false } as const;
+const marketplaceCustomerLinkBody = {
+  type: 'object', required: ['customerId', 'channel', 'externalCustomerId'], properties: {
+    id: { type: 'string', minLength: 1, maxLength: 160 }, customerId: { type: 'string', minLength: 1, maxLength: 160 }, externalCustomerId: { type: 'string', minLength: 1, maxLength: 160 },
+    channel: { type: 'string', enum: ['CUSTOMER_APP', 'WEBSITE', 'VENDOR_APP', 'MARKETPLACE', 'ADMIN', 'IMPORT'] },
+  }, additionalProperties: false,
+} as const;
+const marketplaceCustomerLinkQuery = { type: 'object', properties: { customerId: { type: 'string', maxLength: 160 } }, additionalProperties: false } as const;
 const marketplacePaymentWebhookParams = {
   type: 'object', required: ['provider'],
   properties: { provider: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}$' } }, additionalProperties: false,
@@ -601,6 +609,15 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/laundry/customers/:id', { preHandler: [guard, allow('customers.read')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => customerProfile(req.auth!.tenant, req.params.id)); }
     catch (error: any) { return rep.code(404).send({ error: error.message }); }
+  });
+  app.get('/api/marketplace/customer-links', { schema: { querystring: marketplaceCustomerLinkQuery }, preHandler: [guard, allow('customers.read')] }, async (req: any) => inStore(req, () => listMarketplaceCustomerLinks(req.auth!.tenant, String((req.query as any)?.customerId || '').trim() || undefined)));
+  app.post('/api/marketplace/customer-links', { schema: { body: marketplaceCustomerLinkBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.customer-link:${req.body.channel}:${req.body.externalCustomerId}`, () => saveMarketplaceCustomerLink(req.auth!.tenant, req.auth!.actor, req.body)))); }
+    catch (error: any) { const code = error.message === 'MARKETPLACE_CUSTOMER_ALREADY_LINKED' ? 409 : 400; return rep.code(code).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/marketplace/customer-links/:id/revoke', { schema: { params: laundryIdParams, body: { type: 'object', additionalProperties: false } }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `marketplace.customer-link-revoke:${req.params.id}`, () => revokeMarketplaceCustomerLink(req.auth!.tenant, req.auth!.actor, req.params.id))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.patch('/api/laundry/customers/:id', { preHandler: [guard, allow('customers.edit')] }, async (req: any, rep: any) => {
     try { return inStore(req, () => updateLaundryCustomer(req.auth!.tenant, req.auth!.actor, req.params.id, req.body as any)); }
