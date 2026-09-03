@@ -4,6 +4,7 @@ import { audit } from '../../kernel/audit.js';
 import { getComplianceSummary } from '../compliance/returns.js';
 import { laundryFinancialReconciliation } from './reconciliation.js';
 import { qualityAnalytics } from './quality.js';
+import { financePolicyReadiness } from '../finance/regulatory-policy.js';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ATTENDANCE = new Set(['Present', 'Absent', 'Half Day', 'On Leave', 'Holiday']);
@@ -53,6 +54,7 @@ export function laundryManagementSnapshot(tenant: string) {
   const quality = qualityAnalytics(tenant);
   const activeEmployees = store.rowsOf(tenant, 'employee').filter((row) => row.data.is_active !== false).length;
   const policyRows = store.rowsOf(tenant, 'laundry_withholding_policy').filter((row) => row.status !== 'Cancelled');
+  const regulatory = financePolicyReadiness(tenant);
   return {
     generatedAt: new Date().toISOString(),
     financial: reconciliation.totals,
@@ -60,5 +62,6 @@ export function laundryManagementSnapshot(tenant: string) {
     quality, workforce: { activeEmployees },
     ebitda: { state: 'NOT_READY', value: null, reason: 'Classify direct laundry cost, payroll cost, overhead and non-cash adjustments before EBITDA can be calculated.' },
     withholding: { state: policyRows.length ? 'POLICY_REQUIRES_CA_APPROVAL' : 'NOT_CONFIGURED', policyCount: policyRows.length, ledgerBalances: { tdsPayable: compliance.tds_payable, tcsPayable: compliance.tcs_payable }, note: 'TDS/TCS balances are only posted-ledger balances. Rates, thresholds, filing and remittance are never inferred.' },
+    regulatory: { policyCount: regulatory.policyCount, checks: regulatory.checks, missing: regulatory.missing },
   };
 }

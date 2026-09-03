@@ -12,6 +12,8 @@ try {
   const { seedLaundryDefaults, laundryCatalogue, bookLaundryOrder } = await import('./modules/laundry/domain.js');
   const { laundryWorkforceDashboard, markLaundryAttendance, laundryManagementSnapshot } = await import('./modules/laundry/management.js');
   const { requestLaundryReturn, listLaundryReturns } = await import('./modules/laundry/returns.js');
+  const { financePolicyReadiness, installIndia2026Baseline, saveEntityFinanceProfile } = await import('./modules/finance/regulatory-policy.js');
+  const { calculatePayrollPreview, newRegimeTax2026 } = await import('./modules/finance/payroll-engine.js');
   const tenant = 'MANAGEMENT'; const actor = 'owner';
   seedLaundryDefaults(tenant);
   const employee = createRow(tenant, actor, 'employee', { name: 'Anita Operator', department: 'Production', designation: 'Press operator', is_active: true });
@@ -30,5 +32,16 @@ try {
   const snapshot = laundryManagementSnapshot(tenant);
   assert.equal(snapshot.ebitda.state, 'NOT_READY', 'management dashboard never invents EBITDA without classified costs');
   assert.equal(snapshot.withholding.state, 'NOT_CONFIGURED', 'TDS/TCS starts visibly unconfigured until a CA-approved policy exists');
+  assert.equal(financePolicyReadiness(tenant).checks.statutoryBaseline, false, 'finance readiness does not pretend verified policies are installed');
+  assert.equal(installIndia2026Baseline(tenant, actor).installed >= 8, true, 'verified India 2026 statutory policy records install once per tenant');
+  assert.equal(installIndia2026Baseline(tenant, actor).installed, 0, 'statutory baseline installation is replay-safe');
+  assert.equal(financePolicyReadiness(tenant).checks.statutoryBaseline, true, 'readiness recognises the versioned statutory baseline');
+  saveEntityFinanceProfile(tenant, actor, { legalName: 'Epic Laundry Test', pan: 'ABCDE1234F', tan: 'ABCD12345E', gstRegistrationStatus: 'Registered', epfStatus: 'CoveredGeneral12', esicStatus: 'Covered', workState: 'West Bengal', marketplaceModel: 'VENDOR_SUPPLIER' });
+  assert.equal(financePolicyReadiness(tenant).checks.entityConfiguration, true, 'entity-specific facts are recorded separately from statutory rates');
+  const payroll = calculatePayrollPreview([{ name: 'Basic', amountPaise: 2_000_000, statutoryWage: true, taxable: true, kind: 'earning' }, { name: 'HRA', amountPaise: 1_000_000, statutoryWage: false, taxable: true, kind: 'earning' }], { epfStatus: 'CoveredGeneral12', esicStatus: 'NotCovered', taxRegime: 'NEW_2026', remainingPeriods: 12 });
+  assert.equal(payroll.status, 'CALCULATED', 'configured payroll produces a fixed-scale preview');
+  if (payroll.status === 'CALCULATED') assert.equal(payroll.grossEarningsPaise - payroll.employeeDeductions.totalPaise, payroll.netPayablePaise, 'employee payroll invariant reconciles exactly in paise');
+  assert.equal(calculatePayrollPreview([], { epfStatus: 'Unknown', esicStatus: 'Unknown', taxRegime: 'NEW_2026' }).status, 'ESTABLISHMENT_CONFIGURATION_REQUIRED', 'payroll blocks before establishment applicability is configured');
+  assert.equal(newRegimeTax2026(120_000_000).taxPaise, 0, 'resident new-regime rebate eliminates normal tax at ₹12 lakh taxable income before high-income exceptions');
   console.log('PASS  Laundry management workforce, return and finance-readiness self-test complete');
 } finally { closeStore?.(); rmSync(tempDir, { recursive: true, force: true }); }

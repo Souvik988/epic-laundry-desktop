@@ -62,6 +62,8 @@ import { applyProductionWorkloadRecommendations, assignProductionTask, listProdu
 import { listCustomerCorrections, listQualityClaims, openQualityClaim, qualityAnalytics, resolveQualityClaim } from './modules/laundry/quality.js';
 import { laundryManagementSnapshot, laundryWorkforceDashboard, markLaundryAttendance } from './modules/laundry/management.js';
 import { listLaundryReturns, requestLaundryReturn } from './modules/laundry/returns.js';
+import { entityFinanceProfile, financePolicyReadiness, installIndia2026Baseline, listRegulatoryPolicies, saveEntityFinanceProfile } from './modules/finance/regulatory-policy.js';
+import { calculatePayrollPreview } from './modules/finance/payroll-engine.js';
 import { cancelLaundryOrderHold, claimLaundryOrderHold, createLaundryOrderHold, listLaundryOrderHolds, orderHoldPresence, releaseLaundryOrderHold, renewLaundryOrderHold, resumeLaundryOrderHold } from './modules/laundry/holds.js';
 import { completeRouteStop, createRouteRun, createServiceZone, listRouteRuns, listServiceZoneMaster, listServiceZones, routeCoverageAnalytics, startRouteRun, updateServiceZone } from './modules/laundry/routes.js';
 import { createRackProfile, listRackProfiles, rackOccupancy, updateRackProfile } from './modules/laundry/rack.js';
@@ -967,6 +969,21 @@ export function registerApi(app: FastifyInstance) {
     catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/laundry/management-snapshot', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => laundryManagementSnapshot(req.auth!.tenant)));
+  app.get('/api/finance/regulatory-policies', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listRegulatoryPolicies(req.auth!.tenant, String(req.query?.asOf || '').trim() || undefined)));
+  app.post('/api/finance/regulatory-policies/install-india-2026', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, 'finance.india-2026-baseline', () => installIndia2026Baseline(req.auth!.tenant, req.auth!.actor)))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/finance/readiness', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => financePolicyReadiness(req.auth!.tenant)));
+  app.get('/api/finance/entity-profile', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => entityFinanceProfile(req.auth!.tenant) || { code: 'ENTITY_CONFIGURATION_REQUIRED' }));
+  app.put('/api/finance/entity-profile', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, 'finance.entity-profile', () => saveEntityFinanceProfile(req.auth!.tenant, req.auth!.actor, req.body || {}))); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/finance/payroll-preview', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { const body = req.body || {}; return inStore(req, () => calculatePayrollPreview(body.components || [], body.policy || {})); }
+    catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
   app.get('/api/laundry/workforce', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => laundryWorkforceDashboard(req.auth!.tenant, String(req.query?.date || '').trim() || undefined)));
   app.post('/api/laundry/workforce/attendance', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.workforce-attendance', () => markLaundryAttendance(req.auth!.tenant, req.auth!.actor, req.body || {})))); }
