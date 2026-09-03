@@ -4,7 +4,7 @@ Status: **PARTIAL / EPIC_EXTENSION; no accepted cloud edge contract yet.**
 
 Every envelope must carry `eventId`, `eventType`, `eventVersion`, `aggregateType`, `aggregateId`, `aggregateVersion`, `occurredAt`, `tenantId`, `vendorId`, `storeId`, `deviceId` where applicable, correlation ID, and a schema-validated object payload. The local edge rejects missing identity, invalid timestamps, wrong event families, invalid versions, and non-object financial payloads before inbox application. Delivery is at-least-once: the desktop only transitions an outbound event to `Acknowledged` after receiving a durable remote receipt. Inbound application is deduplicated by `eventId` and held when an aggregate version arrives out of order.
 
-Initial contract families: `order.requested`, `order.assignment.changed`, `order.accepted/rejected`, `order.reassessment.requested/approved`, `payment.captured/refunded`, `cash.collection.recorded`, `fulfillment.updated`, and `availability.updated`.
+Initial contract families: `order.requested`, `order.assignment.changed`, `order.accepted/rejected`, `order.reassessment.requested/approved`, `payment.captured/refunded`, `cash.collection.recorded`, `fulfillment.updated`, `availability.updated`, and `catalogue.mapping.published`. Catalogue publication carries the stable mapping ID, vendor/store scope, effective date/version, approval state, public price/unit, and visibility; it is a publication event, not proof that a remote marketplace accepted it.
 
 ## Verified adjacent backend reference
 

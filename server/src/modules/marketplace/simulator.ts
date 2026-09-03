@@ -60,6 +60,11 @@ export class MarketplaceIntegrationSimulator implements SyncTransport {
     this.enqueue(deviceId, envelope);
     return envelope;
   }
+  enqueueCataloguePublication(deviceId: string, input: Omit<MarketplaceEnvelope, 'eventId' | 'source' | 'deviceId' | 'aggregateType' | 'aggregateId' | 'occurredAt' | 'eventType' | 'payload'> & { mappingId: string; payload: Record<string, unknown> }) {
+    const envelope: MarketplaceEnvelope = { eventId: `sim_evt_catalogue_${randomUUID()}`, source: 'marketplace-simulator', tenantId: input.tenantId, vendorId: input.vendorId, storeId: input.storeId, deviceId, aggregateType: 'marketplace_catalogue', aggregateId: input.mappingId, aggregateVersion: input.aggregateVersion, eventType: 'marketplace.catalogue.published.v1', eventVersion: input.eventVersion, occurredAt: new Date().toISOString(), correlationId: input.correlationId, payload: { mappingId: input.mappingId, ...input.payload } };
+    this.enqueue(deviceId, envelope);
+    return envelope;
+  }
   pull(deviceId: string, limit = 100) {
     if (this.unavailable) throw new Error('simulated marketplace transport outage');
     const pending = this.inboxes.get(deviceId) || [];

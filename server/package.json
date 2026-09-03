@@ -17,6 +17,7 @@
     "test:marketplace-cross-channel": "tsx src/_selftest-marketplace-cross-channel.ts",
     "test:marketplace-api": "tsx src/_selftest-marketplace-api.ts",
     "test:marketplace-device-api": "tsx src/_selftest-marketplace-device-api.ts",
+    "test:marketplace-catalogue": "tsx src/_selftest-marketplace-catalogue.ts",
     "test:marketplace-order-truth": "tsx src/_selftest-marketplace-order-truth.ts",
     "test:marketplace-customer-status": "tsx src/_selftest-marketplace-customer-status.ts",
     "test:marketplace-pickup": "tsx src/_selftest-marketplace-pickup.ts",

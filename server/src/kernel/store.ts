@@ -41,6 +41,7 @@ export interface DbShape {
   orderExternalLinks?: OrderExternalLinkRecord[];
   marketplaceOrders?: MarketplaceOrderProjectionRecord[];
   marketplaceAvailability?: MarketplaceAvailabilityRecord[];
+  marketplaceCatalogueMappings?: MarketplaceCatalogueMappingRecord[];
 }
 
 export type AuthIdentity = {
@@ -270,6 +271,14 @@ export type MarketplaceAvailabilityRecord = {
   businessHours: Record<string, { open: string; close: string } | null>; holidays: string[]; serviceZones: string[];
   capabilities: Record<string, boolean>; capacity: { orders: number | null; bags: number | null; kg: number | null; stops: number | null };
   leadTimeMinutes: number; staleAfterMinutes: number; updatedAt: string; updatedBy: string;
+};
+export type MarketplaceCatalogueApprovalStatus = 'Draft' | 'PendingReview' | 'Approved' | 'Rejected' | 'Retired';
+export type MarketplaceCatalogueMappingRecord = {
+  id: string; tenant: string; storeId: string; vendorId: string; garmentId: string; serviceId: string;
+  marketplaceCategoryId: string; marketplaceServiceId: string; publicName: string; publicDescription: string;
+  pricePaise: number; pricingUnit: string; minQuantityMilli: number; turnaroundMinutes: number; expressEligible: boolean;
+  marketplaceVisible: boolean; version: number; effectiveFrom: string; effectiveUntil?: string;
+  approvalStatus: MarketplaceCatalogueApprovalStatus; createdAt: string; updatedAt: string; updatedBy: string;
 };
 export type SyncOutboxState = 'Pending' | 'InFlight' | 'Acknowledged' | 'Retry' | 'DeadLetter';
 export type SyncOutboxRecord = {
@@ -595,6 +604,7 @@ export class Store {
       { version: 32, name: 'laundry-order-search-fts', sql: "CREATE VIRTUAL TABLE IF NOT EXISTS laundry_order_search_fts USING fts5(tenant UNINDEXED, store_id UNINDEXED, order_id UNINDEXED, order_ref, order_name, invoice, customer_name, customer_phone, tokenize='unicode61 remove_diacritics 2'); INSERT INTO laundry_order_search_fts(tenant, store_id, order_id, order_ref, order_name, invoice, customer_name, customer_phone) SELECT r.tenant, r.store_id, r.id, r.id, COALESCE(json_extract(r.data_json, '$.name'), ''), COALESCE(json_extract(r.data_json, '$.invoice'), ''), COALESCE(json_extract(p.data_json, '$.name'), ''), COALESCE(json_extract(p.data_json, '$.phone'), '') FROM entity_rows r LEFT JOIN entity_rows p ON p.tenant = r.tenant AND p.store_id = r.store_id AND p.entity = 'party' AND p.id = json_extract(r.data_json, '$.customer') WHERE r.entity = 'laundry_order';" },
       { version: 33, name: 'laundry-order-search-row-map', sql: "CREATE TABLE IF NOT EXISTS laundry_order_search_map (fts_rowid INTEGER PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, order_id TEXT NOT NULL, UNIQUE(tenant, store_id, order_id)); INSERT OR IGNORE INTO laundry_order_search_map(fts_rowid, tenant, store_id, order_id) SELECT rowid, tenant, store_id, order_id FROM laundry_order_search_fts; CREATE INDEX IF NOT EXISTS laundry_order_search_map_scope_order ON laundry_order_search_map(tenant, store_id, order_id);" },
       { version: 34, name: 'laundry-order-search-invoice-names', sql: "DELETE FROM laundry_order_search_map; DELETE FROM laundry_order_search_fts; INSERT INTO laundry_order_search_fts(tenant, store_id, order_id, order_ref, order_name, invoice, customer_name, customer_phone) SELECT r.tenant, r.store_id, r.id, r.id, COALESCE(json_extract(r.data_json, '$.name'), ''), trim(COALESCE(json_extract(r.data_json, '$.invoice'), '') || ' ' || COALESCE(json_extract(i.data_json, '$.name'), '')), COALESCE(json_extract(p.data_json, '$.name'), ''), COALESCE(json_extract(p.data_json, '$.phone'), '') FROM entity_rows r LEFT JOIN entity_rows p ON p.tenant = r.tenant AND p.store_id = r.store_id AND p.entity = 'party' AND p.id = json_extract(r.data_json, '$.customer') LEFT JOIN entity_rows i ON i.tenant = r.tenant AND i.store_id = r.store_id AND i.entity = 'sales_invoice' AND i.id = json_extract(r.data_json, '$.invoice') WHERE r.entity = 'laundry_order'; INSERT OR IGNORE INTO laundry_order_search_map(fts_rowid, tenant, store_id, order_id) SELECT rowid, tenant, store_id, order_id FROM laundry_order_search_fts;" },
+      { version: 35, name: 'marketplace-catalogue-mappings', sql: "CREATE TABLE marketplace_catalogue_mappings (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, store_id TEXT NOT NULL, vendor_id TEXT NOT NULL, garment_id TEXT NOT NULL, service_id TEXT NOT NULL, marketplace_category_id TEXT NOT NULL, marketplace_service_id TEXT NOT NULL, public_name TEXT NOT NULL, public_description TEXT NOT NULL DEFAULT '', price_paise INTEGER NOT NULL CHECK(price_paise >= 0), pricing_unit TEXT NOT NULL CHECK(pricing_unit IN ('Piece','Kilogram','Pair','Square Foot')), min_quantity_milli INTEGER NOT NULL CHECK(min_quantity_milli > 0), turnaround_minutes INTEGER NOT NULL CHECK(turnaround_minutes >= 0), express_eligible INTEGER NOT NULL DEFAULT 0 CHECK(express_eligible IN (0,1)), marketplace_visible INTEGER NOT NULL DEFAULT 0 CHECK(marketplace_visible IN (0,1)), version INTEGER NOT NULL CHECK(version > 0), effective_from TEXT NOT NULL, effective_until TEXT, approval_status TEXT NOT NULL CHECK(approval_status IN ('Draft','PendingReview','Approved','Rejected','Retired')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL, UNIQUE(tenant,store_id,vendor_id,garment_id,service_id,effective_from)); CREATE INDEX marketplace_catalogue_scope_visibility ON marketplace_catalogue_mappings(tenant,store_id,marketplace_visible,approval_status,effective_from); CREATE INDEX marketplace_catalogue_scope_vendor ON marketplace_catalogue_mappings(tenant,store_id,vendor_id,updated_at DESC);" },
     ];
     this.db.transaction(() => {
       for (const migration of migrations) {
@@ -1195,6 +1205,33 @@ export class Store {
   marketplaceOrderProjectionCount(tenant: string) {
     return Number((this.db.prepare('SELECT COUNT(*) AS count FROM marketplace_order_projections WHERE tenant = ? AND store_id = ?').get(tenant, this.currentStore(tenant)) as { count: number }).count);
   }
+  private marketplaceCatalogueMappingFromRow(row: Record<string, unknown>): MarketplaceCatalogueMappingRecord {
+    return {
+      id: String(row.id), tenant: String(row.tenant), storeId: String(row.store_id), vendorId: String(row.vendor_id), garmentId: String(row.garment_id), serviceId: String(row.service_id),
+      marketplaceCategoryId: String(row.marketplace_category_id), marketplaceServiceId: String(row.marketplace_service_id), publicName: String(row.public_name), publicDescription: String(row.public_description || ''),
+      pricePaise: Number(row.price_paise), pricingUnit: String(row.pricing_unit), minQuantityMilli: Number(row.min_quantity_milli), turnaroundMinutes: Number(row.turnaround_minutes),
+      expressEligible: Boolean(row.express_eligible), marketplaceVisible: Boolean(row.marketplace_visible), version: Number(row.version), effectiveFrom: String(row.effective_from), effectiveUntil: row.effective_until ? String(row.effective_until) : undefined,
+      approvalStatus: String(row.approval_status) as MarketplaceCatalogueApprovalStatus, createdAt: String(row.created_at), updatedAt: String(row.updated_at), updatedBy: String(row.updated_by),
+    };
+  }
+  saveMarketplaceCatalogueMapping(input: MarketplaceCatalogueMappingRecord) {
+    const storeId = input.storeId || this.currentStore(input.tenant);
+    this.db.prepare(`INSERT INTO marketplace_catalogue_mappings(id,tenant,store_id,vendor_id,garment_id,service_id,marketplace_category_id,marketplace_service_id,public_name,public_description,price_paise,pricing_unit,min_quantity_milli,turnaround_minutes,express_eligible,marketplace_visible,version,effective_from,effective_until,approval_status,created_at,updated_at,updated_by)
+      VALUES (@id,@tenant,@storeId,@vendorId,@garmentId,@serviceId,@marketplaceCategoryId,@marketplaceServiceId,@publicName,@publicDescription,@pricePaise,@pricingUnit,@minQuantityMilli,@turnaroundMinutes,@expressEligible,@marketplaceVisible,@version,@effectiveFrom,@effectiveUntil,@approvalStatus,@createdAt,@updatedAt,@updatedBy)
+      ON CONFLICT(id) DO UPDATE SET vendor_id=excluded.vendor_id,garment_id=excluded.garment_id,service_id=excluded.service_id,marketplace_category_id=excluded.marketplace_category_id,marketplace_service_id=excluded.marketplace_service_id,public_name=excluded.public_name,public_description=excluded.public_description,price_paise=excluded.price_paise,pricing_unit=excluded.pricing_unit,min_quantity_milli=excluded.min_quantity_milli,turnaround_minutes=excluded.turnaround_minutes,express_eligible=excluded.express_eligible,marketplace_visible=excluded.marketplace_visible,version=excluded.version,effective_from=excluded.effective_from,effective_until=excluded.effective_until,approval_status=excluded.approval_status,updated_at=excluded.updated_at,updated_by=excluded.updated_by`).run({ ...input, storeId, publicDescription: input.publicDescription || '', effectiveUntil: input.effectiveUntil || null, expressEligible: input.expressEligible ? 1 : 0, marketplaceVisible: input.marketplaceVisible ? 1 : 0 });
+    return this.getMarketplaceCatalogueMapping(input.tenant, input.id)!;
+  }
+  getMarketplaceCatalogueMapping(tenant: string, id: string) {
+    const row = this.db.prepare('SELECT * FROM marketplace_catalogue_mappings WHERE tenant = ? AND store_id = ? AND id = ?').get(tenant, this.currentStore(tenant), id) as Record<string, unknown> | undefined;
+    return row ? this.marketplaceCatalogueMappingFromRow(row) : undefined;
+  }
+  listMarketplaceCatalogueMappings(tenant: string, options: { vendorId?: string; visibleOnly?: boolean } = {}) {
+    const clauses = ['tenant = ?', 'store_id = ?']; const params: unknown[] = [tenant, this.currentStore(tenant)];
+    if (options.vendorId) { clauses.push('vendor_id = ?'); params.push(options.vendorId); }
+    if (options.visibleOnly) clauses.push("marketplace_visible = 1 AND approval_status = 'Approved'");
+    const rows = this.db.prepare(`SELECT * FROM marketplace_catalogue_mappings WHERE ${clauses.join(' AND ')} ORDER BY public_name COLLATE NOCASE, id`).all(...params) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.marketplaceCatalogueMappingFromRow(row));
+  }
   appendStock(entry: StockLedgerEntry) { this.appendRecord('stock', entry.tenant, entry.id, entry); }
   stockOf(tenant: string) { return this.recordsOf<StockLedgerEntry>('stock', tenant); }
   appendIms(action: ImsAction) { this.appendRecord('ims', action.tenant, action.id, action); }
@@ -1208,12 +1245,12 @@ export class Store {
         rows: this.readRows('SELECT * FROM entity_rows WHERE tenant = ? AND store_id = ? ORDER BY created_at', [tenant, storeId]),
         gl: scopedRecords<GLEntry>('gl'), audit: scopedRecords<AuditEntry>('audit'), outbox: scopedRecords<OutboxEvent>('outbox'),
         stock: scopedRecords<StockLedgerEntry>('stock'), ims: scopedRecords<ImsAction>('ims'), seq,
-        garmentUnits: this.listGarmentUnits(tenant), garmentUnitEvents: this.listGarmentUnitEvents(tenant), tagReprints: this.listTagReprints(tenant), tagHistory: this.listTagHistory(tenant), printJobs: this.listPrintJobs(tenant), laundryContainers: this.listLaundryContainers(tenant), laundryContainerEvents: this.listLaundryContainerEvents(tenant), financialEntries: this.listFinancialEntries(tenant), financialDocuments: this.listFinancialDocuments(tenant), customerLedgerEntries: this.listCustomerLedgerEntries(tenant), walletEntries: this.listWalletEntries(tenant), orderHolds: this.listOrderHolds(tenant, true), customerAddresses: this.listCustomerAddresses(tenant), cashShiftCloses: this.listCashShiftCloses(tenant), financialNormalizationRuns: this.listFinancialNormalizationRuns(tenant, 10000), normalizedCustomers: this.listNormalizedCustomers(tenant), normalizedOrders: this.listNormalizedOrders(tenant), marketplaceDevices: this.getMarketplaceDevice(tenant) ? [this.getMarketplaceDevice(tenant)!] : [], syncOutbox: this.listSyncOutbox(tenant), syncInbox: this.listSyncInbox(tenant), syncCheckpoints: (this.db.prepare('SELECT * FROM sync_checkpoints WHERE tenant = ? AND store_id = ?').all(tenant, storeId) as Array<Record<string, unknown>>).map((row) => ({ tenant: String(row.tenant), storeId: String(row.store_id), deviceId: String(row.device_id), remoteStream: String(row.remote_stream), cursor: String(row.cursor || ''), lastPullAt: row.last_pull_at ? String(row.last_pull_at) : undefined, lastPushAt: row.last_push_at ? String(row.last_push_at) : undefined, lastHeartbeatAt: row.last_heartbeat_at ? String(row.last_heartbeat_at) : undefined, serverTimeOffsetMs: row.server_time_offset_ms === null || row.server_time_offset_ms === undefined ? undefined : Number(row.server_time_offset_ms), error: row.error ? String(row.error) : undefined, updatedAt: String(row.updated_at) })), orderExternalLinks: this.listOrderExternalLinks(tenant), marketplaceOrders: this.listMarketplaceOrderProjections(tenant),
+        garmentUnits: this.listGarmentUnits(tenant), garmentUnitEvents: this.listGarmentUnitEvents(tenant), tagReprints: this.listTagReprints(tenant), tagHistory: this.listTagHistory(tenant), printJobs: this.listPrintJobs(tenant), laundryContainers: this.listLaundryContainers(tenant), laundryContainerEvents: this.listLaundryContainerEvents(tenant), financialEntries: this.listFinancialEntries(tenant), financialDocuments: this.listFinancialDocuments(tenant), customerLedgerEntries: this.listCustomerLedgerEntries(tenant), walletEntries: this.listWalletEntries(tenant), orderHolds: this.listOrderHolds(tenant, true), customerAddresses: this.listCustomerAddresses(tenant), cashShiftCloses: this.listCashShiftCloses(tenant), financialNormalizationRuns: this.listFinancialNormalizationRuns(tenant, 10000), normalizedCustomers: this.listNormalizedCustomers(tenant), normalizedOrders: this.listNormalizedOrders(tenant), marketplaceDevices: this.getMarketplaceDevice(tenant) ? [this.getMarketplaceDevice(tenant)!] : [], syncOutbox: this.listSyncOutbox(tenant), syncInbox: this.listSyncInbox(tenant), syncCheckpoints: (this.db.prepare('SELECT * FROM sync_checkpoints WHERE tenant = ? AND store_id = ?').all(tenant, storeId) as Array<Record<string, unknown>>).map((row) => ({ tenant: String(row.tenant), storeId: String(row.store_id), deviceId: String(row.device_id), remoteStream: String(row.remote_stream), cursor: String(row.cursor || ''), lastPullAt: row.last_pull_at ? String(row.last_pull_at) : undefined, lastPushAt: row.last_push_at ? String(row.last_push_at) : undefined, lastHeartbeatAt: row.last_heartbeat_at ? String(row.last_heartbeat_at) : undefined, serverTimeOffsetMs: row.server_time_offset_ms === null || row.server_time_offset_ms === undefined ? undefined : Number(row.server_time_offset_ms), error: row.error ? String(row.error) : undefined, updatedAt: String(row.updated_at) })), orderExternalLinks: this.listOrderExternalLinks(tenant), marketplaceOrders: this.listMarketplaceOrderProjections(tenant), marketplaceCatalogueMappings: this.listMarketplaceCatalogueMappings(tenant),
       };
     });
   }
   replaceAll(input: DbShape) {
-    this.db.exec('DELETE FROM entity_rows; DELETE FROM laundry_order_search_map; DELETE FROM laundry_order_search_fts; DELETE FROM records; DELETE FROM sequences; DELETE FROM garment_unit_events; DELETE FROM tag_reprints; DELETE FROM tag_history; DELETE FROM tag_print_jobs; DELETE FROM laundry_container_events; DELETE FROM laundry_containers; DELETE FROM garment_units; DELETE FROM financial_entries; DELETE FROM financial_documents; DELETE FROM customer_ledger_entries; DELETE FROM wallet_entries; DELETE FROM customer_addresses; DELETE FROM laundry_order_holds; DELETE FROM cash_shift_closes; DELETE FROM financial_normalization_runs; DELETE FROM laundry_order_items; DELETE FROM laundry_orders; DELETE FROM customers; DELETE FROM compatibility_migration_runs; DELETE FROM idempotency_commands; DELETE FROM sync_outbox; DELETE FROM sync_inbox; DELETE FROM sync_checkpoints; DELETE FROM order_external_links; DELETE FROM marketplace_order_projections; DELETE FROM marketplace_devices;');
+    this.db.exec('DELETE FROM entity_rows; DELETE FROM laundry_order_search_map; DELETE FROM laundry_order_search_fts; DELETE FROM records; DELETE FROM sequences; DELETE FROM garment_unit_events; DELETE FROM tag_reprints; DELETE FROM tag_history; DELETE FROM tag_print_jobs; DELETE FROM laundry_container_events; DELETE FROM laundry_containers; DELETE FROM garment_units; DELETE FROM financial_entries; DELETE FROM financial_documents; DELETE FROM customer_ledger_entries; DELETE FROM wallet_entries; DELETE FROM customer_addresses; DELETE FROM laundry_order_holds; DELETE FROM cash_shift_closes; DELETE FROM financial_normalization_runs; DELETE FROM laundry_order_items; DELETE FROM laundry_orders; DELETE FROM customers; DELETE FROM compatibility_migration_runs; DELETE FROM idempotency_commands; DELETE FROM sync_outbox; DELETE FROM sync_inbox; DELETE FROM sync_checkpoints; DELETE FROM order_external_links; DELETE FROM marketplace_order_projections; DELETE FROM marketplace_devices; DELETE FROM marketplace_catalogue_mappings;');
     for (const row of input.rows || []) this.insertRow(row);
     for (const entry of input.gl || []) this.appendGL(entry);
     for (const entry of input.audit || []) this.appendAudit(entry);
@@ -1244,6 +1281,7 @@ export class Store {
     for (const checkpoint of input.syncCheckpoints || []) this.saveSyncCheckpoint(checkpoint);
     for (const link of input.orderExternalLinks || []) this.saveOrderExternalLink(link);
     for (const order of input.marketplaceOrders || []) this.saveMarketplaceOrderProjection(order);
+    for (const mapping of input.marketplaceCatalogueMappings || []) this.saveMarketplaceCatalogueMapping(mapping);
   }
   replaceScoped(tenant: string, storeId: string, input: DbShape) {
     return this.withStoreScope(tenant, storeId, () => this.transaction(() => {
@@ -1276,6 +1314,7 @@ export class Store {
       this.db.prepare('DELETE FROM order_external_links WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM marketplace_order_projections WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM marketplace_devices WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
+      this.db.prepare('DELETE FROM marketplace_catalogue_mappings WHERE tenant = ? AND store_id = ?').run(tenant, storeId);
       this.db.prepare('DELETE FROM idempotency_commands WHERE tenant = ? AND scope LIKE ?').run(tenant, `${storeId}:%`);
       for (const row of input.rows || []) {
         if (String(row.tenant) !== tenant) throw new Error('backup contains a row from another tenant');
@@ -1313,6 +1352,7 @@ export class Store {
       for (const checkpoint of input.syncCheckpoints || []) { if (checkpoint.tenant !== tenant || checkpoint.storeId !== storeId) throw new Error('backup contains a sync checkpoint from another store'); this.saveSyncCheckpoint(checkpoint); }
       for (const link of input.orderExternalLinks || []) { if (link.tenant !== tenant || link.storeId !== storeId) throw new Error('backup contains an external order link from another store'); this.saveOrderExternalLink(link); }
       for (const order of input.marketplaceOrders || []) { if (order.tenant !== tenant || order.storeId !== storeId) throw new Error('backup contains a marketplace order from another store'); this.saveMarketplaceOrderProjection(order); }
+      for (const mapping of input.marketplaceCatalogueMappings || []) { if (mapping.tenant !== tenant || mapping.storeId !== storeId) throw new Error('backup contains a marketplace catalogue mapping from another store'); this.saveMarketplaceCatalogueMapping(mapping); }
       return { rows: (input.rows || []).length };
     }));
   }

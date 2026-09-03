@@ -10,7 +10,7 @@ The normalized target concepts are:
 
 and, alongside them, `vendor_user`, `vendor_document`, `vendor_tax_profile`, `vendor_service_zone`, `vendor_capability`, `vendor_availability`, and `vendor_settlement_profile`.
 
-The current local implementation provides the store-scoped `marketplace_devices` and `marketplace_store_availability` records. A device lifecycle is `Pending` → externally activated `Registered` → `Revoked`; the local API cannot claim the activation transition. `POST /api/marketplace/device/enrollment` creates an Ed25519 keypair for one-time handoff, `PUT /api/marketplace/device` persists local Pending metadata, and `POST /api/marketplace/device/revoke` records an auditable revocation. The private key is not persisted by the server response path; an operator must place it in protected OS storage before any real control-plane integration.
+The current local implementation provides the store-scoped `marketplace_devices`, `marketplace_store_availability`, and `marketplace_catalogue_mappings` records. Catalogue mappings connect a local garment/service to canonical marketplace category/service IDs and snapshot public pricing, units, turnaround, visibility, approval, and effective dates. A device lifecycle is `Pending` → externally activated `Registered` → `Revoked`; the local API cannot claim the activation transition. `POST /api/marketplace/device/enrollment` creates an Ed25519 keypair for one-time handoff, `PUT /api/marketplace/device` persists local Pending metadata, and `POST /api/marketplace/device/revoke` records an auditable revocation. The private key is not persisted by the server response path; an operator must place it in protected OS storage before any real control-plane integration.
 
 ## Data protection and isolation
 

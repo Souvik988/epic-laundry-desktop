@@ -75,6 +75,7 @@ import { createLaundryReportExportJob, getLaundryReportExportJob, readLaundryRep
 import { createSavedReportView, deleteSavedReportView, listSavedReportViews } from './modules/laundry/report-views.js';
 import { actOnMarketplaceOrder, createDeviceEnrollment, linkMarketplaceOrderToLocalOrder, marketplaceSyncStatus, materializeMarketplaceOrder, registerMarketplaceDevice, replayHeldMarketplaceOrder } from './modules/marketplace/edge-sync.js';
 import { marketplaceAvailability, saveMarketplaceAvailability } from './modules/marketplace/availability.js';
+import { listMarketplaceCatalogueMappings, saveMarketplaceCatalogueMapping } from './modules/marketplace/catalogue.js';
 import { createMarketplaceReassessment, createMarketplaceOrderRequest, decideMarketplaceReassessment, marketplaceOrderTruth, recordMarketplaceIntake } from './modules/marketplace/order-truth.js';
 import { createCanonicalDebitNoteSnapshot, createCanonicalInvoiceSnapshot } from './modules/gst/invoice-snapshot.js';
 import { marketplaceSettlement, recordMarketplaceCashCollection, recordMarketplaceSettlement } from './modules/marketplace/settlements.js';
@@ -257,6 +258,15 @@ const marketplaceDeviceRegistrationBody = {
 const marketplaceDeviceRevokeBody = {
   type: 'object', properties: { reason: { type: 'string', minLength: 3, maxLength: 500 } }, additionalProperties: false,
 } as const;
+const marketplaceCatalogueMappingBody = {
+  type: 'object', required: ['vendorId', 'garmentId', 'serviceId', 'marketplaceCategoryId', 'marketplaceServiceId', 'publicName', 'pricePaise', 'pricingUnit', 'effectiveFrom'], properties: {
+    id: { type: 'string', minLength: 1, maxLength: 160 }, vendorId: { type: 'string', minLength: 1, maxLength: 120 }, garmentId: { type: 'string', minLength: 1, maxLength: 160 }, serviceId: { type: 'string', minLength: 1, maxLength: 160 },
+    marketplaceCategoryId: { type: 'string', minLength: 1, maxLength: 160 }, marketplaceServiceId: { type: 'string', minLength: 1, maxLength: 160 }, publicName: { type: 'string', minLength: 1, maxLength: 240 }, publicDescription: { type: 'string', maxLength: 1000 },
+    pricePaise: { type: 'integer', minimum: 0 }, pricingUnit: { type: 'string', enum: ['Piece', 'Kilogram', 'Pair', 'Square Foot'] }, minQuantityMilli: { type: 'integer', minimum: 1 }, turnaroundMinutes: { type: 'integer', minimum: 0 },
+    expressEligible: { type: 'boolean' }, marketplaceVisible: { type: 'boolean' }, version: { type: 'integer', minimum: 1 }, effectiveFrom: { type: 'string', minLength: 10, maxLength: 10 }, effectiveUntil: { type: 'string', minLength: 10, maxLength: 10 }, approvalStatus: { type: 'string', enum: ['Draft', 'PendingReview', 'Approved', 'Rejected', 'Retired'] },
+  }, additionalProperties: false,
+} as const;
+const marketplaceCatalogueQuery = { type: 'object', properties: { vendorId: { type: 'string', maxLength: 120 }, visibleOnly: { type: 'boolean' } }, additionalProperties: false } as const;
 const marketplacePaymentWebhookParams = {
   type: 'object', required: ['provider'],
   properties: { provider: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}$' } }, additionalProperties: false,
@@ -678,6 +688,14 @@ export function registerApi(app: FastifyInstance) {
         return result;
       });
     } catch (error: any) { return rep.code(error.message === 'MARKETPLACE_DEVICE_NOT_FOUND' ? 404 : 400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/marketplace/catalogue/mappings', { schema: { querystring: marketplaceCatalogueQuery }, preHandler: [guard, allow('catalogue.read')] }, async (req: any) =>
+    inStore(req, () => listMarketplaceCatalogueMappings(req.auth!.tenant, { vendorId: req.query?.vendorId, visibleOnly: req.query?.visibleOnly === true })),
+  );
+  app.post('/api/marketplace/catalogue/mappings', { schema: { body: marketplaceCatalogueMappingBody }, preHandler: [guard, allow('catalogue.manage')] }, async (req: any, rep: any) => {
+    try {
+      return rep.code(201).send(inStore(req, () => idempotent(req, `marketplace.catalogue-mapping:${req.body.id || `${req.body.vendorId}:${req.body.garmentId}:${req.body.serviceId}:${req.body.effectiveFrom}`}`, () => saveMarketplaceCatalogueMapping(req.auth!.tenant, req.auth!.actor, req.body))));
+    } catch (error: any) { return rep.code(error.message === 'MARKETPLACE_CATALOGUE_ID_COLLISION' ? 409 : 400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/marketplace/availability', { preHandler: [guard, allow('orders.read')] }, async (req: any) => inStore(req, () => marketplaceAvailability(req.auth!.tenant)));
   app.put('/api/marketplace/availability', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {

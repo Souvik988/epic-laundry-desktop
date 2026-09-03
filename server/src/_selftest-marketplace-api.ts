@@ -37,6 +37,10 @@ try {
   const orders = await app.inject({ method: 'GET', url: '/api/marketplace/orders?state=AwaitingAcceptance&limit=20', headers });
   assert.equal(orders.statusCode, 200, 'authenticated operator can load the online order queue');
   assert.equal(orders.json().items.length, 1, 'queue returns the store-scoped external order once');
+  const dashboard = await app.inject({ method: 'GET', url: '/api/laundry/dashboard', headers });
+  assert.equal(dashboard.statusCode, 200, 'dashboard remains available with marketplace projections');
+  assert.equal(dashboard.json().marketplace.newOrders, 1, 'dashboard new-order count comes from the persisted online queue');
+  assert.equal(dashboard.json().marketplace.channelBreakdown.CUSTOMER_APP, 1, 'dashboard channel breakdown uses explicit order channel identity');
   const customerStatusBefore = await app.inject({ method: 'GET', url: '/api/marketplace/orders/EXT-API-001/customer-status', headers });
   assert.equal(customerStatusBefore.statusCode, 200, 'operator can inspect the evidence-backed customer status projection');
   assert.equal(customerStatusBefore.json().status, 'AwaitingAcceptance', 'customer status starts from the real marketplace request state');

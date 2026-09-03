@@ -1473,6 +1473,14 @@ export function importLaundryCatalogue(tenant: string, actor: string, input: Lau
 export function laundryDashboard(tenant: string, asOf = today()) {
   const all = listLaundryOrders(tenant);
   const expenses = listLaundryExpenses(tenant);
+  const marketplaceOrders = store.listMarketplaceOrderProjections(tenant);
+  const marketplacePickupTasks = store.rowsOf(tenant, 'marketplace_pickup_task').filter((row) => row.status === 'Active');
+  const marketplaceActive = marketplaceOrders.filter((order) => !['Completed', 'Cancelled', 'Rejected', 'Expired'].includes(order.state));
+  const acceptanceDeadlinePassed = (value?: string) => Boolean(value && Date.parse(value) <= Date.now());
+  const marketplaceChannelBreakdown = Object.fromEntries([...new Set(marketplaceOrders.map((order) => order.channel))].sort().map((channel) => [channel, marketplaceOrders.filter((order) => order.channel === channel).length]));
+  const syncOutbox = store.syncOutboxCounts(tenant);
+  const syncInbox = store.syncInboxCounts(tenant);
+  const device = store.getMarketplaceDevice(tenant);
   const todayOrders = all.filter((order) => order.orderDate === asOf);
   const active = all.filter((order) => !['Delivered', 'Cancelled'].includes(String(order.state)));
   const awaitingPickup = all.filter((order) => order.fulfillmentMode === 'Pickup Order' && order.state === 'Booked' && !order.pickupRider);
@@ -1483,7 +1491,7 @@ export function laundryDashboard(tenant: string, asOf = today()) {
     asOf,
     kpis: {
       collection: round(collectionsForOrders(tenant, todayOrders, asOf, asOf).reduce((sum, row) => sum + row.amount, 0)),
-      orderRequests: 0,
+      orderRequests: marketplaceOrders.filter((order) => order.state === 'AwaitingAcceptance').length,
       pendingOrders: active.length,
       booking: stateCount('Booked'),
       delivery: stateCount('Out for Delivery'),
@@ -1496,13 +1504,28 @@ export function laundryDashboard(tenant: string, asOf = today()) {
       { id: 'upcoming', label: 'Upcoming delivery', count: active.filter((order) => order.expectedDeliveryDate <= asOf).length, tone: 'blue' },
       { id: 'unassigned', label: 'Unassigned delivery', count: awaitingDelivery.length, tone: 'slate' },
       { id: 'express', label: 'Express delivery', count: active.filter((order) => order.fulfillmentMode === 'Express Delivery').length, tone: 'rose' },
-      { id: 'requests', label: 'Order requests', count: 0, tone: 'slate' },
+      { id: 'requests', label: 'Order requests', count: marketplaceOrders.filter((order) => order.state === 'AwaitingAcceptance').length, tone: 'slate' },
     ],
     trend: dailySeries(all, expenses, collectionsForOrders(tenant, all), trendFrom, asOf),
     fulfillmentBreakdown: fulfillmentSeries(all),
     topGarments: topItemSeries(all, 'garmentName'),
     topServices: topItemSeries(all, 'serviceName'),
     recent: all.slice(0, 8),
+    marketplace: {
+      configured: device?.status === 'Registered',
+      newOrders: marketplaceOrders.filter((order) => order.state === 'AwaitingAcceptance').length,
+      awaitingAcceptance: marketplaceOrders.filter((order) => order.state === 'AwaitingAcceptance').length,
+      pickupToday: marketplacePickupTasks.filter((row) => String(row.data.scheduledDate || '') === asOf && !['Collected', 'Failed', 'Cancelled'].includes(String(row.data.state))).length,
+      intakePending: marketplaceOrders.filter((order) => order.state === 'IntakeRequired').length,
+      customerApprovalRequired: marketplaceOrders.filter((order) => order.state === 'CustomerApprovalRequired').length,
+      overdue: marketplaceActive.filter((order) => acceptanceDeadlinePassed(order.acceptanceDeadline) || Boolean(order.request.expectedDeliveryDate && String(order.request.expectedDeliveryDate) < asOf)).length,
+      productionRisk: marketplaceActive.filter((order) => ['Accepted', 'PickupScheduled', 'IntakeRequired', 'CustomerApprovalRequired', 'Processing'].includes(order.state) && Boolean(order.request.expectedDeliveryDate && String(order.request.expectedDeliveryDate) <= asOf)).length,
+      ready: marketplaceOrders.filter((order) => order.state === 'Ready').length,
+      deliveryToday: marketplaceOrders.filter((order) => order.state === 'DeliveryScheduled' && String(order.request.deliveryDate || order.request.expectedDeliveryDate || '') === asOf).length,
+      paymentAttention: marketplaceActive.filter((order) => ['Pending', 'Failed', 'Unknown'].includes(order.paymentState)).length,
+      syncIssues: syncOutbox.Retry + syncOutbox.DeadLetter + syncInbox.Held + syncInbox.Failed,
+      channelBreakdown: marketplaceChannelBreakdown,
+    },
   };
 }
 

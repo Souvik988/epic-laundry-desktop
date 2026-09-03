@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, Banknote, BarChart3, CalendarClock, CheckCircle2, CircleAlert, ClipboardList, Loader2, PackageCheck, Plus, Scissors, Shirt, Truck } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Banknote, BarChart3, CalendarClock, CheckCircle2, CircleAlert, ClipboardList, Cloud, Clock3, Loader2, PackageCheck, Plus, Scissors, Shirt, Truck } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { apiGet } from '@/lib/api'
 import type { LaundryDashboard as DashboardData, LaundryState } from '@/lib/laundry'
@@ -40,6 +40,19 @@ export default function LaundryDashboard() {
         <Kpi icon={ClipboardList} label="Order requests" value={String(data.kpis.orderRequests)} note="Waiting for a response" accent="#7db7d0" />
         <Kpi icon={PackageCheck} label="Pending orders" value={String(data.kpis.pendingOrders)} note="Across the store" accent="#85b59d" />
         <Kpi icon={CalendarClock} label="Upcoming delivery" value={String(data.kpis.upcomingDeliveries)} note="Due today or earlier" accent="#e5a76a" />
+      </section>
+
+      <section className="rounded-[22px] border border-[#263f44]/10 bg-[#f8fbf8] p-5 shadow-[0_8px_28px_rgba(37,48,43,.04)] md:p-6" aria-labelledby="marketplace-operations-heading">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#4d8982]">Marketplace operations</p><h2 id="marketplace-operations-heading" className="mt-1 font-serif text-2xl text-[#17353c]">Online work that needs a decision</h2><p className="mt-1 text-sm text-[#718087]">Counts come from the local marketplace projections and sync ledger for this store.</p></div><Link to="/laundry/online-orders" className="inline-flex w-fit items-center gap-1 text-sm font-semibold text-[#2e716d]">Open online orders <ArrowRight className="h-3.5 w-3.5" /></Link></div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+          <MarketplaceMetric label="New orders" value={data.marketplace.newOrders} icon={ClipboardList} tone="amber" />
+          <MarketplaceMetric label="Pickup today" value={data.marketplace.pickupToday} icon={Truck} tone="blue" />
+          <MarketplaceMetric label="Intake pending" value={data.marketplace.intakePending} icon={PackageCheck} tone="teal" />
+          <MarketplaceMetric label="Approval needed" value={data.marketplace.customerApprovalRequired} icon={Clock3} tone="amber" />
+          <MarketplaceMetric label="Production risk" value={data.marketplace.productionRisk} icon={AlertTriangle} tone="rose" />
+          <MarketplaceMetric label="Sync issues" value={data.marketplace.syncIssues} icon={Cloud} tone={data.marketplace.syncIssues ? 'rose' : 'teal'} />
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-[#263f44]/10 pt-4 text-xs font-semibold text-[#617178]"><span>{data.marketplace.configured ? 'Marketplace device registered' : 'Marketplace not configured'}</span><span>Ready: {data.marketplace.ready}</span><span>Overdue: {data.marketplace.overdue}</span><span>Payment attention: {data.marketplace.paymentAttention}</span><span className="inline-flex items-center gap-2">Channels: {Object.entries(data.marketplace.channelBreakdown).map(([channel, count]) => <span key={channel} className="rounded-full bg-white px-2 py-1 text-[10px] ring-1 ring-inset ring-[#263f44]/10">{channel.replace(/_/g, ' ')} {count}</span>)}</span></div>
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.55fr_.9fr]">
@@ -93,6 +106,10 @@ export default function LaundryDashboard() {
 
 function Kpi({ icon: Icon, label, value, note, accent }: { icon: typeof Banknote; label: string; value: string; note: string; accent: string }) {
   return <div className="rounded-[20px] border border-[#263f44]/10 bg-white p-5 shadow-[0_8px_28px_rgba(37,48,43,.04)]"><span className="grid h-10 w-10 place-items-center rounded-xl" style={{ backgroundColor: `${accent}33`, color: accent }}><Icon className="h-5 w-5" /></span><p className="mt-5 text-xs font-bold uppercase tracking-[.13em] text-[#718087]">{label}</p><p className="mt-1 font-serif text-3xl tabular-nums text-[#17353c]">{value}</p><p className="mt-1 text-xs text-[#74848a]">{note}</p></div>
+}
+function MarketplaceMetric({ label, value, icon: Icon, tone }: { label: string; value: number; icon: typeof ClipboardList; tone: 'amber' | 'blue' | 'teal' | 'rose' }) {
+  const styles = { amber: 'bg-[#fff3d8] text-[#9a6518]', blue: 'bg-[#e8f3f7] text-[#34708a]', teal: 'bg-[#eaf3ef] text-[#39786f]', rose: 'bg-rose-50 text-rose-600' }[tone];
+  return <div className="rounded-2xl border border-[#263f44]/8 bg-white p-3.5"><span className={`grid h-8 w-8 place-items-center rounded-lg ${styles}`}><Icon className="h-4 w-4" /></span><p className="mt-3 text-[10px] font-bold uppercase tracking-[.1em] text-[#718087]">{label}</p><p className="mt-1 font-serif text-2xl tabular-nums text-[#17353c]">{value}</p></div>
 }
 
 function SectionHeading({ eyebrow, title, action }: { eyebrow: string; title: string; action?: React.ReactNode }) { return <div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#4d8982]">{eyebrow}</p><h2 className="mt-1 font-serif text-2xl text-[#17353c]">{title}</h2></div>{action}</div> }

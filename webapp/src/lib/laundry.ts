@@ -174,6 +174,21 @@ export type LaundryDashboard = {
   topGarments: Array<{ name: string; quantity: number; amount: number }>;
   topServices: Array<{ name: string; quantity: number; amount: number }>;
   recent: LaundryOrder[];
+  marketplace: {
+    configured: boolean;
+    newOrders: number;
+    awaitingAcceptance: number;
+    pickupToday: number;
+    intakePending: number;
+    customerApprovalRequired: number;
+    overdue: number;
+    productionRisk: number;
+    ready: number;
+    deliveryToday: number;
+    paymentAttention: number;
+    syncIssues: number;
+    channelBreakdown: Record<string, number>;
+  };
 };
 
 export type LaundryQuote = {

@@ -1,0 +1,54 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const tempDir = mkdtempSync(join(tmpdir(), 'epic-marketplace-catalogue-'));
+process.env.EPIC_DATA_FILE = join(tempDir, 'legacy.json');
+process.env.EPIC_DB_FILE = join(tempDir, 'epic.sqlite');
+process.env.EPIC_LEGACY_JSON_FILE = process.env.EPIC_DATA_FILE;
+let closeStore: (() => void) | undefined;
+try {
+  const Fastify = (await import('fastify')).default;
+  const { store } = await import('./kernel/store.js');
+  const { registerApi } = await import('./api.js');
+  const { laundryCatalogue, seedLaundryDefaults } = await import('./modules/laundry/domain.js');
+  const { MarketplaceIntegrationSimulator } = await import('./modules/marketplace/simulator.js');
+  closeStore = () => store.close();
+  const app = Fastify(); registerApi(app);
+  const boot = await app.inject({ method: 'POST', url: '/api/auth/bootstrap', payload: { username: 'catalogue-owner', password: 'StrongCataloguePassword!26', tenant: 'CATALOGUE-API', storeId: 'STORE-CATALOGUE', businessName: 'Catalogue API Laundry' } });
+  assert.equal(boot.statusCode, 200, 'owner bootstrap succeeds');
+  const headers = { cookie: String(boot.headers['set-cookie']).split(';')[0] };
+  const catalogue = store.withStoreScope('CATALOGUE-API', 'STORE-CATALOGUE', () => { seedLaundryDefaults('CATALOGUE-API'); return laundryCatalogue('CATALOGUE-API'); });
+  const garment = catalogue.garments.find((candidate: any) => candidate.unit === 'Piece')!;
+  const service = catalogue.services[0]!;
+  const payload = { vendorId: 'VENDOR-CATALOGUE', garmentId: garment.id, serviceId: service.id, marketplaceCategoryId: 'taxonomy:apparel', marketplaceServiceId: 'service:wash-fold', publicName: 'Premium Shirt Wash', publicDescription: 'Customer-facing catalogue label', pricePaise: 12500, pricingUnit: 'Piece', minQuantityMilli: 1000, turnaroundMinutes: 1440, expressEligible: true, marketplaceVisible: false, version: 1, effectiveFrom: '2026-09-03', approvalStatus: 'PendingReview' };
+  const saved = await app.inject({ method: 'POST', url: '/api/marketplace/catalogue/mappings', headers: { ...headers, 'idempotency-key': 'catalogue-map-001' }, payload });
+  assert.equal(saved.statusCode, 201, 'catalogue mapping can be saved through a strict owner API');
+  assert.equal(saved.json().approvalStatus, 'PendingReview');
+  assert.equal(saved.json().pricePaise, 12500, 'price remains fixed-scale paise');
+  const retry = await app.inject({ method: 'POST', url: '/api/marketplace/catalogue/mappings', headers: { ...headers, 'idempotency-key': 'catalogue-map-001' }, payload });
+  assert.equal(retry.json().id, saved.json().id, 'mapping command retry is idempotent');
+  const list = await app.inject({ method: 'GET', url: '/api/marketplace/catalogue/mappings?vendorId=VENDOR-CATALOGUE', headers });
+  assert.equal(list.statusCode, 200); assert.equal(list.json().length, 1, 'mapping list is vendor-filtered and store-scoped');
+  const visible = await app.inject({ method: 'GET', url: '/api/marketplace/catalogue/mappings?visibleOnly=true', headers });
+  assert.equal(visible.json().length, 0, 'pending review mappings are not published as customer-visible');
+  const simulator = new MarketplaceIntegrationSimulator();
+  const publication = simulator.enqueueCataloguePublication('device-catalogue', { tenantId: 'CATALOGUE-API', vendorId: 'VENDOR-CATALOGUE', storeId: 'STORE-CATALOGUE', aggregateVersion: 1, eventVersion: 1, mappingId: saved.json().id, payload: { publicName: 'Premium Shirt Wash', version: 1 } });
+  assert.equal(simulator.pull('device-catalogue')[0]?.aggregateType, 'marketplace_catalogue', 'simulator can represent a catalogue publication event without treating it as local approval');
+  assert.equal(publication.payload.mappingId, saved.json().id, 'publication retains the stable mapping identity');
+  const snapshot = store.withStoreScope('CATALOGUE-API', 'STORE-CATALOGUE', () => store.snapshotFor('CATALOGUE-API', 'STORE-CATALOGUE'));
+  assert.equal(snapshot.marketplaceCatalogueMappings?.length, 1, 'mapping is included in the store backup snapshot');
+  store.withStoreScope('CATALOGUE-API', 'STORE-CATALOGUE', () => store.replaceScoped('CATALOGUE-API', 'STORE-CATALOGUE', snapshot));
+  assert.equal(store.withStoreScope('CATALOGUE-API', 'STORE-CATALOGUE', () => store.listMarketplaceCatalogueMappings('CATALOGUE-API').length), 1, 'mapping survives scoped backup restore');
+  assert.equal(store.withStoreScope('CATALOGUE-API', 'STORE-OTHER', () => store.listMarketplaceCatalogueMappings('CATALOGUE-API').length), 0, 'mapping is isolated from another store');
+  const invalid = await app.inject({ method: 'POST', url: '/api/marketplace/catalogue/mappings', headers: { ...headers, 'idempotency-key': 'catalogue-map-bad' }, payload: { ...payload, id: 'map-bad', garmentId: 'missing-garment' } });
+  assert.equal(invalid.statusCode, 400, 'unknown local catalogue references are rejected');
+  const noAuth = await app.inject({ method: 'GET', url: '/api/marketplace/catalogue/mappings' });
+  assert.equal(noAuth.statusCode, 401, 'catalogue mappings are never public from the desktop edge');
+  await app.close();
+  console.log('PASS marketplace catalogue mapping API, pricing, visibility, idempotency, and scope self-test complete');
+} finally {
+  closeStore?.();
+  rmSync(tempDir, { recursive: true, force: true });
+}
