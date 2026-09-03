@@ -1,6 +1,6 @@
 # Final production audit
 
-This is an updated V4 audit record, not production certification. Current functional source checkpoint: `819b439` on local `main` (2026-09-03). Runtime package was rebuilt, the previous installation was uninstalled, the new installer completed, and the installed executable was launched and hash-matched to `desktop/dist/win-unpacked/Epic Laundry.exe`.
+This is an updated V4 audit record, not production certification. Current functional source checkpoint: `ee84e63` on local `main` (2026-09-03). Runtime package was rebuilt, the previous installation was uninstalled, the new installer completed, and the installed executable was launched and hash-matched to `desktop/dist/win-unpacked/Epic Laundry.exe`.
 
 - Critical: a real marketplace cloud contract/transport, provider-backed payment/settlement integration, and production tax/legal policy are not available in this environment.
 - High: legacy debit-note export integration and provider-backed settlement-batch/payout documents remain outside the canonical evidence model; production signing/update trust is absent; six closely related generic/shared garment mappings need owner review; production-path FTS write cost and broader UI/report performance coverage remain; richer completed-order work-card linking and live cloud route assignment remain.

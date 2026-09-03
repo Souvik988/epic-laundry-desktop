@@ -6,7 +6,7 @@ Passed locally in this V4 work session: the complete current server CI test list
 
 Latest local increment: migration 36 adds explicit, store-scoped marketplace customer links and Customer 360 projection. The owner-only API/UI is idempotent, collision-protected, audited and revocable; no automatic name/phone merge is used. The focused `test:marketplace-customer-links` passed. This remains local edge functionality until the real marketplace account-link contract is available.
 
-Current source checkpoint for this increment: local `main` commit `819b439`. The Windows package was rebuilt and reinstalled from this commit; the installed executable hash matches the unpacked package and the installed resources contain migration 36, the customer-link module, and the Customer 360 identity UI.
+Current source checkpoint for this increment: local `main` commit `ee84e63`. The Windows package was rebuilt and reinstalled from this commit; the installed executable hash matches the unpacked package and the installed resources contain migration 36, the customer-link module, and the Customer 360 identity UI.
 
 Package evidence: the internally labelled Windows manifest contains 3,738 entries. Installed/unpacked executable SHA-256: `16D5F1D5661650A99B03CEBC51CD92C662D078ACDDB0BBF611596730A8992A95`. Executable signing remains intentionally disabled for this developer/internal build.
 
