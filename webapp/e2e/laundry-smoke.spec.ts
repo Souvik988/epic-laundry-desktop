@@ -41,6 +41,12 @@ test('operator can complete the core laundry desk journeys in a disposable works
   await sidebarNav.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(sidebarNav.getByRole('link', { name: 'Store settings' })).toBeVisible();
 
+  await page.goto('/ui/app/#/laundry/finance');
+  await expect(page.getByRole('heading', { name: 'The money behind every cleaned garment.' })).toBeVisible();
+  await expect(page.getByText('Net revenue').first()).toBeVisible();
+  await expect(page.getByText('From booked service to operating result')).toBeVisible();
+  await expect(page.getByText('What customers still owe')).toBeVisible();
+
   await page.goto('/ui/app/#/laundry/print-centre');
   // The first "Today" demo order is weight-based and intentionally has no
   // garment-piece tags. Select the seeded piece-based order for tag/PDF QA.

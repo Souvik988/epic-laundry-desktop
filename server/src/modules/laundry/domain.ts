@@ -14,6 +14,7 @@ import { cashShiftForTransaction } from './cash.js';
 import { ensureCanonicalInvoiceForLegacy } from '../gst/legacy-invoice-bridge.js';
 import { supplierStateCodeForTenant, supplierTaxProfile } from '../gst/tax-policy.js';
 import { createLaundryCancellationCreditNote } from '../gst/cancellation-credit-note.js';
+import { financeExpenseCategory } from '../finance/classification.js';
 
 function canonicalTaxEvidenceConfigured(tenant: string) {
   return Boolean(supplierTaxProfile(tenant) && store.rowsOf(tenant, 'tax_policy_rule').some((row) => row.status === 'Approved' && row.data?.approvalStatus === 'Approved'));
@@ -72,6 +73,7 @@ type ExpenseInput = {
   expenseName: string;
   expenseDate: string;
   amount: number | string;
+  financeCategory?: string;
   paymentReceiver?: string;
   invoiceNumber?: string;
   isTaxPaid?: boolean;
@@ -1563,7 +1565,7 @@ export function createLaundryExpense(tenant: string, actor: string, input: Expen
     });
     submitRow(tenant, actor, 'journal_entry', journal.id);
     const expense = createRow(tenant, actor, 'laundry_expense', {
-      expense_name: input.expenseName.trim(), expense_date: input.expenseDate, amount,
+      expense_name: input.expenseName.trim(), expense_date: input.expenseDate, amount, finance_category: financeExpenseCategory(input.financeCategory),
       payment_receiver: input.paymentReceiver?.trim(), invoice_number: input.invoiceNumber?.trim(),
       is_tax_paid: Boolean(input.isTaxPaid), payment_mode: paymentMode, journal_entry: journal.id, notes: input.notes?.trim(), attachment,
       cash_shift_id: cashShift?.id, cash_register: cashShift?.data.register,
@@ -1581,7 +1583,7 @@ export function createLaundryExpense(tenant: string, actor: string, input: Expen
 export function presentExpense(expense: EntityRow, tenant?: string) {
   const normalizedAmountPaise = tenant ? store.financialDocumentAmountPaise(tenant, 'expense', expense.entity, expense.id) : undefined;
   return {
-    id: expense.id, reference: expense.data.name || expense.id, expenseName: expense.data.expense_name,
+    id: expense.id, reference: expense.data.name || expense.id, expenseName: expense.data.expense_name, financeCategory: String(expense.data.finance_category || 'UNCLASSIFIED'),
     expenseDate: expense.data.expense_date, amount: normalizedAmountPaise === undefined ? Number(expense.data.amount || 0) : moneyNumber(normalizedAmountPaise),
     paymentReceiver: expense.data.payment_receiver || '', invoiceNumber: expense.data.invoice_number || '',
     isTaxPaid: Boolean(expense.data.is_tax_paid), paymentMode: expense.data.payment_mode || 'Cash',
@@ -1629,7 +1631,7 @@ export function editLaundryExpense(tenant: string, actor: string, id: string, in
     const journal = createRow(tenant, actor, 'journal_entry', { posting_date: input.expenseDate, remark: `Laundry expense edit: ${name}`, entries: [{ account: expenseAccount.id, debit: amount, credit: 0 }, { account: paidFrom.id, debit: 0, credit: amount }] });
     submitRow(tenant, actor, 'journal_entry', journal.id);
     const before = presentExpense(expense, tenant);
-    expense.data = { ...expense.data, expense_name: name, expense_date: input.expenseDate, amount, payment_receiver: input.paymentReceiver?.trim(), invoice_number: input.invoiceNumber?.trim(), is_tax_paid: Boolean(input.isTaxPaid), payment_mode: paymentMode, cash_shift_id: cashShift?.id, cash_register: cashShift?.data.register, journal_entry: journal.id, previous_journal_entry: oldJournal?.id, notes: input.notes?.trim(), attachment, edit_reason: note };
+    expense.data = { ...expense.data, expense_name: name, expense_date: input.expenseDate, amount, finance_category: financeExpenseCategory(input.financeCategory || expense.data.finance_category), payment_receiver: input.paymentReceiver?.trim(), invoice_number: input.invoiceNumber?.trim(), is_tax_paid: Boolean(input.isTaxPaid), payment_mode: paymentMode, cash_shift_id: cashShift?.id, cash_register: cashShift?.data.register, journal_entry: journal.id, previous_journal_entry: oldJournal?.id, notes: input.notes?.trim(), attachment, edit_reason: note };
     expense.updated_at = new Date().toISOString();
     store.updateRow(expense);
     const document = store.listFinancialDocuments(tenant, { sourceId: expense.id }).find((entry) => entry.documentType === 'expense');

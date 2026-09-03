@@ -26,7 +26,7 @@ import LaundryRoutes from "@/pages/laundry/LaundryRoutes";
 import LaundryOnlineOrders from "@/pages/laundry/LaundryOnlineOrders";
 import LaundrySyncStatus from "@/pages/laundry/LaundrySyncStatus";
 import LaundryOperationsHub from "@/pages/laundry/LaundryOperationsHub";
-import LaundryFinanceHub from "@/pages/laundry/LaundryFinanceHub";
+import LaundryFinanceCommandCenter from "@/pages/laundry/LaundryFinanceCommandCenter";
 import LaundryManagement from "@/pages/laundry/LaundryManagement";
 import LaundryReturns from "@/pages/laundry/LaundryReturns";
 import LaundryFinanceSetup from "@/pages/laundry/LaundryFinanceSetup";
@@ -44,7 +44,7 @@ export function App() {
         <Route index element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard" element={<PermissionGate permission="orders.read"><LaundryDashboard /></PermissionGate>} />
         <Route path="operations" element={<PermissionGate permission="orders.read"><LaundryOperationsHub /></PermissionGate>} />
-        <Route path="finance" element={<PermissionGate permission="orders.read"><LaundryFinanceHub /></PermissionGate>} />
+        <Route path="finance" element={<PermissionGate permission="settings.manage"><LaundryFinanceCommandCenter /></PermissionGate>} />
         <Route path="management" element={<PermissionGate permission="settings.manage"><LaundryManagement /></PermissionGate>} />
         <Route path="finance-setup" element={<PermissionGate permission="settings.manage"><LaundryFinanceSetup /></PermissionGate>} />
         <Route path="customers" element={<PermissionGate permission="customers.read"><LaundryCustomers /></PermissionGate>} />

@@ -35,6 +35,9 @@ try {
   const sessionHeaders = { cookie };
   const catalogue = await app.inject({ method: 'GET', url: '/api/laundry/catalogue', headers: sessionHeaders });
   assert.equal(catalogue.statusCode, 200, 'E2E catalogue loads through the authenticated API');
+  const financeCommandCenter = await app.inject({ method: 'GET', url: '/api/finance/command-center?from=2026-09-01&to=2026-09-03', headers: sessionHeaders });
+  assert.equal(financeCommandCenter.statusCode, 200, 'E2E owner can load the finance command center through the authenticated API');
+  assert.equal(financeCommandCenter.json().current.kpis.operatingCashFlowPaise, financeCommandCenter.json().current.kpis.cashInPaise - financeCommandCenter.json().current.kpis.cashOutPaise, 'E2E finance response reconciles the cash-flow invariant in paise');
   const garmentBackfillPreview = await app.inject({ method: 'GET', url: '/api/laundry/garment-backfill', headers: sessionHeaders });
   assert.equal(garmentBackfillPreview.statusCode, 200, 'E2E owner can preview historic garment-unit backfill');
   const garmentBackfillApply = await app.inject({ method: 'POST', url: '/api/laundry/garment-backfill', headers: { ...sessionHeaders, 'idempotency-key': 'e2e-garment-backfill-001' }, payload: {} });
