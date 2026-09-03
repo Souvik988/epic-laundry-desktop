@@ -1,6 +1,6 @@
 # Final production audit
 
-This is an updated V4 audit record, not production certification. Current local source checkpoint: latest local V4 implementation commit on local `main` (2026-09-03). Runtime package was rebuilt from the current functional source and includes the signed portal boundary, owner privacy controls, device lifecycle API, normalized marketplace catalogue mapping, and dashboard marketplace counts.
+This is an updated V4 audit record, not production certification. Current local source checkpoint: `847b32f` on local `main` (2026-09-03). Runtime package was rebuilt from that source and includes the signed portal boundary, owner privacy controls, device lifecycle API, normalized marketplace catalogue mapping, and dashboard marketplace counts.
 
 - Critical: a real marketplace cloud contract/transport, provider-backed payment/settlement integration, and production tax/legal policy are not available in this environment.
 - High: legacy debit-note export integration and provider-backed settlement-batch/payout documents remain outside the canonical evidence model; production signing/update trust is absent; six closely related generic/shared garment mappings need owner review; production-path FTS write cost and broader UI/report performance coverage remain; richer completed-order work-card linking and live cloud route assignment remain.
