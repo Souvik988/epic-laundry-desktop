@@ -27,6 +27,7 @@ try {
   const catalogue = laundryCatalogue(tenant); const garment = catalogue.garments[0]; const service = catalogue.services.find((candidate: any) => catalogue.prices.some((price: any) => price.garment === garment.id && price.service === candidate.id))!;
   const booking = bookLaundryOrder(tenant, actor, { customer: { name: 'Return Customer', phone: '9000000123' }, items: [{ garment: garment.id, service: service.id, qty: 1 }], expectedDeliveryDate: '2026-09-05', fulfillmentMode: 'Pickup Order', paymentMode: 'Pay Later' });
   createLaundryExpense(tenant, actor, { expenseName: 'Processing chemicals', expenseDate: '2026-09-03', amount: 10, financeCategory: 'PROCESSING', paymentMode: 'Bank' });
+  store.insertRow({ id: 'tax-test-snapshot', entity: 'canonical_invoice_snapshot', tenant, status: 'Submitted', version: 1, created_by: actor, created_at: '2026-09-03T10:00:00.000Z', updated_at: '2026-09-03T10:00:00.000Z', data: { documentType: 'TaxInvoice', issuedAt: '2026-09-03T10:00:00.000Z', tax: { totals: { taxablePaise: 10_000, cgstPaise: 900, sgstPaise: 900, igstPaise: 0 } } } });
   const finance = financeCommandCenter(tenant, { from: '2026-09-03', to: '2026-09-03' });
   assert.equal(finance.current.classification.complete, true, 'executive finance only calculates a margin after every expense has a management category');
   assert.notEqual(finance.current.kpis.ebitdaPaise, null, 'executive finance produces an evidence-backed fixed-scale EBITDA bridge for classified records');
@@ -47,6 +48,7 @@ try {
   assert.equal(financeWithReturn.current.returns.cases, 1, 'finance return analytics counts the durable request without treating it as a paid refund');
   assert.ok(financeWithReturn.current.composition.services[0].orderCount >= 1, 'service economics includes order volume alongside revenue');
   assert.equal(financeWithReturn.current.tax.trend.length, 1, 'tax trend is gap-filled for every selected day');
+  assert.equal(financeWithReturn.current.tax.trend[0].cgstPaise, 900, 'tax trend preserves canonical paise without applying rupee conversion twice');
   const snapshot = laundryManagementSnapshot(tenant);
   assert.equal(snapshot.ebitda.state, 'NOT_READY', 'management dashboard never invents EBITDA without classified costs');
   assert.equal(snapshot.withholding.state, 'NOT_CONFIGURED', 'TDS/TCS starts visibly unconfigured until a CA-approved policy exists');
