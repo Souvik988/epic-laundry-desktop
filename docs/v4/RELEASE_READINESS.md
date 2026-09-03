@@ -6,7 +6,7 @@ Passed locally in this V4 work session: the complete current server CI test list
 
 Latest local increment: migration 36 adds explicit, store-scoped marketplace customer links and Customer 360 projection. The owner-only API/UI is idempotent, collision-protected, audited and revocable; no automatic name/phone merge is used. The focused `test:marketplace-customer-links` passed. This remains local edge functionality until the real marketplace account-link contract is available.
 
-Current source checkpoint for this increment: local `main` commit `094c9dd`. The web/server application bundle and fresh Windows NSIS/portable package were rebuilt from this commit. The unpacked executable points at the current finance bundle and the release manifest verifies 3,756 entries; the latest package has not been installed or relaunched for runtime verification.
+Current source checkpoint for this increment: local `main` commit `094c9dd`. The web/server application bundle and fresh Windows NSIS/portable package were rebuilt from this commit. The installed executable launched successfully from the current-user Epic Laundry path; the unpacked executable points at the current finance bundle and the release manifest verifies 3,756 entries. Post-login visual verification remains a manual sign-in handoff.
 
 Package evidence: NSIS installer SHA-256 `31BE7E1F8C0E1258A8B685AA47C74DB3EC7BF620D2BB2581C4E29F6B796F9491`; portable executable SHA-256 `01F5EDDC7F77578BF8B84ADD8EB8710B24C21A1C34EC9589A77BE55FB8FA771F`; unpacked executable SHA-256 `CC0E51FB38BCC920654AEA3144476EBC1838FF1303C538FDF2C7DAEA8E7DEF6A`. Executable signing remains intentionally disabled for this developer/internal build.
 
