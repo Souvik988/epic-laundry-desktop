@@ -12,7 +12,7 @@ The workbook is a useful metrics design reference, not an Epic Laundry data cont
 | Rider and route productivity | **PARTIAL** | Route/rider records exist; staff shift evidence is now available. No traffic ETA is inferred. |
 | Attendance / workforce capacity | **EPIC_EXTENSION** | Submitted daily attendance is unique per employee/date. Payroll remains policy-gated. |
 | EBITDA / contribution bridge | **NEEDS_CONFIGURATION** | Direct cost, payroll cost, overhead and non-cash classifications must be supplied before calculation. |
-| TDS/TCS | **NEEDS_LEGAL_VALIDATION** | No rate, threshold, filing, remittance or liability is inferred. A CA-approved effective-dated policy is required. |
+| TDS/TCS | **PARTIAL / CONFIGURATION_REQUIRED** | Versioned TDS rules and GST ECO TCS are live. Income-tax TCS now requires an accountant-configured, approved, effective-dated policy; filing/remittance still requires external evidence. |
 | Cohorts, retention, customer lifetime value | **PARTIAL** | Possible from customer/order history after definitions and privacy policy approval. |
 
 ## Management dashboard principles

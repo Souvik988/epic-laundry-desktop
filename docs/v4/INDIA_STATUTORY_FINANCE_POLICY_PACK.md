@@ -21,6 +21,7 @@ This implementation creates a tenant-scoped, effective-dated regulatory policy r
 
 - Every policy has a stable policy key, effective start, source, verification date and version.
 - Historical transactions must snapshot their resolved policy version before a monetary posting is allowed.
+- TDS transactions use the versioned section-393 policy map; GST ECO TCS uses the effective statutory baseline, while income-tax TCS uses a tenant-scoped accountant-configured policy that must be approved and effective-dated before calculation or posting.
 - The payroll preview uses paise integers, separates statutory wages from gross earnings, calculates a configured new-regime projection, and validates the wage-deduction cap.
 - A preview is not a payslip, statutory payment, return, challan, filing, IRN or acknowledgement.
 - The current release does **not** mark any TDS/TCS/GST/EPF/ESI/PT liability as paid or filed without evidence.
@@ -34,4 +35,4 @@ This implementation creates a tenant-scoped, effective-dated regulatory policy r
 - [EPFO contribution-rate guidance](https://www.epfindia.gov.in/site_docs/PDFs/MiscPDFs/ContributionRate.pdf)
 - [ESIC coverage and contribution guide](https://esic.gov.in/attachments/publicationfile/79b91f03d8b280e6dc6da3537617ef26.pdf)
 
-The next implementation slice connects these policies to versioned payroll runs, supplier/payee classification, expense withholding, invoice tax snapshots, marketplace settlements, and the compliance calendar. Those actions remain blocked until the entity, establishment, state, and marketplace facts identified by the readiness screen are configured.
+The remaining implementation slice connects these policies to versioned payroll runs, supplier/payee classification, expense withholding, invoice tax snapshots, marketplace settlements, and the compliance calendar. Entity, establishment, state, and marketplace facts remain configuration gates; software calculations do not imply filing, payment, provider success, or legal sign-off.

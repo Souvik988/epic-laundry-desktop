@@ -66,7 +66,7 @@ import { entityFinanceProfile, financePolicyReadiness, installIndia2026Baseline,
 import { calculatePayrollPreview } from './modules/finance/payroll-engine.js';
 import { financeCommandCenter } from './modules/finance/intelligence.js';
 import { listFinancePlanningTargets, saveFinancePlanningTarget } from './modules/finance/planning.js';
-import { calculateGstEcoTcs, calculateTds, listStatutoryTransactions, prepareStatutoryReturn, recordTcsTransaction, recordTdsTransaction, statutoryDashboard, updateStatutoryReturn, type StatutoryReturnState, type StatutoryReturnType, type TdsCategory, type TdsPayeeType, type PanStatus, type TcsCategory } from './modules/finance/statutory.js';
+import { calculateConfiguredIncomeTaxTcs, calculateGstEcoTcs, calculateTds, listIncomeTaxTcsPolicies, listStatutoryTransactions, prepareStatutoryReturn, recordTcsTransaction, recordTdsTransaction, saveIncomeTaxTcsPolicy, statutoryDashboard, updateStatutoryReturn, type IncomeTaxTcsPolicyStatus, type StatutoryReturnState, type StatutoryReturnType, type TdsCategory, type TdsPayeeType, type PanStatus, type TcsCategory } from './modules/finance/statutory.js';
 import { cancelLaundryOrderHold, claimLaundryOrderHold, createLaundryOrderHold, listLaundryOrderHolds, orderHoldPresence, releaseLaundryOrderHold, renewLaundryOrderHold, resumeLaundryOrderHold } from './modules/laundry/holds.js';
 import { completeRouteStop, createRouteRun, createServiceZone, listRouteRuns, listServiceZoneMaster, listServiceZones, routeCoverageAnalytics, startRouteRun, updateServiceZone } from './modules/laundry/routes.js';
 import { createRackProfile, listRackProfiles, rackOccupancy, updateRackProfile } from './modules/laundry/rack.js';
@@ -219,10 +219,15 @@ const statutoryTdsBody = {
 const statutoryTdsCalculateBody = { ...statutoryTdsBody, required: ['postingDate', 'category', 'basePaise'] } as const;
 const statutoryTcsBody = {
   type: 'object', required: ['sourceReference', 'postingDate', 'category', 'taxableSupplyPaise'], properties: {
-    sourceReference: { type: 'string', minLength: 1, maxLength: 200 }, postingDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, category: { type: 'string', enum: ['GST_ECO_TCS', 'INCOME_TAX_TCS'] }, taxableSupplyPaise: { type: 'integer', minimum: 0 }, returnedSupplyPaise: { type: 'integer', minimum: 0 }, intraState: { type: 'boolean' }, debitAccount: { type: 'string', maxLength: 160 },
+    sourceReference: { type: 'string', minLength: 1, maxLength: 200 }, postingDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, category: { type: 'string', enum: ['GST_ECO_TCS', 'INCOME_TAX_TCS'] }, taxableSupplyPaise: { type: 'integer', minimum: 0 }, returnedSupplyPaise: { type: 'integer', minimum: 0 }, intraState: { type: 'boolean' }, policyKey: { type: 'string', minLength: 1, maxLength: 120 }, debitAccount: { type: 'string', maxLength: 160 },
   }, additionalProperties: false,
 } as const;
 const statutoryTcsCalculateBody = { ...statutoryTcsBody, required: ['category', 'taxableSupplyPaise'] } as const;
+const incomeTaxTcsPolicyBody = {
+  type: 'object', required: ['policyKey', 'rateBps', 'effectiveFrom', 'calculationBasis', 'sourceNote', 'version'], properties: {
+    policyKey: { type: 'string', minLength: 1, maxLength: 120 }, rateBps: { type: 'integer', minimum: 0, maximum: 10000 }, effectiveFrom: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, effectiveUntil: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, calculationBasis: { type: 'string', minLength: 1, maxLength: 500 }, sourceNote: { type: 'string', minLength: 3, maxLength: 1000 }, status: { type: 'string', enum: ['DRAFT', 'APPROVED', 'RETIRED'] }, version: { type: 'string', minLength: 1, maxLength: 80 },
+  }, additionalProperties: false,
+} as const;
 const statutoryReturnPrepareBody = {
   type: 'object', required: ['returnType', 'periodStart', 'periodEnd'], properties: {
     returnType: { type: 'string', enum: ['TDS_138', 'TDS_140', 'TCS_143', 'GSTR_8'] }, periodStart: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, periodEnd: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
@@ -1028,7 +1033,11 @@ export function registerApi(app: FastifyInstance) {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `finance.tds:${req.body.sourceReference}`, () => recordTdsTransaction(req.auth!.tenant, req.auth!.actor, { ...req.body, category: req.body.category as TdsCategory, payeeType: req.body.payeeType as TdsPayeeType, panStatus: req.body.panStatus as PanStatus })))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.post('/api/finance/tcs/calculate', { schema: { body: statutoryTcsCalculateBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
-    try { if (req.body.category !== 'GST_ECO_TCS') throw new Error('TCS_POLICY_REQUIRES_EXPLICIT_RATE'); return inStore(req, () => calculateGstEcoTcs(req.body)); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+    try { return inStore(req, () => req.body.category === 'GST_ECO_TCS' ? calculateGstEcoTcs(req.body) : calculateConfiguredIncomeTaxTcs(req.auth!.tenant, req.body)); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/finance/tcs/policies', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listIncomeTaxTcsPolicies(req.auth!.tenant)));
+  app.put('/api/finance/tcs/policies', { schema: { body: incomeTaxTcsPolicyBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `finance.tcs-policy:${req.body.policyKey}:${req.body.version}`, () => saveIncomeTaxTcsPolicy(req.auth!.tenant, req.auth!.actor, { ...req.body, status: req.body.status as IncomeTaxTcsPolicyStatus || 'DRAFT' }))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.post('/api/finance/tcs/transactions', { schema: { body: statutoryTcsBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, `finance.tcs:${req.body.sourceReference}`, () => recordTcsTransaction(req.auth!.tenant, req.auth!.actor, { ...req.body, category: req.body.category as TcsCategory })))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }

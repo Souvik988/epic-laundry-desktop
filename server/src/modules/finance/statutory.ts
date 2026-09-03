@@ -10,6 +10,8 @@ export type PanStatus = 'VALID' | 'MISSING' | 'INVALID' | 'INOPERATIVE' | 'UNKNO
 export type TcsCategory = 'GST_ECO_TCS' | 'INCOME_TAX_TCS';
 export type StatutoryReturnType = 'TDS_138' | 'TDS_140' | 'TCS_143' | 'GSTR_8';
 export type StatutoryReturnState = 'Prepared' | 'Validated' | 'Exported' | 'Submitted' | 'Acknowledged' | 'Accepted' | 'Rejected' | 'CorrectionRequired';
+export type IncomeTaxTcsPolicyStatus = 'DRAFT' | 'APPROVED' | 'RETIRED';
+export type IncomeTaxTcsPolicy = { id: string; policyKey: string; rateBps: number; effectiveFrom: string; effectiveUntil?: string; calculationBasis: string; sourceNote: string; status: IncomeTaxTcsPolicyStatus; version: string; approvedBy?: string; approvedAt?: string; createdAt: string; updatedAt: string };
 
 type DateRange = { from: string; to: string };
 type TdsCalculation = {
@@ -41,6 +43,26 @@ const rowData = (row: EntityRow) => row.data as Record<string, any>;
 const rows = (tenant: string, entity: string) => store.rowsOf(tenant, entity);
 const inRange = (value: string, range: DateRange) => value >= range.from && value <= range.to;
 const dateRange = (from?: string, to?: string): DateRange => { const end = to || new Date().toISOString().slice(0, 10); const start = from || `${end.slice(0, 8)}01`; const result = { from: isoDate(start, 'from'), to: isoDate(end, 'to') }; if (result.from > result.to) throw new Error('STATUTORY_DATE_RANGE_INVALID'); return result; };
+
+function presentTcsPolicy(row: EntityRow): IncomeTaxTcsPolicy { const data = rowData(row); return { id: row.id, policyKey: String(data.policyKey), rateBps: paise(data.rateBps, 'TCS policy rate'), effectiveFrom: String(data.effectiveFrom), effectiveUntil: data.effectiveUntil ? String(data.effectiveUntil) : undefined, calculationBasis: String(data.calculationBasis), sourceNote: String(data.sourceNote), status: data.status as IncomeTaxTcsPolicyStatus, version: String(data.version), approvedBy: data.approvedBy ? String(data.approvedBy) : undefined, approvedAt: data.approvedAt ? String(data.approvedAt) : undefined, createdAt: String(data.createdAt || row.created_at), updatedAt: String(data.updatedAt || row.updated_at) }; }
+
+export function listIncomeTaxTcsPolicies(tenant: string) { return rows(tenant, 'finance_income_tax_tcs_policy').map(presentTcsPolicy).sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom) || b.updatedAt.localeCompare(a.updatedAt)); }
+
+export function saveIncomeTaxTcsPolicy(tenant: string, actor: string, input: { policyKey: string; rateBps: number; effectiveFrom: string; effectiveUntil?: string; calculationBasis: string; sourceNote: string; status?: IncomeTaxTcsPolicyStatus; version: string }) {
+  const policyKey = text(input.policyKey, 'policy key', 120); const effectiveFrom = isoDate(input.effectiveFrom, 'effective from'); const effectiveUntil = input.effectiveUntil ? isoDate(input.effectiveUntil, 'effective until') : undefined; if (effectiveUntil && effectiveUntil < effectiveFrom) throw new Error('TCS_POLICY_PERIOD_INVALID'); const rateBps = paise(input.rateBps, 'TCS policy rate'); if (rateBps > 10_000) throw new Error('TCS_POLICY_RATE_INVALID'); const calculationBasis = text(input.calculationBasis, 'calculation basis', 500); const sourceNote = text(input.sourceNote, 'source note', 1000); const status = input.status || 'DRAFT'; const version = text(input.version, 'policy version', 80); const existing = rows(tenant, 'finance_income_tax_tcs_policy').find((row) => rowData(row).policyKey === policyKey && rowData(row).version === version);
+  const now = new Date().toISOString(); const approved = status === 'APPROVED' ? { approvedBy: actor, approvedAt: now } : {}; const record: IncomeTaxTcsPolicy = { id: existing?.id || `tcs_policy_${randomUUID()}`, policyKey, rateBps, effectiveFrom, effectiveUntil, calculationBasis, sourceNote, status, version, ...(existing ? { approvedBy: rowData(existing).approvedBy as string | undefined, approvedAt: rowData(existing).approvedAt as string | undefined } : {}), ...approved, createdAt: existing ? String(rowData(existing).createdAt || existing.created_at) : now, updatedAt: now };
+  const row: EntityRow = existing ? { ...existing, version: existing.version + 1, updated_at: now, data: record } : { id: record.id, entity: 'finance_income_tax_tcs_policy', tenant, status: 'Active', version: 1, created_by: actor, created_at: now, updated_at: now, data: record }; if (existing) store.updateRow(row); else store.insertRow(row); audit(tenant, actor, existing ? 'finance:income-tax-tcs-policy-updated' : 'finance:income-tax-tcs-policy-created', { entity: row.entity, row_id: row.id, after: { policyKey, rateBps, effectiveFrom, effectiveUntil, status, version } }); return record;
+}
+
+function incomeTaxTcsPolicy(tenant: string, postingDate: string, policyKey?: string) { const policies = listIncomeTaxTcsPolicies(tenant).filter((policy) => policy.status === 'APPROVED' && policy.effectiveFrom <= postingDate && (!policy.effectiveUntil || policy.effectiveUntil >= postingDate) && (!policyKey || policy.policyKey === policyKey)); if (!policies.length) throw new Error('TCS_POLICY_NOT_CONFIGURED'); return policies[0]; }
+
+function calculateIncomeTaxTcs(input: { taxableSupplyPaise: number; policy: IncomeTaxTcsPolicy }) { const taxable = paise(input.taxableSupplyPaise, 'income-tax TCS base'); const amountPaise = Math.floor(taxable * input.policy.rateBps / 10_000); return { category: 'INCOME_TAX_TCS' as const, taxableSupplyPaise: taxable, amountPaise, rateBps: input.policy.rateBps, policyKey: input.policy.policyKey, policyVersion: input.policy.version, policyStatus: input.policy.status, status: taxable ? 'CALCULATED' as const : 'NOT_APPLICABLE' as const, reason: input.policy.calculationBasis }; }
+
+export function calculateConfiguredIncomeTaxTcs(tenant: string, input: { postingDate: string; taxableSupplyPaise: number; policyKey?: string }) {
+  const postingDate = isoDate(input.postingDate, 'posting date');
+  const policy = incomeTaxTcsPolicy(tenant, postingDate, input.policyKey);
+  return calculateIncomeTaxTcs({ taxableSupplyPaise: input.taxableSupplyPaise, policy });
+}
 
 function gl(tenant: string, row: EntityRow, account: string, debitPaise: number, creditPaise: number): GLEntry {
   return { id: randomUUID(), tenant, posting_date: String(rowData(row).postingDate), voucher_type: row.entity, voucher: row.id, account, party: rowData(row).payeeName || rowData(row).sourceReference, debit: moneyNumber(debitPaise), credit: moneyNumber(creditPaise), created_at: new Date().toISOString() };
@@ -78,11 +100,14 @@ export function recordTdsTransaction(tenant: string, actor: string, input: { sou
   store.transaction(() => { store.insertRow(row); appendLiabilityPosting(tenant, row, 'TDS Payable (Liability)', calculation.amountPaise, input.debitAccount || 'Vendor Payable (Liability)'); }); audit(tenant, actor, 'finance:tds-transaction-posted', { entity: row.entity, row_id: row.id, after: { sourceReference, category: input.category, amountPaise: calculation.amountPaise, policyKey: calculation.policyKey } }); return row;
 }
 
-export function recordTcsTransaction(tenant: string, actor: string, input: { sourceReference: string; postingDate: string; category: TcsCategory; taxableSupplyPaise: number; returnedSupplyPaise?: number; intraState?: boolean; debitAccount?: string }) {
+export function recordTcsTransaction(tenant: string, actor: string, input: { sourceReference: string; postingDate: string; category: TcsCategory; taxableSupplyPaise: number; returnedSupplyPaise?: number; intraState?: boolean; policyKey?: string; debitAccount?: string }) {
   const sourceReference = text(input.sourceReference, 'source reference'); const postingDate = isoDate(input.postingDate, 'posting date'); const existing = rows(tenant, 'finance_tcs_transaction').find((row) => rowData(row).sourceReference === sourceReference);
   if (existing) return existing;
-  if (input.category !== 'GST_ECO_TCS') throw new Error('TCS_POLICY_REQUIRES_EXPLICIT_RATE');
-  const calculation = calculateGstEcoTcs({ taxableSupplyPaise: input.taxableSupplyPaise, returnedSupplyPaise: input.returnedSupplyPaise, intraState: input.intraState !== false }); const now = new Date().toISOString(); const row: EntityRow = { id: `tcs_${randomUUID()}`, entity: 'finance_tcs_transaction', tenant, status: 'Active', version: 1, created_by: actor, created_at: now, updated_at: now, amountPaise: calculation.amountPaise, amountDirection: 'CREDIT', amountCurrency: 'INR', data: { ...input, sourceReference, postingDate, calculation, policyVersion: GST_TCS_POLICY_VERSION, state: 'Posted', amountPaise: calculation.amountPaise, createdAt: now, createdBy: actor, immutable: true } };
+  const calculation = input.category === 'GST_ECO_TCS'
+    ? calculateGstEcoTcs({ taxableSupplyPaise: input.taxableSupplyPaise, returnedSupplyPaise: input.returnedSupplyPaise, intraState: input.intraState !== false })
+    : calculateConfiguredIncomeTaxTcs(tenant, { postingDate, taxableSupplyPaise: input.taxableSupplyPaise, policyKey: input.policyKey });
+  const policyVersion = input.category === 'INCOME_TAX_TCS' ? (calculation as { policyVersion: string }).policyVersion : GST_TCS_POLICY_VERSION;
+  const now = new Date().toISOString(); const row: EntityRow = { id: `tcs_${randomUUID()}`, entity: 'finance_tcs_transaction', tenant, status: 'Active', version: 1, created_by: actor, created_at: now, updated_at: now, amountPaise: calculation.amountPaise, amountDirection: 'CREDIT', amountCurrency: 'INR', data: { ...input, sourceReference, postingDate, calculation, policyVersion, state: 'Posted', amountPaise: calculation.amountPaise, createdAt: now, createdBy: actor, immutable: true } };
   store.transaction(() => { store.insertRow(row); appendLiabilityPosting(tenant, row, 'TCS Payable (Liability)', calculation.amountPaise, input.debitAccount || 'Debtors (Assets)'); }); audit(tenant, actor, 'finance:tcs-transaction-posted', { entity: row.entity, row_id: row.id, after: { sourceReference, category: input.category, amountPaise: calculation.amountPaise, policyKey: calculation.policyKey } }); return row;
 }
 
