@@ -65,6 +65,7 @@ import { listLaundryReturns, requestLaundryReturn } from './modules/laundry/retu
 import { entityFinanceProfile, financePolicyReadiness, installIndia2026Baseline, listRegulatoryPolicies, saveEntityFinanceProfile } from './modules/finance/regulatory-policy.js';
 import { calculatePayrollPreview } from './modules/finance/payroll-engine.js';
 import { financeCommandCenter } from './modules/finance/intelligence.js';
+import { calculateGstEcoTcs, calculateTds, listStatutoryTransactions, prepareStatutoryReturn, recordTcsTransaction, recordTdsTransaction, statutoryDashboard, updateStatutoryReturn, type StatutoryReturnState, type StatutoryReturnType, type TdsCategory, type TdsPayeeType, type PanStatus, type TcsCategory } from './modules/finance/statutory.js';
 import { cancelLaundryOrderHold, claimLaundryOrderHold, createLaundryOrderHold, listLaundryOrderHolds, orderHoldPresence, releaseLaundryOrderHold, renewLaundryOrderHold, resumeLaundryOrderHold } from './modules/laundry/holds.js';
 import { completeRouteStop, createRouteRun, createServiceZone, listRouteRuns, listServiceZoneMaster, listServiceZones, routeCoverageAnalytics, startRouteRun, updateServiceZone } from './modules/laundry/routes.js';
 import { createRackProfile, listRackProfiles, rackOccupancy, updateRackProfile } from './modules/laundry/rack.js';
@@ -986,6 +987,27 @@ export function registerApi(app: FastifyInstance) {
     catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/finance/command-center', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => financeCommandCenter(req.auth!.tenant, req.query || {})));
+  app.get('/api/finance/statutory-dashboard', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => statutoryDashboard(req.auth!.tenant, req.query || {})));
+  app.get('/api/finance/statutory-transactions', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listStatutoryTransactions(req.auth!.tenant, req.query || {})));
+  app.post('/api/finance/tds/calculate', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => calculateTds(req.body)); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/finance/tds/transactions', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `finance.tds:${req.body.sourceReference}`, () => recordTdsTransaction(req.auth!.tenant, req.auth!.actor, { ...req.body, category: req.body.category as TdsCategory, payeeType: req.body.payeeType as TdsPayeeType, panStatus: req.body.panStatus as PanStatus })))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/finance/tcs/calculate', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { if (req.body.category !== 'GST_ECO_TCS') throw new Error('TCS_POLICY_REQUIRES_EXPLICIT_RATE'); return inStore(req, () => calculateGstEcoTcs(req.body)); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/finance/tcs/transactions', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `finance.tcs:${req.body.sourceReference}`, () => recordTcsTransaction(req.auth!.tenant, req.auth!.actor, { ...req.body, category: req.body.category as TcsCategory })))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.get('/api/finance/statutory-returns', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => statutoryDashboard(req.auth!.tenant).returns));
+  app.post('/api/finance/statutory-returns/prepare', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return rep.code(201).send(inStore(req, () => idempotent(req, `finance.return:${req.body.returnType}:${req.body.periodStart}:${req.body.periodEnd}`, () => prepareStatutoryReturn(req.auth!.tenant, req.auth!.actor, { ...req.body, returnType: req.body.returnType as StatutoryReturnType })))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
+  app.post('/api/finance/statutory-returns/:id/status', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
+    try { return inStore(req, () => idempotent(req, `finance.return-status:${req.params.id}:${req.body.state}`, () => updateStatutoryReturn(req.auth!.tenant, req.auth!.actor, req.params.id, { ...req.body, state: req.body.state as StatutoryReturnState }))); } catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
+  });
   app.get('/api/laundry/workforce', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => laundryWorkforceDashboard(req.auth!.tenant, String(req.query?.date || '').trim() || undefined)));
   app.post('/api/laundry/workforce/attendance', { preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => idempotent(req, 'laundry.workforce-attendance', () => markLaundryAttendance(req.auth!.tenant, req.auth!.actor, req.body || {})))); }

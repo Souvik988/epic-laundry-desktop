@@ -46,6 +46,10 @@ test('operator can complete the core laundry desk journeys in a disposable works
   await expect(page.getByText('Net revenue').first()).toBeVisible();
   await expect(page.getByText('From booked service to operating result')).toBeVisible();
   await expect(page.getByText('What customers still owe')).toBeVisible();
+  await page.goto('/ui/app/#/laundry/finance/statutory');
+  await expect(page.getByRole('heading', { name: 'Liabilities with an evidence trail.' })).toBeVisible();
+  await expect(page.getByText('Post TDS transaction')).toBeVisible();
+  await expect(page.getByText('Prepare a statutory return')).toBeVisible();
 
   await page.goto('/ui/app/#/laundry/print-centre');
   // The first "Today" demo order is weight-based and intentionally has no

@@ -13,6 +13,7 @@ const navigation: Array<{ to: string; label: string; icon: typeof LayoutDashboar
   { to: '/laundry/statistics', label: 'Overview', icon: BarChart3, permission: 'orders.read' },
   { to: '/laundry/operations', label: 'Operations centre', icon: Wrench, permission: 'orders.read' },
   { to: '/laundry/finance', label: 'Finance & compliance', icon: ReceiptText, permission: 'orders.read' },
+  { to: '/laundry/finance/statutory', label: 'Statutory controls', icon: ShieldCheck, permission: 'settings.manage' },
   { to: '/laundry/management', label: 'Management control', icon: BarChart3, permission: 'settings.manage' },
   { to: '/laundry/finance-setup', label: 'Finance setup', icon: Landmark, permission: 'settings.manage' },
   { to: '/laundry/customers', label: 'Customers', icon: ContactRound, permission: 'customers.read' },
@@ -45,7 +46,7 @@ const navigationGroups: Array<{ id: string; label: string; items: typeof navigat
   { id: 'counter', label: 'Counter', items: navigation.filter((item) => ['/laundry/new-order', '/laundry/orders', '/laundry/customers', '/laundry/print-centre'].includes(item.to)) },
   { id: 'production', label: 'Production', items: navigation.filter((item) => ['/laundry/operations', '/laundry/garment-tracking', '/laundry/production-queue', '/laundry/quality-claims', '/laundry/corrections', '/laundry/returns'].includes(item.to)) },
   { id: 'delivery', label: 'Pickup & delivery', items: navigation.filter((item) => ['/laundry/routes', '/laundry/dispatch', '/laundry/settlements'].includes(item.to)) },
-  { id: 'finance', label: 'Finance & compliance', items: navigation.filter((item) => ['/laundry/finance', '/laundry/cash-closing', '/laundry/expenses', '/laundry/settlements'].includes(item.to)) },
+  { id: 'finance', label: 'Finance & compliance', items: navigation.filter((item) => ['/laundry/finance', '/laundry/finance/statutory', '/laundry/cash-closing', '/laundry/expenses', '/laundry/settlements'].includes(item.to)) },
   { id: 'programs', label: 'Customer programs', items: navigation.filter((item) => item.to === '/laundry/packages') },
   { id: 'management', label: 'Management', items: navigation.filter((item) => ['/laundry/management', '/laundry/finance-setup', '/laundry/online-orders', '/laundry/sync-status', '/laundry/reports', '/laundry/catalogue', '/laundry/import-prices', '/laundry/import-catalogue', '/laundry/import-customers', '/laundry/settings'].includes(item.to)) },
 ]

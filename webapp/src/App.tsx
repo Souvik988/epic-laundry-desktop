@@ -30,6 +30,7 @@ import LaundryFinanceCommandCenter from "@/pages/laundry/LaundryFinanceCommandCe
 import LaundryManagement from "@/pages/laundry/LaundryManagement";
 import LaundryReturns from "@/pages/laundry/LaundryReturns";
 import LaundryFinanceSetup from "@/pages/laundry/LaundryFinanceSetup";
+import LaundryStatutoryFinance from "@/pages/laundry/LaundryStatutoryFinance";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { canUseUi, type UiPermission } from "@/components/laundry/LaundryShell";
 import { useQuery } from "@tanstack/react-query";
@@ -45,6 +46,7 @@ export function App() {
         <Route path="dashboard" element={<PermissionGate permission="orders.read"><LaundryDashboard /></PermissionGate>} />
         <Route path="operations" element={<PermissionGate permission="orders.read"><LaundryOperationsHub /></PermissionGate>} />
         <Route path="finance" element={<PermissionGate permission="settings.manage"><LaundryFinanceCommandCenter /></PermissionGate>} />
+        <Route path="finance/statutory" element={<PermissionGate permission="settings.manage"><LaundryStatutoryFinance /></PermissionGate>} />
         <Route path="management" element={<PermissionGate permission="settings.manage"><LaundryManagement /></PermissionGate>} />
         <Route path="finance-setup" element={<PermissionGate permission="settings.manage"><LaundryFinanceSetup /></PermissionGate>} />
         <Route path="customers" element={<PermissionGate permission="customers.read"><LaundryCustomers /></PermissionGate>} />
