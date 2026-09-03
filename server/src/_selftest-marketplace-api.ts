@@ -37,6 +37,9 @@ try {
   const orders = await app.inject({ method: 'GET', url: '/api/marketplace/orders?state=AwaitingAcceptance&limit=20', headers });
   assert.equal(orders.statusCode, 200, 'authenticated operator can load the online order queue');
   assert.equal(orders.json().items.length, 1, 'queue returns the store-scoped external order once');
+  const externalSearch = await app.inject({ method: 'GET', url: '/api/laundry/search?q=EXT-API-001', headers });
+  assert.equal(externalSearch.statusCode, 200, 'global search accepts an external marketplace order reference');
+  assert.ok(externalSearch.json().some((result: { kind: string; detail: string }) => result.kind === 'marketplace-order' && result.detail.includes('EXT-API-001')), 'global search returns the marketplace order identity');
   const dashboard = await app.inject({ method: 'GET', url: '/api/laundry/dashboard', headers });
   assert.equal(dashboard.statusCode, 200, 'dashboard remains available with marketplace projections');
   assert.equal(dashboard.json().marketplace.newOrders, 1, 'dashboard new-order count comes from the persisted online queue');
@@ -74,6 +77,9 @@ try {
   assert.equal(statement.statusCode, 200, 'operator can print the canonical marketplace settlement statement');
   assert.match(statement.body, /Marketplace Settlement Statement/, 'settlement statement renderer is exposed through the operator API');
   assert.match(statement.body, /not a customer tax invoice/, 'settlement statement clearly disclaims tax-invoice/provider-success semantics');
+  const settlementSearch = await app.inject({ method: 'GET', url: '/api/laundry/search?q=policy-api-2026-01', headers });
+  assert.equal(settlementSearch.statusCode, 200, 'global search accepts a settlement policy reference');
+  assert.ok(settlementSearch.json().some((result: { kind: string }) => result.kind === 'settlement'), 'global search returns marketplace settlement evidence');
   const batch = await app.inject({ method: 'POST', url: '/api/marketplace/settlement-batches', headers: { ...headers, 'idempotency-key': 'marketplace-api-batch-001' }, payload: { batchId: 'BATCH-API-001', policyVersion: 'policy-api-2026-01', settlementIds: [settlement.json().id] } });
   assert.equal(batch.statusCode, 201, 'operator can prepare a settlement batch from immutable settlement records');
   const payout = await app.inject({ method: 'POST', url: '/api/marketplace/settlement-batches/BATCH-API-001/payout-attempts', headers: { ...headers, 'idempotency-key': 'marketplace-api-payout-001' }, payload: { attemptId: 'PAYOUT-API-001', provider: 'configured-provider', amountPaise: settlement.json().data.vendorSettlementPaise, idempotencyKey: 'provider-payout-idem-001' } });

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, CalendarClock, Check, ChevronRight, ClipboardCheck, Cloud, History, Inbox, MapPin, PackageCheck, Phone, RefreshCw, Search, SlidersHorizontal, Truck, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { apiGet, apiPost, operatorErrorMessage } from '@/lib/api'
 import { cn, formatINR } from '@/lib/utils'
 import { canUseUi } from '@/components/laundry/LaundryShell'
@@ -66,6 +67,7 @@ export default function LaundryOnlineOrders() {
   const [pickupWindow, setPickupWindow] = useState('')
   const [pickupRider, setPickupRider] = useState('')
   const [notice, setNotice] = useState('')
+  const [searchParams] = useSearchParams()
 
   const session = useQuery({ queryKey: ['auth-session'], queryFn: () => apiGet<{ user: { roles: string[] } | null }>('/auth/session') })
   const canEdit = canUseUi(session.data?.user?.roles, 'orders.edit')
@@ -87,6 +89,11 @@ export default function LaundryOnlineOrders() {
   const catalogue = useQuery({ queryKey: ['laundry-catalogue'], queryFn: () => apiGet<Catalogue>('/laundry/catalogue'), enabled: selected?.state === 'IntakeRequired' })
 
   useEffect(() => { if (!selectedId && visible[0]) setSelectedId(visible[0].id) }, [selectedId, visible])
+  useEffect(() => {
+    const externalOrderId = searchParams.get('order')
+    const match = externalOrderId ? orders.find((order) => order.externalOrderId === externalOrderId) : undefined
+    if (match) setSelectedId(match.id)
+  }, [orders, searchParams])
   useEffect(() => { setRejectReason(''); setIntakeLines([]); setNotice(''); setIntakeGarment(''); setIntakeService(''); setIntakeQty('1'); setIntakeBagCount(''); setPickupDate(new Date().toISOString().slice(0, 10)); setPickupWindow(''); setPickupRider('') }, [selected?.id])
 
   const invalidate = () => { void client.invalidateQueries({ queryKey: ['marketplace-online-orders'] }); void client.invalidateQueries({ queryKey: ['marketplace-sync-status'] }); void client.invalidateQueries({ queryKey: ['marketplace-order-truth'] }); void client.invalidateQueries({ queryKey: ['marketplace-customer-status'] }); void client.invalidateQueries({ queryKey: ['marketplace-pickup'] }) }

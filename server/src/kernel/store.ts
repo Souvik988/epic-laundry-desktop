@@ -1185,6 +1185,25 @@ export class Store {
     const rows = this.db.prepare(`SELECT * FROM marketplace_order_projections WHERE tenant = ? AND store_id = ? ${state ? 'AND state = ?' : ''} ORDER BY acceptance_deadline, updated_at DESC`).all(...(state ? [tenant, this.currentStore(tenant), state] : [tenant, this.currentStore(tenant)])) as Array<Record<string, unknown>>;
     return rows.map((row) => this.marketplaceOrderProjectionFromRow(row));
   }
+  searchMarketplaceOrderProjectionsForWorkspace(tenant: string, search: string, limit = 30) {
+    const value = String(search || '').trim().toLowerCase();
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const pattern = `%${value}%`;
+    const rows = this.db.prepare(`SELECT * FROM marketplace_order_projections
+      WHERE tenant = ? AND store_id = ? AND (
+        lower(external_order_id) LIKE ? OR lower(order_number) LIKE ? OR lower(channel) LIKE ? OR lower(payment_state) LIKE ? OR lower(customer_json) LIKE ? OR lower(pickup_json) LIKE ?
+      ) ORDER BY updated_at DESC, id DESC LIMIT ?`).all(tenant, this.currentStore(tenant), pattern, pattern, pattern, pattern, pattern, pattern, boundedLimit) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.marketplaceOrderProjectionFromRow(row));
+  }
+  searchMarketplaceFinancialRowsForWorkspace(tenant: string, search: string, limit = 30) {
+    const value = String(search || '').trim().toLowerCase();
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const pattern = `%${value}%`;
+    return this.readRows(`SELECT * FROM entity_rows
+      WHERE tenant = ? AND store_id = ? AND entity IN ('marketplace_settlement','canonical_settlement_statement','marketplace_settlement_batch','marketplace_payout_attempt')
+      AND (lower(id) LIKE ? OR lower(data_json) LIKE ?)
+      ORDER BY updated_at DESC, id DESC LIMIT ?`, [tenant, this.currentStore(tenant), pattern, pattern, boundedLimit]);
+  }
   listMarketplaceOrderProjectionPage(tenant: string, input: { state?: MarketplaceOrderState; cursor?: string; limit?: number } = {}) {
     let cursor: { updatedAt: string; id: string } | undefined;
     if (input.cursor) {

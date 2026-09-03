@@ -1,14 +1,14 @@
 import { store } from '../../kernel/store.js';
 
 export type LaundrySearchResult = {
-  kind: 'customer' | 'order' | 'invoice' | 'garment' | 'container';
+  kind: 'customer' | 'order' | 'invoice' | 'marketplace-order' | 'garment' | 'container' | 'settlement';
   id: string;
   label: string;
   detail: string;
   path: string;
 };
 
-type SearchAccess = { customers?: boolean; orders?: boolean; garments?: boolean };
+type SearchAccess = { customers?: boolean; orders?: boolean; garments?: boolean; settlements?: boolean };
 
 /** Bounded, store-scoped global search. It returns navigational metadata only. */
 export function searchLaundryWorkspace(tenant: string, query: unknown, access: SearchAccess = {}) {
@@ -39,10 +39,23 @@ export function searchLaundryWorkspace(tenant: string, query: unknown, access: S
       add({ kind: 'order', id: row.id, label: orderNumber, detail: [customer, state, invoice].filter(Boolean).join(' · ') || 'Laundry order', path: `/laundry/orders?order=${encodeURIComponent(row.id)}` }, `${orderNumber} ${invoice} ${customer} ${row.id} ${state}`.toLowerCase());
       if (invoice) add({ kind: 'invoice', id: invoice, label: invoice, detail: `${orderNumber} · ${customer || 'Laundry order'} · ${state || 'Active'}`, path: `/laundry/orders?order=${encodeURIComponent(row.id)}` }, invoice.toLowerCase());
     }
+    for (const order of store.searchMarketplaceOrderProjectionsForWorkspace(tenant, term, 30)) {
+      const customerName = String(order.customer.name || order.customer.fullName || '');
+      const customerPhone = String(order.customer.phone || order.customer.mobile || '');
+      add({ kind: 'marketplace-order', id: order.id, label: order.orderNumber || order.externalOrderId, detail: [order.externalOrderId, order.channel, customerName, order.state].filter(Boolean).join(' · ') || 'Marketplace order', path: `/laundry/online-orders?order=${encodeURIComponent(order.externalOrderId)}` }, [order.orderNumber, order.externalOrderId, order.channel, customerName, customerPhone, order.state, order.paymentState].join(' ').toLowerCase());
+    }
   }
   if (access.garments !== false) {
     for (const unit of store.searchGarmentUnitsForWorkspace(tenant, term, 30)) {
       add({ kind: 'garment', id: unit.id, label: unit.activeTagCode || unit.code, detail: `${unit.garmentId} · ${unit.state} · ${unit.location}`, path: `/laundry/garment-tracking?tag=${encodeURIComponent(unit.activeTagCode)}` }, `${unit.activeTagCode} ${unit.code} ${unit.garmentId} ${unit.orderId} ${unit.state} ${unit.location}`.toLowerCase());
+    }
+  }
+  if (access.settlements !== false) {
+    for (const row of store.searchMarketplaceFinancialRowsForWorkspace(tenant, term, 30)) {
+      const data = row.data;
+      const externalOrderId = String(data.externalOrderId || '');
+      const statement = String(data.statementNumber || data.batchNumber || data.attemptId || row.id);
+      add({ kind: 'settlement', id: row.id, label: statement, detail: [externalOrderId, String(data.policyVersion || data.provider || row.entity)].filter(Boolean).join(' · ') || 'Marketplace settlement', path: externalOrderId ? `/laundry/online-orders?order=${encodeURIComponent(externalOrderId)}` : '/laundry/settlements' }, `${row.id} ${row.entity} ${JSON.stringify(data)}`.toLowerCase());
     }
   }
   if (access.garments !== false) {

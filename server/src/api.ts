@@ -516,8 +516,8 @@ export function registerApi(app: FastifyInstance) {
 
   // ---- Laundry desk: dedicated domain API, kept separate from generic ERP screens ----
   app.get('/api/laundry/catalogue', { preHandler: [guard, allow('catalogue.read')] }, async (req: any) => inStore(req, () => laundryCatalogue(req.auth!.tenant)));
-  app.get('/api/laundry/search', { schema: { querystring: laundrySearchQuery }, preHandler: [guard, allowAny('orders.read', 'customers.read', 'garments.read')] }, async (req: any) => inStore(req, () => searchLaundryWorkspace(req.auth!.tenant, (req.query as any)?.q, {
-    customers: can(req.auth!, 'customers.read'), orders: can(req.auth!, 'orders.read'), garments: can(req.auth!, 'garments.read'),
+  app.get('/api/laundry/search', { schema: { querystring: laundrySearchQuery }, preHandler: [guard, allowAny('orders.read', 'customers.read', 'garments.read', 'settings.manage')] }, async (req: any) => inStore(req, () => searchLaundryWorkspace(req.auth!.tenant, (req.query as any)?.q, {
+    customers: can(req.auth!, 'customers.read'), orders: can(req.auth!, 'orders.read'), garments: can(req.auth!, 'garments.read'), settlements: can(req.auth!, 'settings.manage'),
   })));
   app.post('/api/laundry/catalogue/categories', { preHandler: [guard, allow('catalogue.manage')] }, async (req: any, rep: any) => {
     try { return rep.code(201).send(inStore(req, () => saveLaundryCategory(req.auth!.tenant, req.auth!.actor, req.body as any))); }
