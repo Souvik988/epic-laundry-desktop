@@ -1,6 +1,6 @@
 # V4 current production gap audit
 
-Audit date: 2026-09-03. Current local baseline inspected: `4acbee8` on local `main`. Remote `origin/main` remains `72767269e83d905c7f484d8ce08ae7d32a27b1bc`; no remote write has been performed.
+Audit date: 2026-09-03. Current local baseline inspected: `b6f2b05` on local `main` before this documentation-only update. Remote `origin/main` remains `72767269e83d905c7f484d8ce08ae7d32a27b1bc`; no remote write has been performed.
 
 | Area | Classification | Evidence / decision |
 | --- | --- | --- |
