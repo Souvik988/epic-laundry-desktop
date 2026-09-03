@@ -11,3 +11,17 @@ Current source checkpoint for this increment: local `main` commit `094c9dd`. The
 Package evidence: NSIS installer SHA-256 `31BE7E1F8C0E1258A8B685AA47C74DB3EC7BF620D2BB2581C4E29F6B796F9491`; portable executable SHA-256 `01F5EDDC7F77578BF8B84ADD8EB8710B24C21A1C34EC9589A77BE55FB8FA771F`; unpacked executable SHA-256 `CC0E51FB38BCC920654AEA3144476EBC1838FF1303C538FDF2C7DAEA8E7DEF6A`. Executable signing remains intentionally disabled for this developer/internal build.
 
 Missing or partial: real marketplace cloud contract/transport (the adjacent backend is verified reference only), complete legacy GSTR/debit-note wiring through every document path, provider-backed settlement-batch/payout documents and receipt evidence, Windows package/launch CI on remote main, production signing, trusted update feed, real hardware validation, provider credentials, deep-paging/startup/tag/print/report/render performance optimization, remaining visual-owner review, and legal/CA approvals. Official GST/IRP source references for the ₹5 crore e-invoice threshold and the ₹10 crore+ 30-day reporting restriction are recorded in `TAX_COMPLIANCE_ARCHITECTURE.md`; they do not replace business-specific applicability validation.
+## 2026-09-03 demo fixture refresh
+
+The installed internal demo build includes an idempotent `DEMO-DATA-V4.1` expansion. On a clean demo workspace, and on the preserved installed demo database, the seed produces:
+
+- 60 laundry orders across counter, customer app, website and marketplace channels;
+- 52 immutable canonical invoice snapshots with line-level SAC/tax evidence;
+- 24 management expenses;
+- 18 TDS and 20 TCS transactions;
+- 8 prepared statutory-return snapshots (prepared only; no filing evidence is fabricated);
+- 8 quality claims and 6 return cases;
+- 12 marketplace order projections, 6 settlement statements and 2 immutable cash collections;
+- route, availability, catalogue-mapping and pending-sync fixtures.
+
+The seed is guarded by a tenant-scoped version marker and was verified across a full stop/start cycle with stable counts. The fixture is demo-only and does not configure a real legal entity, provider, IRN, filing, payout or production credential.

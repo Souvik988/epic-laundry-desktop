@@ -9,6 +9,7 @@ import { registerSeedAutomations } from './automations/seed.js';
 import { listRows } from './kernel/entity-service.js';
 import { assignLaundryOrder, bookLaundryOrder, createLaundryRider, laundryCatalogue, scanLaundryGarment, seedLaundryDefaults, transitionLaundryOrder } from './modules/laundry/domain.js';
 import { laundryBusinessDate } from './modules/laundry/dates.js';
+import { seedLaundryDemoExpansion } from './modules/laundry/demo-data.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const PORT = Number(process.env.PORT || 3001);
@@ -38,6 +39,7 @@ registerSeedAutomations(TENANT);
 if (WORKSPACE_MODE === 'demo') {
   seedLaundryDefaults(TENANT);
   seedLaundryDemo();
+  seedLaundryDemoExpansion(TENANT);
 }
 
 function seedLaundryDemo() {
