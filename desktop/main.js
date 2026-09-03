@@ -491,8 +491,9 @@ ipcMain.handle('epic:export-html-pdf', async (event, { html, suggestedName } = {
   }
 });
 
-// Send the loaded Laundry Desk to a specific React hash route. Legacy static ERP pages retain
-// their original URLs so the existing generic surface is still reachable when needed.
+// Send the loaded Laundry Desk to a specific React hash route. The desktop owns one
+// operational product surface: the Laundry Desk. Generic ERP prototype pages are deliberately
+// not exposed from the menu because they do not share the laundry order lifecycle or UI system.
 function navigate(route) {
   if (!mainWin) return;
   if (route.startsWith('/ui/')) mainWin.loadURL(localAppUrl(route));
@@ -533,31 +534,36 @@ function buildMenu() {
     {
       label: 'Operations',
       submenu: [
-        { label: 'Inventory', click: go('/ui/inventory.html') },
-        { label: 'Purchases & Payables', click: go('/ui/purchases.html') },
-        { label: 'Buying & Supply Chain', click: go('/ui/buying.html') },
-        { label: 'Manufacturing (BOM/MRP)', click: go('/ui/manufacturing.html') },
-        { label: 'Projects & Services', click: go('/ui/projects.html') },
-        { label: 'HR & Payroll', click: go('/ui/hr.html') },
+        { label: 'Operations centre', accelerator: 'CmdOrCtrl+3', click: go('/laundry/operations') },
+        { type: 'separator' },
+        { label: 'Production queue', click: go('/laundry/production-queue') },
+        { label: 'Garment tracking', click: go('/laundry/garment-tracking') },
+        { label: 'Quality & corrections', click: go('/laundry/quality-claims') },
+        { label: 'Pickup & delivery', click: go('/laundry/dispatch') },
+        { label: 'Route runs', click: go('/laundry/routes') },
+        { label: 'Print centre', click: go('/laundry/print-centre') },
       ],
     },
     {
       label: 'Finance & Compliance',
       submenu: [
-        { label: 'Accounting (TB / P&L / BS)', click: go('/ui/accounting.html') },
-        { label: 'GST — IRN / e-Way / IMS', accelerator: 'CmdOrCtrl+2', click: go('/ui/gst.html') },
-        { label: 'Banking & Reconciliation', click: go('/ui/banking.html') },
-        { label: 'Quality & Compliance (TDS/TCS)', click: go('/ui/compliance.html') },
-        { label: 'Returns (Credit/Debit Note)', click: go('/ui/returns.html') },
-        { label: 'Fixed Assets', click: go('/ui/assets.html') },
+        { label: 'Finance & compliance centre', accelerator: 'CmdOrCtrl+2', click: go('/laundry/finance') },
+        { type: 'separator' },
+        { label: 'Cash closing', click: go('/laundry/cash-closing') },
+        { label: 'Store expenses', click: go('/laundry/expenses') },
+        { label: 'Rider settlements', click: go('/laundry/settlements') },
+        { label: 'Invoices & print documents', click: go('/laundry/print-centre') },
+        { label: 'Financial reports', click: go('/laundry/reports') },
+        { label: 'Tax & invoice settings', click: go('/laundry/settings') },
+        { label: 'Correction documents', click: go('/laundry/corrections') },
       ],
     },
     {
       label: 'View',
       submenu: [
         { label: 'Laundry Dashboard', accelerator: 'CmdOrCtrl+0', click: go('/laundry/dashboard') },
-        { label: 'Epic AI Insights', click: go('/ui/ai.html') },
-        { label: 'Operations Center', click: go('/ui/ops.html') },
+        { label: 'Operational overview', click: go('/laundry/operations') },
+        { label: 'Financial overview', click: go('/laundry/finance') },
         { type: 'separator' },
         { role: 'reload' }, { role: 'forceReload' }, { type: 'separator' },
         { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' },

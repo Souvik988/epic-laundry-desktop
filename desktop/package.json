@@ -8,6 +8,7 @@
   "scripts": {
     "start": "electron .",
     "test:workspace": "node workspace.test.js",
+    "test:menu-routing": "node navigation.test.js",
     "test:recovery-policy": "node recovery-policy.test.js",
     "build:server": "npm --prefix ../server run build",
     "manifest": "node scripts/release-manifest.mjs",

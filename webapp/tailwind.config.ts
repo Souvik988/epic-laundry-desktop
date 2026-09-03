@@ -6,8 +6,11 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Aptos", "Trebuchet MS", "Segoe UI", "sans-serif"],
-        serif: ["Palatino Linotype", "Book Antiqua", "Georgia", "serif"],
+        // Manrope is shipped with the desktop bundle. It has the calm density and tabular
+        // clarity needed for long shifts at a counter, without falling back to an OS serif.
+        sans: ["Manrope Variable", "Manrope", "Noto Sans Devanagari Variable", "Segoe UI", "sans-serif"],
+        display: ["Manrope Variable", "Manrope", "Noto Sans Devanagari Variable", "Segoe UI", "sans-serif"],
+        serif: ["Manrope Variable", "Manrope", "Noto Sans Devanagari Variable", "Segoe UI", "sans-serif"],
         mono: ["Fira Code", "monospace"],
       },
       colors: {

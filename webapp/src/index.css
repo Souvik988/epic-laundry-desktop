@@ -4,7 +4,8 @@
 
 @layer base {
   :root {
-    /* ── Epic BOS enterprise BLUE theme ── */
+    /* ── Legacy generic-ERP tokens. The active Laundry Desk owns its semantic
+       palette locally; these remain only for unshipped compatibility components. ── */
     --background: 213 30% 97%;
     --foreground: 222 47% 11%;
     --card: 0 0% 100%;
@@ -84,7 +85,11 @@
   }
 
   * { @apply border-border; }
-  body { @apply bg-background text-foreground antialiased; font-feature-settings: "cv11", "ss01"; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Manrope Variable", "Manrope", "Noto Sans Devanagari Variable", "Segoe UI", sans-serif;
+    font-feature-settings: "cv11", "ss01", "tnum";
+  }
 }
 
 @layer components {

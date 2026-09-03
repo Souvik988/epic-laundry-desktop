@@ -11,6 +11,8 @@ import { CommandPalette } from '@/components/layout/CommandPalette'
 const navigation: Array<{ to: string; label: string; icon: typeof LayoutDashboard; permission: UiPermission }> = [
   { to: '/laundry/dashboard', label: 'Dashboard', icon: LayoutDashboard, permission: 'orders.read' },
   { to: '/laundry/statistics', label: 'Overview', icon: BarChart3, permission: 'orders.read' },
+  { to: '/laundry/operations', label: 'Operations centre', icon: Wrench, permission: 'orders.read' },
+  { to: '/laundry/finance', label: 'Finance & compliance', icon: ReceiptText, permission: 'orders.read' },
   { to: '/laundry/customers', label: 'Customers', icon: ContactRound, permission: 'customers.read' },
   { to: '/laundry/packages', label: 'Care packages', icon: Sparkles, permission: 'packages.read' },
   { to: '/laundry/new-order', label: 'Order booking', icon: Plus, permission: 'orders.create' },
@@ -38,9 +40,9 @@ const navigation: Array<{ to: string; label: string; icon: typeof LayoutDashboar
 const navigationGroups: Array<{ id: string; label: string; items: typeof navigation }> = [
   { id: 'home', label: 'Home', items: navigation.filter((item) => ['/laundry/dashboard', '/laundry/statistics'].includes(item.to)) },
   { id: 'counter', label: 'Counter', items: navigation.filter((item) => ['/laundry/new-order', '/laundry/orders', '/laundry/customers', '/laundry/print-centre'].includes(item.to)) },
-  { id: 'production', label: 'Production', items: navigation.filter((item) => ['/laundry/garment-tracking', '/laundry/production-queue', '/laundry/quality-claims', '/laundry/corrections'].includes(item.to)) },
+  { id: 'production', label: 'Production', items: navigation.filter((item) => ['/laundry/operations', '/laundry/garment-tracking', '/laundry/production-queue', '/laundry/quality-claims', '/laundry/corrections'].includes(item.to)) },
   { id: 'delivery', label: 'Pickup & delivery', items: navigation.filter((item) => ['/laundry/routes', '/laundry/dispatch', '/laundry/settlements'].includes(item.to)) },
-  { id: 'finance', label: 'Finance', items: navigation.filter((item) => ['/laundry/cash-closing', '/laundry/expenses'].includes(item.to)) },
+  { id: 'finance', label: 'Finance & compliance', items: navigation.filter((item) => ['/laundry/finance', '/laundry/cash-closing', '/laundry/expenses', '/laundry/settlements'].includes(item.to)) },
   { id: 'programs', label: 'Customer programs', items: navigation.filter((item) => item.to === '/laundry/packages') },
   { id: 'management', label: 'Management', items: navigation.filter((item) => ['/laundry/online-orders', '/laundry/sync-status', '/laundry/reports', '/laundry/catalogue', '/laundry/import-prices', '/laundry/import-catalogue', '/laundry/import-customers', '/laundry/settings'].includes(item.to)) },
 ]
