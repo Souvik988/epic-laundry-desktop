@@ -24,7 +24,7 @@ export function KpiCard({
         "relative overflow-hidden p-5 transition-all duration-200 hover:shadow-md",
         isPrimary ? "border-0 text-white shadow-lg" : "bg-card"
       )}
-      style={isPrimary ? { background: "linear-gradient(135deg,#1A7A3C 0%,#10602A 100%)" } : undefined}
+      style={isPrimary ? { background: "linear-gradient(135deg,#664CF0 0%,#5138CF 58%,#35216F 100%)" } : undefined}
     >
       <div className="flex items-center justify-between">
         <span className={cn("text-xs font-medium uppercase tracking-wider", isPrimary ? "text-white/80" : "text-muted-foreground")}>
