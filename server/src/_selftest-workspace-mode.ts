@@ -38,7 +38,8 @@ async function stop(child: ChildProcess) {
 
 async function bootstrap(port: number, username: string) {
   const response = await fetch(`http://127.0.0.1:${port}/api/auth/bootstrap`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password: 'WorkspaceModeTestPassword!26', firstName: 'Workspace', businessName: 'Workspace Test', phone: '9000000000', address: 'Test address' }) });
-  assert.equal(response.status, 200, 'owner bootstrap succeeds');
+  const payload = await response.json() as { error?: string };
+  assert.equal(response.status, 200, `owner bootstrap succeeds: ${payload.error || 'unknown bootstrap failure'}`);
   return String(response.headers.get('set-cookie') || '').split(';')[0];
 }
 
