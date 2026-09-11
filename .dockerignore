@@ -1,4 +1,5 @@
 node_modules
+server/node_modules
 webapp/node_modules
 desktop/node_modules
 npm-debug.log

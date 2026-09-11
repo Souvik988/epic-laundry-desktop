@@ -13,10 +13,21 @@ RUN npm ci --no-audit --no-fund
 COPY webapp/ ./
 RUN npm run build
 
+# better-sqlite3 ships a native addon. Compile it in a Linux build stage so the
+# final image never depends on host modules or an unavailable prebuild for a
+# newer Node ABI. Keep the toolchain out of the runtime image.
+FROM node:22-slim AS server-deps
+WORKDIR /build/server
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+COPY server/package*.json ./
+RUN npm ci --no-audit --no-fund --build-from-source
+
 FROM node:22-slim
 WORKDIR /app
 COPY server/package*.json ./
-RUN npm ci --no-audit --no-fund
+COPY --from=server-deps /build/server/node_modules ./node_modules
 COPY server/ ./
 COPY --from=web-build /build/server/public/app ./public/app
 ENV PORT=3001 HOST=0.0.0.0 EPIC_DATA_FILE=/app/data/epic.json GSP_PROVIDER=sandbox
