@@ -3,14 +3,17 @@
 # The UI uses hashed filenames, so copying server/public/app from the repository is
 # unsafe: a clean clone may contain index.html but not the matching bundle. Build it
 # from webapp source in the image instead.
-FROM node:24-slim AS web-build
+# Match the supported CI/runtime line. better-sqlite3 publishes a compatible
+# prebuilt Linux binary for Node 22, avoiding an unnecessary compiler toolchain
+# in the production image.
+FROM node:22-slim AS web-build
 WORKDIR /build/webapp
 COPY webapp/package*.json ./
 RUN npm ci --no-audit --no-fund
 COPY webapp/ ./
 RUN npm run build
 
-FROM node:24-slim
+FROM node:22-slim
 WORKDIR /app
 COPY server/package*.json ./
 RUN npm ci --no-audit --no-fund
