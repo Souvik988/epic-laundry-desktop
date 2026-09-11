@@ -43,6 +43,15 @@ async function bootstrap(port: number, username: string) {
   return String(response.headers.get('set-cookie') || '').split(';')[0];
 }
 
+async function signIn(port: number, username: string, password: string) {
+  const response = await fetch(`http://127.0.0.1:${port}/api/auth/sign-in`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
+  });
+  const payload = await response.json() as { error?: string };
+  assert.equal(response.status, 200, `demo owner sign-in succeeds: ${payload.error || 'unknown sign-in failure'}`);
+  return String(response.headers.get('set-cookie') || '').split(';')[0];
+}
+
 async function orders(port: number, cookie: string) {
   const response = await fetch(`http://127.0.0.1:${port}/api/laundry/orders`, { headers: { cookie } });
   assert.equal(response.status, 200, 'owner can read the order list');
@@ -66,7 +75,7 @@ try {
   await waitForHealth(3252);
   const demoWorkspace = await fetch('http://127.0.0.1:3252/api/workspace/status').then((response) => response.json() as Promise<{ mode: string }>);
   assert.equal(demoWorkspace.mode, 'demo', 'server reports demo workspace mode');
-  const demoOrders = await orders(3252, await bootstrap(3252, 'demo-owner'));
+  const demoOrders = await orders(3252, await signIn(3252, 'demo', 'DemoLaundry!2026'));
   assert.ok(demoOrders.length > 0, 'explicit demo workspace receives sample orders');
   await stop(demo); demo = undefined;
   console.log('PASS production/demo workspace separation self-test complete');
