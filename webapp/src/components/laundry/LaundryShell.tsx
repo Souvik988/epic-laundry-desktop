@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { AlertTriangle, BarChart3, Bell, Bike, BookOpenCheck, ChevronDown, ClipboardList, ContactRound, LayoutDashboard, LogOut, MapPinned, Plus, Printer, ReceiptText, Settings2, Shirt, Sparkles, Upload, UsersRound, WalletCards, CircleDollarSign, ScanLine, Banknote, ShieldCheck, Route as RouteIcon, Wrench, Search, Cloud, RotateCcw, Landmark } from 'lucide-react'
+import { AlertTriangle, BarChart3, Bell, Bike, BookOpenCheck, ChevronDown, ClipboardList, LayoutDashboard, LogOut, MapPinned, Plus, Printer, ReceiptText, Settings2, Shirt, Sparkles, Upload, UsersRound, WalletCards, CircleDollarSign, ScanLine, Banknote, ShieldCheck, Route as RouteIcon, Wrench, Search, Cloud, RotateCcw, Landmark } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { apiGet, apiPost } from '@/lib/api'
 import { useEffect, useState } from 'react'
@@ -14,12 +14,11 @@ const navigation: Array<{ to: string; label: string; icon: typeof LayoutDashboar
   { to: '/laundry/operations', label: 'Operations centre', icon: Wrench, permission: 'orders.read' },
   { to: '/laundry/finance', label: 'Finance & compliance', icon: ReceiptText, permission: 'orders.read' },
   { to: '/laundry/finance/statutory', label: 'Statutory controls', icon: ShieldCheck, permission: 'settings.manage' },
-  { to: '/laundry/management', label: 'Management control', icon: BarChart3, permission: 'settings.manage' },
+  { to: '/laundry/management', label: 'People & payroll', icon: UsersRound, permission: 'settings.manage' },
   { to: '/laundry/finance-setup', label: 'Finance setup', icon: Landmark, permission: 'settings.manage' },
-  { to: '/laundry/customers', label: 'Customers', icon: ContactRound, permission: 'customers.read' },
   { to: '/laundry/packages', label: 'Care packages', icon: Sparkles, permission: 'packages.read' },
   { to: '/laundry/new-order', label: 'Order booking', icon: Plus, permission: 'orders.create' },
-  { to: '/laundry/orders', label: 'Store orders', icon: ClipboardList, permission: 'orders.read' },
+  { to: '/laundry/orders', label: 'Store orders & customers', icon: ClipboardList, permission: 'orders.read' },
   { to: '/laundry/online-orders', label: 'Online orders', icon: Cloud, permission: 'orders.read' },
   { to: '/laundry/sync-status', label: 'Marketplace sync', icon: Cloud, permission: 'settings.manage' },
   { to: '/laundry/garment-tracking', label: 'Garment tracking', icon: ScanLine, permission: 'garments.read' },
@@ -43,12 +42,12 @@ const navigation: Array<{ to: string; label: string; icon: typeof LayoutDashboar
 
 const navigationGroups: Array<{ id: string; label: string; items: typeof navigation }> = [
   { id: 'home', label: 'Home', items: navigation.filter((item) => ['/laundry/dashboard', '/laundry/statistics'].includes(item.to)) },
-  { id: 'counter', label: 'Counter', items: navigation.filter((item) => ['/laundry/new-order', '/laundry/orders', '/laundry/customers', '/laundry/print-centre'].includes(item.to)) },
+  { id: 'counter', label: 'Counter', items: navigation.filter((item) => ['/laundry/new-order', '/laundry/orders', '/laundry/print-centre'].includes(item.to)) },
   { id: 'production', label: 'Production', items: navigation.filter((item) => ['/laundry/operations', '/laundry/garment-tracking', '/laundry/production-queue', '/laundry/quality-claims', '/laundry/corrections', '/laundry/returns'].includes(item.to)) },
   { id: 'delivery', label: 'Pickup & delivery', items: navigation.filter((item) => ['/laundry/routes', '/laundry/dispatch', '/laundry/settlements'].includes(item.to)) },
   { id: 'finance', label: 'Finance & compliance', items: navigation.filter((item) => ['/laundry/finance', '/laundry/finance/statutory', '/laundry/cash-closing', '/laundry/expenses', '/laundry/settlements'].includes(item.to)) },
   { id: 'programs', label: 'Customer programs', items: navigation.filter((item) => item.to === '/laundry/packages') },
-  { id: 'management', label: 'Management', items: navigation.filter((item) => ['/laundry/management', '/laundry/finance-setup', '/laundry/online-orders', '/laundry/sync-status', '/laundry/reports', '/laundry/catalogue', '/laundry/import-prices', '/laundry/import-catalogue', '/laundry/import-customers', '/laundry/settings'].includes(item.to)) },
+  { id: 'management', label: 'Business controls', items: navigation.filter((item) => ['/laundry/management', '/laundry/finance-setup', '/laundry/online-orders', '/laundry/sync-status', '/laundry/reports', '/laundry/catalogue', '/laundry/import-prices', '/laundry/import-catalogue', '/laundry/import-customers', '/laundry/settings'].includes(item.to)) },
 ]
 
 export type UiPermission = 'orders.read' | 'orders.edit' | 'orders.create' | 'expenses.create' | 'settings.manage' | 'catalogue.read' | 'customers.read' | 'packages.read' | 'garments.read' | 'cash.read' | 'production.read' | 'quality.read' | 'routes.read'
@@ -75,6 +74,11 @@ export function LaundryShell() {
   const resetDemo = useMutation({ mutationFn: () => window.epic?.resetDemoWorkspace?.() || Promise.reject(new Error('Demo reset is only available in the desktop application.')) })
   const permittedNavigation = navigation.filter((item) => canUseUi(session.data?.user?.roles, item.permission))
   const canBook = canUseUi(session.data?.user?.roles, 'orders.create')
+  useEffect(() => {
+    // Route drill-downs should begin at their own heading, not inherit the
+    // directory/table scroll position that triggered the navigation.
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [location.pathname, location.search])
   useEffect(() => {
     let buffer = ''
     let timeout: number | undefined
@@ -111,13 +115,13 @@ export function LaundryShell() {
     return () => { window.removeEventListener('keydown', onKeyDown, true); window.clearTimeout(timeout) }
   }, [navigate])
   return (
-    <div className="min-h-screen bg-[#f3f1ec] text-[#18242b] selection:bg-[#a9d8d4] selection:text-[#10242a]">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-[#213d45]/15 bg-[#123039] px-4 py-5 text-[#eaf0e9] lg:flex">
+    <div className="min-h-screen bg-[#f3f1ec] text-[#18242b] selection:bg-[#e3ddff] selection:text-[#241a45]">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-white/10 bg-[#123039] px-4 py-5 text-[#eaf0e9] lg:flex">
         <NavLink to="/laundry/dashboard" className="mb-10 flex items-center gap-3 px-2">
           <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-[14px] bg-white shadow-[0_8px_20px_rgba(0,0,0,.18)]"><img src={lndryBrand.mark} alt="Lndry" className="h-full w-full object-cover" /></span>
           <span>
-            <span className="block font-serif text-[19px] leading-none tracking-tight">Epic Laundry</span>
-            <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[.18em] text-[#a8c4bc]">Counter desk</span>
+            <span className="block font-display text-[19px] font-extrabold leading-none tracking-tight">Epic Laundry</span>
+            <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[.18em] text-[#a8c4bc]">Visual counter desk</span>
           </span>
         </NavLink>
         <nav className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1" aria-label="Laundry workspace navigation">
@@ -127,7 +131,7 @@ export function LaundryShell() {
             const active = items.some((item) => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`))
             const expanded = openGroups[group.id] ?? (active || group.id === 'home')
             return <section key={group.id}>
-              <button type="button" aria-expanded={expanded} onClick={() => setOpenGroups((current) => ({ ...current, [group.id]: !expanded }))} className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[10px] font-extrabold uppercase tracking-[.16em] text-[#8eafa5] hover:bg-[#1b454e] hover:text-white">
+              <button type="button" aria-expanded={expanded} onClick={() => setOpenGroups((current) => ({ ...current, [group.id]: !expanded }))} className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-[10px] font-extrabold uppercase tracking-[.16em] text-[#b9aff1] hover:bg-[#1b454e] hover:text-white">
                 <span>{group.label}</span>
                 <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
               </button>
@@ -138,7 +142,7 @@ export function LaundryShell() {
                     to={item.to}
                     className={({ isActive }) => cn(
                       'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all',
-                      isActive ? 'bg-[#e8bf68] text-[#17363e] shadow-[0_7px_16px_rgba(0,0,0,.16)]' : 'text-[#bfd0c9] hover:bg-[#1b454e] hover:text-white',
+                      isActive ? 'bg-[#e8bf68] text-white shadow-[0_7px_16px_rgba(0,0,0,.16)]' : 'text-[#bfd0c9] hover:bg-[#1b454e] hover:text-white',
                     )}
                   >
                     <item.icon className="h-[18px] w-[18px]" />
@@ -149,10 +153,10 @@ export function LaundryShell() {
             </section>
           })}
         </nav>
-        <div className="mt-auto rounded-2xl border border-[#87aaa0]/20 bg-[#0e272e] p-4">
+        <div className="mt-auto rounded-2xl border border-white/10 bg-[#0e272e] p-4">
           <Sparkles className="mb-2 h-4 w-4 text-[#e6bc65]" />
-          <p className="font-serif text-sm">Built for the counter.</p>
-          <p className="mt-1 text-xs leading-5 text-[#a8c4bc]">Orders and catalogue stay on this desktop when you are offline.</p>
+          <p className="font-display text-sm font-bold">Built for the counter.</p>
+          <p className="mt-1 text-xs leading-5 text-[#a8c4bc]">Visual shortcuts, scanner flows and orders remain available offline.</p>
         </div>
       </aside>
 
@@ -160,12 +164,12 @@ export function LaundryShell() {
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-[#263f44]/10 bg-[#f8f7f3]/90 px-4 backdrop-blur md:px-8">
           <div className="flex items-center gap-3 lg:hidden">
             <span className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl bg-white shadow-sm"><img src={lndryBrand.mark} alt="Lndry" className="h-full w-full object-cover" /></span>
-            <span className="font-serif text-lg">Epic Laundry</span>
+            <span className="font-display text-lg font-extrabold">Epic Laundry</span>
           </div>
           <StoreSwitcher />
           <div className="flex items-center gap-2">
             {workspace.data?.mode === 'demo' ? <button type="button" onClick={() => { if (window.confirm('Reset all sample customers, orders and settings in the demo workspace? Production data is not affected.')) resetDemo.mutate() }} disabled={resetDemo.isPending} className="hidden rounded-lg bg-[#fff2ce] px-2.5 py-1.5 text-[10px] font-extrabold uppercase tracking-[.1em] text-[#855815] sm:inline disabled:opacity-60">{resetDemo.isPending ? 'Resetting…' : 'Demo workspace · reset'}</button> : <span className="hidden rounded-lg bg-[#eaf3ef] px-2.5 py-1.5 text-[10px] font-extrabold uppercase tracking-[.1em] text-[#2e6a60] sm:inline">Production workspace</span>}
-            {canBook ? <NavLink to="/laundry/new-order" className="inline-flex items-center gap-2 rounded-xl bg-[#123039] px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1d4a53]">
+            {canBook ? <NavLink to="/laundry/new-order" className="inline-flex items-center gap-2 rounded-xl bg-[#e8bf68] px-3.5 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-[#1d4a53]">
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New order</span>
             </NavLink> : null}

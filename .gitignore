@@ -7,12 +7,26 @@ node_modules/
 server/dist/
 desktop/dist/
 desktop/dist-fresh/
+desktop/dist-*/
 *.tsbuildinfo
 
 # runtime data (per-tenant JSON snapshots)
 server/data/
 desktop/*.local.json
 epic.json
+demo-runtime/
+
+# test output
+/test-results/
+/webapp/test-results/
+
+# Web build output is emitted into the server's local static directory. Source assets
+# stay under webapp/public; only existing deliberately tracked legacy files remain tracked.
+/server/public/app/assets/index-*.js
+/server/public/app/assets/index-*.css
+/server/public/app/assets/*.woff2
+/server/public/app/illustrations/
+/server/public/app/services/
 
 # logs
 *.log

@@ -1,9 +1,11 @@
 import { type FormEvent, useDeferredValue, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle,
   ArrowLeft,
   BarChart3,
+  CalendarDays,
+  CircleAlert,
+  Clock3,
   Gift,
   History,
   MapPin,
@@ -11,12 +13,14 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  UserPlus,
   UserRound,
   WalletCards,
 } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { apiGet, apiPatch, apiPost, apiPostOffline } from "@/lib/api";
 import { formatINR } from "@/lib/utils";
+import VisualEmptyState from "@/components/laundry/VisualEmptyState";
 
 type Customer = {
   id: string;
@@ -225,7 +229,9 @@ const blank: NewCustomer = {
 
 export default function LaundryCustomers() {
   const { id } = useParams();
-  return id ? <CustomerWorkCard id={id} /> : <CustomerDirectory />;
+  const query = new URLSearchParams({ view: "customers" });
+  if (id) query.set("customer", id);
+  return <Navigate to={`/laundry/orders?${query.toString()}`} replace />;
 }
 
 function CustomerDirectory() {
@@ -284,6 +290,12 @@ function CustomerDirectory() {
           <Plus className="h-4 w-4" />
           New customer
         </button>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+        <span className="font-semibold text-[#617178]">Customers and orders stay separate so each team has one clear workspace.</span>
+        <Link to="/laundry/orders" className="inline-flex items-center gap-1 font-bold text-brand-700 hover:text-brand-900">
+          Open Store Orders <ArrowLeft className="h-3.5 w-3.5 rotate-180" aria-hidden="true" />
+        </Link>
       </div>
       {showNew ? (
         <CustomerForm
@@ -348,9 +360,9 @@ function CustomerDirectory() {
           ))
         )}
         {customers.data?.length === 0 ? (
-          <p className="col-span-full rounded-2xl border border-dashed border-[#b9c9c3] py-16 text-center text-sm text-[#718087]">
-            No matching customers. Add the first customer from this branch.
-          </p>
+          <div className="col-span-full rounded-2xl border border-dashed border-[#b9c9c3] bg-[#fffdf8]">
+            <VisualEmptyState kind="customers" title="No matching customers" detail="Try another name, phone, or invoice—or add the first customer for this branch." action={<button type="button" onClick={() => setShowNew(true)} className="rounded-xl bg-[#123039] px-3 py-2 text-xs font-bold text-white">Add customer</button>} />
+          </div>
         ) : null}
       </section>
     </div>
@@ -637,7 +649,8 @@ function CustomerWorkCard({ id }: { id: string }) {
           accent="text-[#7555a3]"
         />
       </section>
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
+      <CustomerOrderJourney statuses={data.metrics.orderStatus} />
+      <div className="mt-6 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
         <section className="rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]">
           <div className="flex flex-wrap gap-2 border-b border-[#263f44]/10 p-4">
             {(["activity", "ledger", "wallet"] as const).map((tab) => (
@@ -676,9 +689,12 @@ function CustomerWorkCard({ id }: { id: string }) {
               </div>
             ))}
             {entries.length === 0 ? (
-              <p className="p-10 text-center text-sm text-[#718087]">
-                No recorded customer activity yet.
-              </p>
+              <VisualEmptyState
+                kind={mode === "wallet" ? "finance" : "orders"}
+                compact
+                title={mode === "wallet" ? "No wallet movements yet" : "No customer activity yet"}
+                detail={mode === "ledger" ? "Ledger entries will appear when this customer has an invoice or balance movement." : "Timeline events will appear as this customer books, pays, and collects orders."}
+              />
             ) : null}
           </div>
           <p className="border-t border-[#263f44]/10 p-4 text-xs text-[#718087]">
@@ -715,12 +731,13 @@ function CustomerWorkCard({ id }: { id: string }) {
             </div>
             <div className="mt-4 space-y-3">
               {data.orders.map((order) => (
-                <div
+                <Link
                   key={order.id}
-                  className="rounded-xl border border-[#263f44]/10 bg-white p-3"
+                  to={`/laundry/orders/${encodeURIComponent(order.id)}`}
+                  className="block rounded-xl border border-[#263f44]/10 bg-white p-3 transition hover:border-brand-300 hover:bg-brand-50/40"
                 >
                   <div className="flex justify-between gap-2">
-                    <span className="font-semibold text-[#27454c]">
+                    <span className="font-semibold text-brand-700">
                       {order.orderNumber}
                     </span>
                     <span className="font-bold">
@@ -730,10 +747,15 @@ function CustomerWorkCard({ id }: { id: string }) {
                   <p className="mt-1 text-xs text-[#718087]">
                     {order.orderDate} · {order.state} · {order.paymentStatus}
                   </p>
-                </div>
+                </Link>
               ))}
               {data.orders.length === 0 ? (
-                <p className="py-4 text-sm text-[#718087]">No orders yet.</p>
+                <VisualEmptyState
+                  kind="orders"
+                  compact
+                  title="No orders yet"
+                  detail="The customer’s first booking will appear here with its status and invoice reference."
+                />
               ) : null}
             </div>
           </section>
@@ -802,9 +824,14 @@ function CustomerWorkCard({ id }: { id: string }) {
                   </div>
                 ))}
               {!data.addresses.some((address) => address.active) ? (
-                <p className="rounded-xl bg-[#f8faf7] p-4 text-center text-xs text-[#718087]">
-                  No saved addresses yet.
-                </p>
+                <div className="rounded-xl bg-[#f8faf7]">
+                  <VisualEmptyState
+                    kind="customers"
+                    compact
+                    title="No saved addresses yet"
+                    detail="Add a pickup or delivery address when this customer needs one."
+                  />
+                </div>
               ) : null}
             </div>
             {addressEditor ? (
@@ -1036,9 +1063,14 @@ function MarketplaceIdentityPanel({
           </div>
         ))}
         {data.links.length === 0 ? (
-          <p className="rounded-xl bg-[#f8faf7] p-4 text-center text-xs text-[#718087]">
-            No marketplace identity is linked.
-          </p>
+          <div className="rounded-xl bg-[#f8faf7]">
+            <VisualEmptyState
+              kind="customers"
+              compact
+              title="No marketplace identity linked"
+              detail="Linking is deliberate and branch-scoped; names and phone numbers never merge accounts automatically."
+            />
+          </div>
         ) : null}
       </div>
       {data.orders.length ? (
@@ -1256,7 +1288,12 @@ function PrivacyControls({
           ))}
         </div>
       ) : (
-        <p className="mt-3 text-xs text-[#6f6248]">No open privacy requests.</p>
+        <VisualEmptyState
+          kind="customers"
+          compact
+          title="No open privacy requests"
+          detail="Export, correction, or erasure requests will appear here with an evidence trail."
+        />
       )}
       {exportState.isError || openRequest.isError || completeRequest.isError ? (
         <p className="mt-3 text-xs text-rose-700">
@@ -1548,6 +1585,70 @@ function Metric({
     </div>
   );
 }
+
+const customerStatusOrder = [
+  "Booked",
+  "Picked Up",
+  "In Process",
+  "Ready",
+  "Out for Delivery",
+  "Delivered",
+  "Cancelled",
+];
+
+function CustomerOrderJourney({ statuses }: { statuses: Record<string, number> }) {
+  const rows = customerStatusOrder
+    .map((status) => ({ status, count: Number(statuses[status] || 0) }))
+    .filter((row) => row.count > 0);
+  const additional = Object.entries(statuses)
+    .filter(([status, count]) => !customerStatusOrder.includes(status) && Number(count) > 0)
+    .map(([status, count]) => ({ status, count: Number(count) }));
+  const visible = [...rows, ...additional];
+  const total = visible.reduce((sum, row) => sum + row.count, 0);
+  const barTone: Record<string, string> = {
+    Booked: "bg-[#e6bc65]",
+    "Picked Up": "bg-[#8fc1b5]",
+    "In Process": "bg-[#4d8982]",
+    Ready: "bg-[#39786f]",
+    "Out for Delivery": "bg-[#3a7894]",
+    Delivered: "bg-[#2e6a60]",
+    Cancelled: "bg-[#d86b4d]",
+  };
+  return (
+    <section className="mt-4 rounded-[22px] border border-[#263f44]/10 bg-[#fffdf8] p-5 shadow-[0_8px_28px_rgba(37,48,43,.035)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="h-5 w-5 text-[#39786f]" />
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#4d8982]">Customer journey</p>
+            <h2 className="font-serif text-xl text-[#17353c]">Order status mix</h2>
+          </div>
+        </div>
+        <span className="rounded-full bg-[#eaf3ef] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[.1em] text-[#39786f]">
+          {total} recorded order{total === 1 ? "" : "s"}
+        </span>
+      </div>
+      {visible.length ? (
+        <div className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          {visible.map((row) => (
+            <div key={row.status}>
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="truncate font-semibold text-[#4c6268]">{row.status}</span>
+                <strong className="tabular-nums text-[#17353c]">{row.count}</strong>
+              </div>
+              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#e6eee9]" aria-hidden="true">
+                <div className={`h-full rounded-full ${barTone[row.status] || "bg-[#8797a0]"}`} style={{ width: `${Math.max(6, Math.round((row.count / total) * 100))}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <VisualEmptyState kind="orders" compact title="No order journey yet" detail="Recorded orders will build this customer status mix over time." />
+      )}
+    </section>
+  );
+}
+
 function ErrorText({ error }: { error: unknown }) {
   return (
     <p className="mt-3 text-sm text-rose-700">
@@ -1580,14 +1681,6 @@ function CustomerInsightsPanel({
         recommendation is being assumed.
       </section>
     );
-  const priority = data.customers
-    .filter(
-      (customer) =>
-        customer.segment === "at_risk" ||
-        customer.segment === "lapsed" ||
-        customer.segment === "unknown",
-    )
-    .slice(0, 5);
   return (
     <section className="mt-5 rounded-[22px] border border-[#263f44]/10 bg-white p-5 shadow-[0_8px_28px_rgba(37,48,43,.04)]">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1595,15 +1688,14 @@ function CustomerInsightsPanel({
           <div className="flex items-center gap-2">
             <BarChart3 className="h-5 w-5 text-[#39786f]" />
             <p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#4d8982]">
-              Customer intelligence
+            Customer activity
             </p>
           </div>
           <h2 className="mt-1 font-serif text-2xl text-[#17353c]">
-            Lifecycle segments
+            Customer signals
           </h2>
           <p className="mt-1 text-xs leading-5 text-[#718087]">
-            As of {data.asOf}. Deterministic activity windows; cancelled orders
-            excluded.
+            A simple view of recent activity. Cancelled orders are excluded.
           </p>
         </div>
         <span className="inline-flex items-center gap-1 rounded-full bg-[#eef3ef] px-2.5 py-1 text-[10px] font-bold text-[#39786f]">
@@ -1611,113 +1703,114 @@ function CustomerInsightsPanel({
           {data.summary.totalCustomers} customers
         </span>
       </div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-7">
-        <MiniMetric
-          label="New"
-          value={data.summary.newCustomers}
-          tone="text-[#39786f]"
-        />
-        <MiniMetric
-          label="Repeat"
-          value={data.summary.repeatCustomers}
-          tone="text-[#3a7894]"
-        />
-        <MiniMetric
-          label="At risk"
-          value={data.summary.atRiskCustomers}
-          tone="text-[#b15e3c]"
-        />
-        <MiniMetric
-          label="Lapsed"
-          value={data.summary.lapsedCustomers}
-          tone="text-[#8f4f3d]"
-        />
-        <MiniMetric
-          label="No orders"
-          value={data.bySegment.no_orders || 0}
-          tone="text-[#718087]"
-        />
-        <MiniMetric
-          label="Date unknown"
-          value={data.bySegment.unknown || 0}
-          tone="text-[#9a513b]"
-        />
-        <MiniMetric
-          label="Consented"
-          value={data.summary.consentedCustomers}
-          tone="text-[#7555a3]"
-        />
-      </div>
-      {priority.length ? (
-        <div className="mt-5 rounded-xl border border-[#f0d8c8] bg-[#fffaf5] p-4">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-[#b15e3c]" />
-            <h3 className="text-sm font-bold text-[#6e4133]">
-              Review retention exceptions
-            </h3>
-          </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
-            {priority.map((customer) => (
-              <div
-                key={customer.customerId}
-                className="rounded-lg border border-[#eadfd4] bg-white p-3"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="truncate text-sm font-bold text-[#27454c]">
-                    {customer.name || customer.phone || "Unnamed customer"}
-                  </p>
-                  <span className="rounded-full bg-[#fbe8dd] px-2 py-0.5 text-[10px] font-bold text-[#9a513b]">
-                    {customer.segmentLabel}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-[#718087]">
-                  {customer.lastOrderDate
-                    ? `${customer.daysSinceLastOrder} days since ${customer.lastOrderDate}`
-                    : "No recorded order date"}{" "}
-                  · {formatINR(customer.revenue)} lifetime
-                </p>
-                <p className="mt-2 text-[11px] font-semibold text-[#6e4133]">
-                  {customer.recommendation}
-                </p>
-              </div>
-            ))}
-          </div>
+      <div className="mt-5">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[11px] font-bold uppercase tracking-[.13em] text-brand-600">Order relationship</p>
+          <p className="text-[11px] text-[#718087]">New → repeat → needs attention</p>
         </div>
-      ) : (
-        <p className="mt-5 rounded-xl bg-[#f5faf7] p-4 text-xs text-[#39786f]">
-          No at-risk, lapsed, or date-unknown customers in the current branch
-          window.
-        </p>
-      )}
-      <p className="mt-4 text-[11px] text-[#718087]">
-        No messages were sent. Contact eligibility requires recorded marketing
-        consent and a usable preferred channel.
-      </p>
-      {data.issues.length ? (
-        <p className="mt-2 text-[11px] text-[#9a513b]">
-          {data.issues.length} record issue(s) were isolated from the projection
-          and require review.
-        </p>
-      ) : null}
+        <div className="grid gap-px overflow-hidden rounded-2xl bg-[#e9e5f8] sm:grid-cols-2 lg:grid-cols-4">
+          <LifecycleMetric
+            label="New"
+            value={data.summary.newCustomers}
+            detail="First order in the last 30 days"
+            icon="new"
+            tone="new"
+          />
+          <LifecycleMetric
+            label="Repeat"
+            value={data.summary.repeatCustomers}
+            detail="Returned for two or more orders"
+            icon="repeat"
+            tone="repeat"
+          />
+          <LifecycleMetric
+            label="At risk"
+            value={data.summary.atRiskCustomers}
+            detail="No order for 46–90 days"
+            icon="risk"
+            tone="risk"
+          />
+          <LifecycleMetric
+            label="Lapsed"
+            value={data.summary.lapsedCustomers}
+            detail="No order for more than 90 days"
+            icon="lapsed"
+            tone="lapsed"
+          />
+        </div>
+        <div className="mb-2 mt-5 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[11px] font-bold uppercase tracking-[.13em] text-brand-600">Profile readiness</p>
+          <p className="text-[11px] text-[#718087]">These are record facts, not tasks or warnings.</p>
+        </div>
+        <div className="grid gap-px overflow-hidden rounded-2xl bg-[#e9e5f8] sm:grid-cols-3">
+          <LifecycleMetric
+            label="No orders"
+            value={data.bySegment.no_orders || 0}
+            detail="Profile exists, but no booking is recorded"
+            icon="none"
+            tone="none"
+          />
+          <LifecycleMetric
+            label="Date unknown"
+            value={data.bySegment.unknown || 0}
+            detail="No reliable latest order date is recorded"
+            icon="unknown"
+            tone="unknown"
+          />
+          <LifecycleMetric
+            label="Consented"
+            value={data.summary.consentedCustomers}
+            detail="Marketing permission recorded on profile"
+            icon="consented"
+            tone="consented"
+          />
+        </div>
+      </div>
     </section>
   );
 }
 
-function MiniMetric({
+function LifecycleMetric({
   label,
   value,
+  detail,
+  icon,
   tone,
 }: {
   label: string;
   value: number;
-  tone: string;
+  detail: string;
+  icon: "new" | "repeat" | "risk" | "lapsed" | "none" | "unknown" | "consented";
+  tone: "new" | "repeat" | "risk" | "lapsed" | "none" | "unknown" | "consented";
 }) {
+  const styles = {
+    new: "text-brand-700",
+    repeat: "text-indigo-700",
+    risk: "text-amber-700",
+    lapsed: "text-rose-700",
+    none: "text-slate-600",
+    unknown: "text-orange-700",
+    consented: "text-emerald-700",
+  }[tone];
+  const Icon = {
+    new: UserPlus,
+    repeat: History,
+    risk: CircleAlert,
+    lapsed: Clock3,
+    none: UserRound,
+    unknown: CalendarDays,
+    consented: ShieldCheck,
+  }[icon];
   return (
-    <div className="rounded-xl bg-[#f8faf7] p-3">
-      <p className="text-[10px] font-bold uppercase tracking-[.1em] text-[#718087]">
-        {label}
-      </p>
-      <p className={`mt-1 font-serif text-2xl ${tone}`}>{value}</p>
+    <div className="bg-white p-3.5">
+      <div className="flex items-start gap-2.5">
+        <Icon className={`mt-0.5 h-4 w-4 shrink-0 stroke-[2.25] ${styles}`} aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-[.11em] text-[#718087]">{label}</p>
+          <p className="mt-1 text-2xl font-semibold leading-none tabular-nums text-[#17353c]">{value}</p>
+        </div>
+      </div>
+      <p className="mt-3 text-[11px] leading-4 text-[#5e586c]">{detail}</p>
     </div>
   );
 }

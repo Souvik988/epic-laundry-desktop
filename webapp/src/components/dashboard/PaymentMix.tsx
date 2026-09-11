@@ -47,6 +47,7 @@ export function PaymentMix({ data, loading }: { data?: Slice[]; loading?: boolea
             </div>
           </div>
         )}
+        {!loading && <p className="sr-only">{slices.length ? `Payment mix: ${slices.map((slice) => `${slice.mode} ${formatINR(slice.value)} across ${slice.count} payment${slice.count === 1 ? '' : 's'}`).join('; ')}.` : 'No payment records are available.'}</p>}
       </CardContent>
     </Card>
   )

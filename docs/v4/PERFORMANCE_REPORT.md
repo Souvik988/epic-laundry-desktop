@@ -23,4 +23,19 @@ The page query plan selected `entity_rows_laundry_order_page_sort`, added by mig
 
 This fixture uses minimal synthetic entity rows. It does not prove startup time, tag scanning, garment traceability, reports, PDF/printing, React virtualization, cloud catch-up, or hardware performance. Global search now avoids full collection materialization, but its end-to-end multi-entity timing is not included in this fixture. Those remain `NEEDS_VERIFICATION`; no cloud-scale or hardware performance claim is made.
 
-V4 performance status: **NEEDS_VERIFICATION**.
+## Latest focused verification
+
+Audit date: 2026-09-10. Command: `V4_BENCH_CUSTOMERS=10000 V4_BENCH_ORDERS=50000 npm run benchmark:v4-performance` against a disposable database.
+
+| Measurement | Result |
+| --- | ---: |
+| Customers seeded | 10,000 |
+| Orders seeded | 50,000 |
+| First order page (50 rows) | 7.53 ms |
+| Deep order page 10,000 (50 rows) | 20.04 ms |
+| Keyset page near order 10,000 | 24.48 ms |
+| Customer-name search | 42.62 ms |
+
+The query plan used `entity_rows_laundry_order_page_sort`. This is a focused regression signal, not a replacement for the full fixture or end-to-end runtime evidence.
+
+V4 performance status: **NEEDS_VERIFICATION** for full production-scale/runtime coverage; focused indexed-pagination benchmark **PASS**.

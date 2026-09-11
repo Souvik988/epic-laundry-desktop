@@ -9,7 +9,7 @@ import {
   Tag,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import QRCode from "qrcode";
 import JsBarcode from "jsbarcode";
@@ -22,6 +22,7 @@ import {
   type PrintTag,
 } from "@/lib/laundryPrint";
 import { formatINR } from "@/lib/utils";
+import VisualEmptyState from "@/components/laundry/VisualEmptyState";
 
 type Detail = LaundryOrder &
   PrintOrder & {
@@ -51,10 +52,14 @@ export default function LaundryPrintCentre() {
   const [tab, setTab] = useState<Tab>("garment-tags");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
+  const [worksetOpen, setWorksetOpen] = useState(false);
   const [searchParams] = useSearchParams();
   useEffect(() => {
     const order = searchParams.get("order");
-    if (order) setSelected(order);
+    if (order) {
+      setSelected(order);
+      setWorksetOpen(true);
+    }
   }, [searchParams]);
   const orders = useQuery({
     queryKey: ["print-centre-orders", search],
@@ -190,7 +195,7 @@ export default function LaundryPrintCentre() {
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
       <PageHeading />
-      <div className="mt-6 grid gap-5 xl:grid-cols-[290px_minmax(0,1fr)]">
+      <div className="mt-6 min-h-[calc(100vh-220px)]">
         <OrderList
           search={search}
           setSearch={setSearch}
@@ -204,39 +209,37 @@ export default function LaundryPrintCentre() {
             setSelectedTags([]);
             setTab("garment-tags");
             setNotice("");
+            setWorksetOpen(true);
           }}
         />
-        <section className="min-w-0 rounded-[22px] border border-[#263f44]/10 bg-[#fffdf8] p-5 shadow-[0_8px_28px_rgba(37,48,43,.05)] md:p-6">
-          {!selected ? (
-            <EmptyState />
-          ) : detail.isLoading || !order ? (
-            <div className="grid min-h-[560px] place-items-center">
-              <Loader2 className="h-6 w-6 animate-spin text-[#3a7d78]" />
-            </div>
-          ) : (
-            <DocumentWorkspace
-              order={order}
-              tags={tags}
-              containerTags={containerTags}
-              tab={tab}
-              setTab={(next) => {
-                setTab(next);
-                setSelectedTags([]);
-              }}
-              notice={notice}
-              setNotice={setNotice}
-              jobs={jobs.data || []}
-              settings={settings.data}
-              selectedTags={selectedTags}
-              selectedRows={selectedRows}
-              allSelected={allSelected}
-              setSelectedTags={setSelectedTags}
-              onPrint={() => void runDocument("print")}
-              onPdf={() => void runDocument("pdf")}
-            />
-          )}
-        </section>
       </div>
+      {worksetOpen ? (
+        <PrintWorksetDrawer onClose={() => setWorksetOpen(false)}>
+          {!selected ? <EmptyState /> : detail.isLoading || !order ? (
+            <div className="grid min-h-[560px] place-items-center"><Loader2 className="h-6 w-6 animate-spin text-[#3a7d78]" /></div>
+          ) : <DocumentWorkspace
+            order={order}
+            tags={tags}
+            containerTags={containerTags}
+            tab={tab}
+            setTab={(next) => {
+              setTab(next);
+              setSelectedTags([]);
+            }}
+            notice={notice}
+            setNotice={setNotice}
+            jobs={jobs.data || []}
+            settings={settings.data}
+            selectedTags={selectedTags}
+            selectedRows={selectedRows}
+            allSelected={allSelected}
+            setSelectedTags={setSelectedTags}
+            onClose={() => setWorksetOpen(false)}
+            onPrint={() => void runDocument("print")}
+            onPdf={() => void runDocument("pdf")}
+          />}
+        </PrintWorksetDrawer>
+      ) : null}
     </div>
   );
 }
@@ -265,16 +268,12 @@ function PageHeading() {
 }
 function EmptyState() {
   return (
-    <div className="grid min-h-[560px] place-items-center text-center text-sm text-[#718087]">
-      <div>
-        <Tag className="mx-auto mb-3 h-8 w-8 text-[#55938a]" />
-        <p className="font-serif text-2xl text-[#17353c]">
-          Choose an order to begin
-        </p>
-        <p className="mt-1">
-          Search by order, invoice, customer, phone, or active tag.
-        </p>
-      </div>
+    <div className="grid min-h-[560px] place-items-center">
+      <VisualEmptyState
+        kind="operations"
+        title="Choose an order to begin"
+        detail="Search by order, invoice, customer, phone, or active tag to prepare a document or tag batch."
+      />
     </div>
   );
 }
@@ -298,64 +297,91 @@ function OrderList({
   onSelect: (id: string) => void;
 }) {
   return (
-    <aside className="h-fit rounded-[22px] border border-[#263f44]/10 bg-white p-4 shadow-[0_8px_28px_rgba(37,48,43,.04)]">
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7e8d90]" />
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Order, invoice, customer, tag"
-          className="h-11 w-full rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] pl-9 pr-3 text-sm outline-none focus:border-[#438b82] focus:ring-2 focus:ring-[#b9ded6]"
-        />
-      </div>
-      <div className="mt-4 flex flex-wrap gap-1 text-[10px] font-bold uppercase tracking-[.12em] text-[#718087]">
-        {(["today", "ready", "unprinted", "partial", "reprints", "completed", "all"] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setFilter(value)}
-            className={`rounded-full px-2.5 py-1.5 ${filter === value ? "bg-[#eaf3ef] text-[#2e6a60]" : "hover:bg-[#f2f5f1]"}`}
-          >
-            {value === "today" ? "Today" : value === "ready" ? "Ready" : value === "unprinted" ? "Unprinted" : value === "partial" ? "Partial" : value === "reprints" ? "Reprints" : value === "completed" ? "Completed" : "All"}
-          </button>
-        ))}
-      </div>
-      <div className="mt-3 max-h-[590px] space-y-1 overflow-y-auto">
+    <section className="flex min-h-[calc(100vh-220px)] flex-col overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]">
+      <header className="border-b border-[#263f44]/10 bg-[#fffdfb] px-5 py-5 md:px-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-[.17em] text-[#4d8982]">Document worksets</p>
+            <h2 className="mt-1 font-serif text-2xl text-[#17353c]">Choose an order to open its live worksheet</h2>
+            <p className="mt-1 text-sm text-[#718087]">The queue stays visible here. Invoices, physical tags, documents, and print history open from the right.</p>
+          </div>
+          <span className="rounded-full bg-[#f1effb] px-3 py-1.5 text-xs font-bold text-[#5d46d2]">{orders.length} workset{orders.length === 1 ? "" : "s"}</span>
+        </div>
+        <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7e8d90]" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search order, invoice, customer, phone or active tag"
+              className="h-11 w-full rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] pl-9 pr-3 text-sm outline-none focus:border-[#438b82] focus:ring-2 focus:ring-[#b9ded6]"
+            />
+          </div>
+          <div className="flex flex-wrap gap-1 text-[10px] font-bold uppercase tracking-[.12em] text-[#718087]">
+            {(["today", "ready", "unprinted", "partial", "reprints", "completed", "all"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFilter(value)}
+                className={`rounded-full px-2.5 py-1.5 ${filter === value ? "bg-[#eaf3ef] text-[#2e6a60]" : "hover:bg-[#f2f5f1]"}`}
+              >
+                {value === "today" ? "Today" : value === "ready" ? "Ready" : value === "unprinted" ? "Unprinted" : value === "partial" ? "Partial" : value === "reprints" ? "Reprints" : value === "completed" ? "Completed" : "All"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fbfcfa] p-3 md:p-5">
         {loading ? (
-          <Loader2 className="mx-auto my-8 h-5 w-5 animate-spin text-[#3a7d78]" />
+          <Loader2 className="mx-auto my-16 h-5 w-5 animate-spin text-[#3a7d78]" />
         ) : (
-          orders.map((row) => (
+          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+          {orders.map((row) => (
             <button
               key={row.id}
               type="button"
               onClick={() => onSelect(row.id)}
-              className={`w-full rounded-xl p-3 text-left transition ${selected === row.id ? "bg-[#eaf3ef] ring-1 ring-inset ring-[#8dbeb3]" : "hover:bg-[#f5f7f3]"}`}
+              className={`group w-full rounded-2xl border p-4 text-left shadow-[0_4px_16px_rgba(37,48,43,.035)] transition hover:-translate-y-0.5 hover:shadow-[0_12px_24px_rgba(37,48,43,.08)] ${selected === row.id ? "border-[#70aaa0] bg-[#edf8f4] ring-1 ring-inset ring-[#8dbeb3]" : "border-[#263f44]/10 bg-white hover:border-[#a9ccc4]"}`}
             >
-              <span className="flex items-center justify-between gap-2">
-                <span className="text-sm font-bold text-[#205660]">
+              <span className="flex items-start justify-between gap-3">
+                <span className="min-w-0"><span className="block truncate text-sm font-bold text-[#205660]">
                   {row.invoiceNumber || row.orderNumber}
-                </span>
-                <span className="text-xs font-bold text-[#17353c]">
+                </span><span className="mt-1 block truncate text-xs text-[#617178]">{row.orderNumber}</span></span>
+                <span className="shrink-0 text-sm font-bold tabular-nums text-[#17353c]">
                   {formatINR(row.grandTotal)}
                 </span>
               </span>
-              <span className="mt-1 block truncate text-xs text-[#617178]">
-                {row.customer.name}
-              </span>
-              <span className="mt-1 block text-[10px] uppercase tracking-[.1em] text-[#829092]">
-                {row.state} · Due {row.expectedDeliveryDate}
-              </span>
+              <span className="mt-4 flex items-end justify-between gap-3 border-t border-[#263f44]/8 pt-3"><span className="min-w-0"><span className="block truncate font-semibold text-[#253f44]">{row.customer.name}</span><span className="mt-1 block text-[10px] font-bold uppercase tracking-[.1em] text-[#829092]">Due {row.expectedDeliveryDate}</span></span><span className="rounded-full bg-[#f1effb] px-2.5 py-1 text-[10px] font-bold text-[#5d46d2]">{row.state}</span></span>
             </button>
-          ))
+          ))}</div>
         )}
         {!loading && !orders.length ? (
-          <p className="py-8 text-center text-sm text-[#718087]">
-            No orders found.
-          </p>
+          <VisualEmptyState
+            kind="orders"
+            compact
+            title="No orders in this queue"
+            detail="Try All, change the date filter, or search another order."
+          />
         ) : null}
       </div>
-    </aside>
+    </section>
   );
+}
+
+function PrintWorksetDrawer({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+  return <>
+    <button type="button" aria-label="Close live workset" onClick={onClose} className="fixed inset-0 z-40 cursor-default bg-[#171024]/65 backdrop-blur-[2px]" />
+    <aside role="dialog" aria-modal="true" aria-label="Live print workset" className="fixed inset-y-0 right-0 z-50 flex w-full flex-col overflow-y-auto border-l border-[#272043]/10 bg-[#fffdfb] px-4 py-5 shadow-[-22px_0_60px_rgba(32,23,60,.22)] animate-in slide-in-from-right duration-300 sm:w-[min(72vw,1040px)] sm:min-w-[680px] sm:px-6">
+      {children}
+    </aside>
+  </>;
 }
 
 function DocumentWorkspace({
@@ -372,6 +398,7 @@ function DocumentWorkspace({
   selectedRows,
   allSelected,
   setSelectedTags,
+  onClose,
   onPrint,
   onPdf,
 }: {
@@ -388,6 +415,7 @@ function DocumentWorkspace({
   selectedRows: PrintTag[];
   allSelected: boolean;
   setSelectedTags: (value: string[]) => void;
+  onClose: () => void;
   onPrint: () => void;
   onPdf: () => void;
 }) {
@@ -427,6 +455,15 @@ function DocumentWorkspace({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-[#263f44]/15 bg-white text-[#40565a] transition hover:bg-[#f1eff8]"
+            aria-label="Close live workset"
+            title="Close workset"
+          >
+            <X className="h-4 w-4" />
+          </button>
           <button
             type="button"
             disabled={!canPrint}

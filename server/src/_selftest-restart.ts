@@ -48,7 +48,7 @@ try {
   assert.equal(bootstrap.status, 200, 'production owner bootstrap creates the neutral default catalogue');
   headers = { cookie: String(bootstrap.headers.get('set-cookie') || '').split(';')[0] };
   const taxProfile = await api('/api/gst/tax-profile', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'idempotency-key': 'restart-tax-profile-001' }, body: JSON.stringify({ legalName: 'Restart Test Laundry Pvt Ltd', address: 'Restart test address', stateCode: '29', pincode: '560001', registrationStatus: 'Unregistered', einvoiceState: 'NotApplicable' }) });
-  assert.equal((taxProfile as { data: { registrationStatus: string } }).data.registrationStatus, 'Unregistered', 'restart fixture uses an explicit unregistered supplier profile rather than a demo default');
+  assert.equal((taxProfile as { registrationStatus: string }).registrationStatus, 'Unregistered', 'restart fixture uses an explicit unregistered supplier profile rather than a demo default');
   const catalogue = await api<{ garments: Array<{ id: string }>; services: Array<{ id: string }> }>('/api/laundry/catalogue');
   const created = await api<{ order: { id: string } }>('/api/laundry/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', 'idempotency-key': 'restart-order-001' }, body: JSON.stringify({ customer: { name: 'Restart Customer', phone: '9000000999' }, items: [{ garment: catalogue.garments[0].id, service: catalogue.services[0].id, qty: 1 }], expectedDeliveryDate: '2026-09-03', fulfillmentMode: 'Home Delivery', paymentMode: 'Pay Later' }) });
   assert.ok(created.order.id, 'order created before process restart');

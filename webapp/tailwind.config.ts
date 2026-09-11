@@ -31,8 +31,8 @@ const config: Config = {
           4: "hsl(var(--chart-4))", 5: "hsl(var(--chart-5))",
         },
         brand: {
-          50: "#E8F5E9", 100: "#C8E6C9", 200: "#A5D6A7", 300: "#81C784", 400: "#66BB6A",
-          500: "#1A7A3C", 600: "#158034", 700: "#10602A", 800: "#0B4020", 900: "#062010",
+          50: "#F0EDFF", 100: "#E3DDFF", 200: "#CFC4FF", 300: "#B6A8FF", 400: "#8D79FF",
+          500: "#664CF0", 600: "#5138CF", 700: "#3E289F", 800: "#2C1C70", 900: "#1D124B",
         },
         success: { DEFAULT: "#10B981", bg: "#ECFDF5" },
         warning: { DEFAULT: "#F59E0B", bg: "#FFFBEB" },

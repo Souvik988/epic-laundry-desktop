@@ -4,33 +4,33 @@
 
 @layer base {
   :root {
-    /* ── Legacy generic-ERP tokens. The active Laundry Desk owns its semantic
-       palette locally; these remain only for unshipped compatibility components. ── */
-    --background: 213 30% 97%;
-    --foreground: 222 47% 11%;
+    /* Lndry command system — derived from the violet logo mark (#664CF0).
+       These are semantic tokens, not a second visual system. */
+    --background: 255 28% 97%;
+    --foreground: 252 35% 16%;
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
-    --primary: 221 83% 53%;              /* royal blue #2563EB */
+    --primary: 251 84% 62%;              /* Lndry violet #664CF0 */
     --primary-foreground: 0 0% 100%;
-    --secondary: 214 32% 95%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 214 32% 95%;
-    --muted-foreground: 215 18% 47%;
-    --accent: 214 95% 93%;
-    --accent-foreground: 221 83% 40%;
+    --secondary: 258 34% 94%;
+    --secondary-foreground: 252 35% 16%;
+    --muted: 258 30% 94%;
+    --muted-foreground: 250 12% 43%;
+    --accent: 252 94% 94%;
+    --accent-foreground: 251 64% 45%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 214 25% 89%;
-    --input: 214 25% 89%;
-    --ring: 221 83% 53%;
-    /* Chart palette — blue-led enterprise spectrum */
-    --chart-1: 221 83% 53%;   /* blue */
-    --chart-2: 199 89% 48%;   /* sky */
-    --chart-3: 262 83% 58%;   /* violet */
-    --chart-4: 173 80% 40%;   /* teal */
-    --chart-5: 43 96% 56%;    /* amber */
+    --border: 252 20% 88%;
+    --input: 252 20% 88%;
+    --ring: 251 84% 62%;
+    /* Chart palette — violet-led, with semantic comparison colours. */
+    --chart-1: 251 84% 62%;
+    --chart-2: 276 73% 62%;
+    --chart-3: 212 88% 52%;
+    --chart-4: 158 58% 38%;
+    --chart-5: 37 92% 52%;
     --radius: 0.65rem;
     --success: #16A34A; --success-bg: #F0FDF4;
     --warning: #D97706; --warning-bg: #FFFBEB;
@@ -38,11 +38,27 @@
     --info: #2563EB; --info-bg: #EFF6FF;
 
     /* Dark navy command rail (ERP desk aesthetic) */
-    --rail: 222 47% 11%;
-    --rail-foreground: 213 30% 92%;
-    --rail-muted: 217 33% 55%;
-    --rail-active: 221 83% 53%;
-    --rail-hover: 217 33% 20%;
+    --rail: 252 38% 15%;
+    --rail-foreground: 260 35% 95%;
+    --rail-muted: 254 18% 67%;
+    --rail-active: 251 84% 62%;
+    --rail-hover: 252 34% 22%;
+
+    --lndry-ink: #241a45;
+    --lndry-ink-soft: #352a63;
+    --lndry-brand: #664cf0;
+    --lndry-brand-strong: #5138cf;
+    --lndry-brand-wash: #f0edff;
+    --lndry-brand-mist: #e3ddff;
+    --lndry-canvas: #f8f7fc;
+    --lndry-paper: #fffefe;
+    --lndry-line: #e5e0f2;
+    --lndry-copy: #4f4a62;
+    --lndry-muted: #767086;
+    --lndry-success: #187b5c;
+    --lndry-success-wash: #e9f7f1;
+    --lndry-attention: #a96916;
+    --lndry-attention-wash: #fff3d7;
 
     --sidebar-width: 250px;
     --rail-width: 60px;
@@ -93,12 +109,11 @@
 }
 
 @layer components {
-  /* Signature blue gradient for hero KPI + brand marks */
-  .grad-blue { background: linear-gradient(135deg, #2563EB 0%, #1E40AF 55%, #1D4ED8 100%); }
+  .grad-blue { background: linear-gradient(135deg, #664cf0 0%, #5138cf 55%, #37238d 100%); }
   .grad-mesh {
     background:
-      radial-gradient(1200px circle at 0% 0%, rgba(37,99,235,0.10), transparent 40%),
-      radial-gradient(900px circle at 100% 0%, rgba(139,92,246,0.08), transparent 45%);
+      radial-gradient(1200px circle at 0% 0%, rgba(102,76,240,0.12), transparent 40%),
+      radial-gradient(900px circle at 100% 0%, rgba(175,152,255,0.16), transparent 45%);
   }
   .ring-focus { @apply outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1; }
   .card-hover { @apply transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5; }
@@ -108,6 +123,20 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+/* Respect the operator's OS-level motion preference. The command desk uses
+   motion sparingly for loading and hover feedback; reduced motion keeps those
+   cues available without animated movement or long transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 /* Keep browser fallback printing focused on the active laundry receipt/tag dialog.
    The native Electron print bridge already receives a self-contained document;
@@ -143,4 +172,40 @@
     letter-spacing: .08em;
   }
   .fixed.inset-0 button { display: none !important; }
+}
+
+/*
+  V4 visual bridge
+  ────────────────
+  Older, trustworthy operational screens deliberately retain their markup while
+  adopting the same Lndry palette. Attribute selectors target literal Tailwind
+  arbitrary-value utilities without changing their layout or business logic.
+  New surfaces should use semantic classes/tokens above; this bridge is removed
+  only as routes are incrementally rewritten.
+*/
+@layer utilities {
+  [class~="bg-[#f3f1ec]"], [class~="bg-[#f8f7f3]"], [class~="bg-[#fafaf7]"], [class~="bg-[#fbfbf9]"], [class~="bg-[#f5f5f1]"] { background-color: var(--lndry-canvas) !important; }
+  [class~="bg-[#fffdf8]"], [class~="bg-[#fffdf9]"], [class~="bg-[#fcfcfa]"], [class~="bg-[#fafbf9]"], [class~="bg-[#fafbf8]"] { background-color: var(--lndry-paper) !important; }
+  [class~="bg-[#123039]"], [class~="bg-[#17353c]"], [class~="bg-[#17363e]"] { background-color: var(--lndry-ink) !important; }
+  [class~="bg-[#1b454e]"], [class~="bg-[#1d4a53]"], [class~="bg-[#0e272e]"] { background-color: var(--lndry-ink-soft) !important; }
+  [class~="bg-[#eaf3ef]"], [class~="bg-[#e7f3ef]"], [class~="bg-[#f4f8f5]"], [class~="bg-[#eff2ee]"], [class~="bg-[#edf5f1]"], [class~="bg-[#eef7f2]"] { background-color: var(--lndry-brand-wash) !important; }
+  [class~="bg-[#e8bf68]"], [class~="bg-[#e6bc65]"] { background-color: var(--lndry-brand) !important; }
+  [class~="bg-[#fff2ce]"], [class~="bg-[#fff3d8]"], [class~="bg-[#fff4dc]"] { background-color: var(--lndry-attention-wash) !important; }
+  [class~="bg-[#e4ebe5]"], [class~="bg-[#edf2ef]"], [class~="bg-[#e6e5df]"] { background-color: var(--lndry-brand-mist) !important; }
+
+  [class~="text-[#17353c]"], [class~="text-[#17363e]"], [class~="text-[#15333a]"], [class~="text-[#18242b]"], [class~="text-[#31484d]"], [class~="text-[#223b40]"] { color: var(--lndry-ink) !important; }
+  [class~="text-[#39786f]"], [class~="text-[#3a7d78]"], [class~="text-[#2e6a60]"], [class~="text-[#2e716d]"], [class~="text-[#277267]"] { color: var(--lndry-brand) !important; }
+  [class~="text-[#4d8982]"], [class~="text-[#315d57]"], [class~="text-[#52676c]"], [class~="text-[#617178]"] { color: var(--lndry-copy) !important; }
+  [class~="text-[#718087]"], [class~="text-[#74848a]"], [class~="text-[#819095]"] { color: var(--lndry-muted) !important; }
+  [class~="text-[#855815]"], [class~="text-[#9a6518]"] { color: var(--lndry-attention) !important; }
+  [class~="text-[#a8c4bc]"], [class~="text-[#b8d3c8]"], [class~="text-[#bfd0c9]"], [class~="text-[#e7f3ef]"] { color: #d8d1ff !important; }
+
+  [class~="border-[#263f44]/10"], [class~="border-[#263f44]/8"], [class~="border-[#263f44]/12"], [class~="border-[#263f44]/15"] { border-color: color-mix(in srgb, var(--lndry-line) 78%, transparent) !important; }
+  [class~="border-[#39786f]"], [class~="border-[#57978d]"], [class~="border-[#39786f]/20"], [class~="border-[#39786f]/25"], [class~="border-[#39786f]/30"] { border-color: color-mix(in srgb, var(--lndry-brand) 55%, transparent) !important; }
+  [class~="focus:border-[#438b82]"], [class~="focus:border-[#39786f]"] { border-color: var(--lndry-brand) !important; }
+  [class~="focus:ring-[#3a7d78]"], [class~="focus:ring-[#b9ded6]"] { --tw-ring-color: color-mix(in srgb, var(--lndry-brand) 35%, transparent) !important; }
+  [class~="hover:bg-[#1b454e]"]:hover, [class~="hover:bg-[#1d4a53]"]:hover { background-color: #3a2d78 !important; }
+  [class~="hover:bg-[#e6e5df]"]:hover, [class~="hover:bg-[#eeece6]"]:hover, [class~="hover:bg-[#edf5f1]"]:hover, [class~="hover:bg-[#edf4ef]"]:hover { background-color: var(--lndry-brand-wash) !important; }
+  [class~="hover:border-[#84b7af]"]:hover { border-color: color-mix(in srgb, var(--lndry-brand) 60%, transparent) !important; }
+  [class~="hover:text-[#174945]"]:hover, [class~="hover:text-[#17353c]"]:hover { color: var(--lndry-brand-strong) !important; }
 }

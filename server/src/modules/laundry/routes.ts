@@ -87,9 +87,9 @@ export function routeCoverageAnalytics(tenant: string, riderId?: string) {
     zoneMap.set(key, current);
   }
   for (const run of runs) { const zone = normalizedZone(run.data.service_zone) || 'Unzoned'; const current = zoneMap.get(zone.toLowerCase()) || { zone, orders: 0, pickupReady: 0, deliveryReady: 0, assigned: 0, activeRuns: 0 }; if (openRunStatuses.includes(String(run.data.status))) current.activeRuns += 1; zoneMap.set(zone.toLowerCase(), current); }
-  const runRows = runs.map((run) => { const stops = stopsFor(tenant, run.id); const completedStops = stops.filter((stop) => ['Completed', 'Skipped'].includes(String(stop.data.status))).length; return { id: run.id, status: String(run.data.status), stage: String(run.data.stage), zone: normalizedZone(run.data.service_zone) || 'Unzoned', stopCount: stops.length, completedStops }; });
-  const totalStops = runRows.reduce((sum, run) => sum + run.stopCount, 0); const completedStops = runRows.reduce((sum, run) => sum + run.completedStops, 0);
-  return { asOf: new Date().toISOString(), riderId: riderId || null, totals: { orders: orders.length, zones: zoneMap.size, routes: runs.length, activeRoutes: runRows.filter((run) => openRunStatuses.includes(run.status)).length, stops: totalStops, completedStops, completionPercent: totalStops ? Math.round(completedStops / totalStops * 100) : 0 }, zones: [...zoneMap.values()].sort((a, b) => a.zone.localeCompare(b.zone)), routes: runRows.slice(0, 100) };
+  const runRows = runs.map((run) => { const stops = stopsFor(tenant, run.id); const completedStops = stops.filter((stop) => String(stop.data.status) === 'Completed').length; const skippedStops = stops.filter((stop) => String(stop.data.status) === 'Skipped').length; const closedStops = completedStops + skippedStops; return { id: run.id, status: String(run.data.status), stage: String(run.data.stage), zone: normalizedZone(run.data.service_zone) || 'Unzoned', stopCount: stops.length, completedStops, skippedStops, closedStops }; });
+  const totalStops = runRows.reduce((sum, run) => sum + run.stopCount, 0); const completedStops = runRows.reduce((sum, run) => sum + run.completedStops, 0); const skippedStops = runRows.reduce((sum, run) => sum + run.skippedStops, 0); const closedStops = completedStops + skippedStops;
+  return { asOf: new Date().toISOString(), riderId: riderId || null, totals: { orders: orders.length, zones: zoneMap.size, routes: runs.length, activeRoutes: runRows.filter((run) => openRunStatuses.includes(run.status)).length, stops: totalStops, completedStops, skippedStops, closedStops, completionPercent: totalStops ? Math.round(closedStops / totalStops * 100) : 0 }, zones: [...zoneMap.values()].sort((a, b) => a.zone.localeCompare(b.zone)), routes: runRows.slice(0, 100) };
 }
 
 export function createRouteRun(tenant: string, actor: string, input: { riderId?: string; stage?: string; routeDate?: string; orderIds?: unknown; notes?: string; zone?: string; serviceZone?: string; startTime?: string; minutesPerStop?: number }) {
@@ -140,7 +140,7 @@ export function startRouteRun(tenant: string, actor: string, id: string, assigne
     if (order?.data.state === 'Ready') transitionLaundryOrder(tenant, actor, order.id, 'Out for Delivery', `Route ${run.data.name || id} started`);
   }
   run.data.status = 'In Progress'; run.data.started_at = now; run.updated_at = now; store.updateRow(run);
-  audit(tenant, actor, 'laundry:route-started', { entity: run.entity, row_id: id, after: { startedAt: now, stage: run.data.stage } });
+  audit(tenant, actor, 'laundry:route-started', { entity: run.entity, row_id: id, after: { startedAt: now, stage: run.data.stage, source: assignedRiderId ? 'RiderApp' : 'AdminDashboard' } });
   return presentRun(tenant, run);
 }
 
@@ -166,6 +166,6 @@ export function completeRouteStop(tenant: string, actor: string, runId: string, 
   const now = new Date().toISOString(); stop.data.status = status; stop.data.completed_at = now; stop.data.completed_by = actor; stop.data.note = note; stop.updated_at = now; store.updateRow(stop);
   const allClosed = stopsFor(tenant, runId).every((candidate) => ['Completed', 'Skipped'].includes(String(candidate.data.status)));
   if (allClosed) { run.data.status = 'Completed'; run.data.completed_at = now; run.updated_at = now; store.updateRow(run); }
-  audit(tenant, actor, 'laundry:route-stop-completed', { entity: stop.entity, row_id: stop.id, after: { runId, status, note, orderId: order.id, routeStatus: run.data.status } });
+  audit(tenant, actor, 'laundry:route-stop-completed', { entity: stop.entity, row_id: stop.id, after: { runId, status, note, orderId: order.id, routeStatus: run.data.status, source: assignedRiderId ? 'RiderApp' : 'AdminDashboard' } });
   return presentRun(tenant, run);
 }

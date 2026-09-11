@@ -9,6 +9,7 @@ import {
   MapPinned,
   Pencil,
   Plus,
+  Printer,
   Save,
   ShieldCheck,
   UserRound,
@@ -382,6 +383,39 @@ const roleLabels: Record<Role, string> = {
   rider: "Rider",
 };
 
+const settingsAreas = [
+  {
+    id: "workspace-setup",
+    label: "Workspace",
+    detail: "Business, access and branches",
+    icon: Building2,
+  },
+  {
+    id: "operations-setup",
+    label: "Operations",
+    detail: "Capacity, zones and racks",
+    icon: Warehouse,
+  },
+  {
+    id: "finance-controls",
+    label: "Finance controls",
+    detail: "Normalization and compatibility",
+    icon: ShieldCheck,
+  },
+  {
+    id: "printing-setup",
+    label: "Printing",
+    detail: "Tags, printers and output",
+    icon: Printer,
+  },
+  {
+    id: "data-safety",
+    label: "Data safety",
+    detail: "Backups, recovery and diagnostics",
+    icon: HardDrive,
+  },
+] as const;
+
 export default function LaundrySettings() {
   const queryClient = useQueryClient();
   const settings = useQuery({
@@ -442,6 +476,8 @@ export default function LaundrySettings() {
     latest: string | null;
     rehearsal?: RecoveryRehearsalReport | null;
   } | null>(null);
+  type SettingsAreaId = (typeof settingsAreas)[number]["id"];
+  const [activeArea, setActiveArea] = useState<SettingsAreaId>("workspace-setup");
 
   useEffect(() => {
     if (settings.data)
@@ -891,7 +927,32 @@ export default function LaundrySettings() {
           {notice}
         </p>
       ) : null}
-      <section className="mt-6 rounded-[22px] border border-[#263f44]/10 bg-white p-5 shadow-[0_8px_28px_rgba(37,48,43,.04)]">
+      <nav aria-label="Settings areas" className="mt-5 rounded-[22px] border border-[#263f44]/10 bg-[#f5f2ff] p-3 shadow-[0_8px_28px_rgba(37,48,43,.03)]">
+        <p className="px-1 pb-2 text-[10px] font-extrabold uppercase tracking-[.15em] text-[#767086]">Choose a settings workspace</p>
+        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Settings workspaces">
+          {settingsAreas.map(({ id, label, detail, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              id={`settings-tab-${id}`}
+              aria-selected={activeArea === id}
+              aria-controls={`settings-panel-${id}`}
+              onClick={() => setActiveArea(id)}
+              className={`group inline-flex min-w-[150px] flex-1 items-center gap-2 rounded-xl px-3 py-2 text-left ring-1 ring-inset transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#664cf0] ${activeArea === id ? "bg-[#241a45] text-white ring-[#241a45] shadow-sm" : "bg-white text-[#241a45] ring-[#664cf0]/10 hover:ring-[#664cf0]/35"}`}
+            >
+              <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${activeArea === id ? "bg-white/15 text-[#e3ddff]" : "bg-[#eeeaff] text-[#664cf0]"}`}>
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className="min-w-0">
+                <span className={`block text-xs font-extrabold ${activeArea === id ? "text-white" : "text-[#241a45]"}`}>{label}</span>
+                <span className={`block truncate text-[10px] ${activeArea === id ? "text-[#e3ddff]" : "text-[#767086]"}`}>{detail}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </nav>
+      <section id="workspace-setup" className="mt-6 scroll-mt-24 rounded-[22px] border border-[#263f44]/10 bg-white p-5 shadow-[0_8px_28px_rgba(37,48,43,.04)]">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#4d8982]">
@@ -942,6 +1003,7 @@ export default function LaundrySettings() {
                 {!item.done && item.to.startsWith("#") ? (
                   <a
                     href={item.to}
+                    onClick={() => setActiveArea("workspace-setup")}
                     className="mt-1 inline-block text-[11px] font-bold text-[#39786f] hover:underline"
                   >
                     Configure →
@@ -952,7 +1014,7 @@ export default function LaundrySettings() {
           ))}
         </div>
       </section>
-      <div className="mt-6 grid gap-6 2xl:grid-cols-[minmax(0,1fr)_420px]">
+      {activeArea === "workspace-setup" ? <div id="settings-panel-workspace-setup" role="tabpanel" aria-labelledby="settings-tab-workspace-setup" className="mt-6 grid gap-6 2xl:grid-cols-[minmax(0,1fr)_420px]">
         <div className="space-y-6">
           <form
             id="business-profile"
@@ -1394,8 +1456,9 @@ export default function LaundrySettings() {
             </section>
           ) : null}
         </aside>
-      </div>
-      <section className="mt-6 rounded-[22px] border border-[#263f44]/10 bg-white p-6 shadow-[0_8px_28px_rgba(37,48,43,.04)]">
+      </div> : null}
+      {activeArea === "operations-setup" ? <div id="settings-panel-operations-setup" role="tabpanel" aria-labelledby="settings-tab-operations-setup" className="mt-6 space-y-6">
+      <section id="operations-setup" className="scroll-mt-24 rounded-[22px] border border-[#263f44]/10 bg-white p-6 shadow-[0_8px_28px_rgba(37,48,43,.04)]">
         <div className="flex items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#eaf3ef] text-[#39786f]">
             <HardDrive className="h-5 w-5" />
@@ -1456,7 +1519,11 @@ export default function LaundrySettings() {
           Save station targets
         </button>
       </section>
-      <section className="mt-5 rounded-[22px] border border-[#263f44]/10 bg-white p-6 shadow-[0_8px_28px_rgba(37,48,43,.04)]">
+      <ServiceZoneMaster />
+      <RackProfileMaster />
+      </div> : null}
+      {activeArea === "finance-controls" ? <div id="settings-panel-finance-controls" role="tabpanel" aria-labelledby="settings-tab-finance-controls" className="mt-6 space-y-6">
+      <section id="finance-controls" className="scroll-mt-24 rounded-[22px] border border-[#263f44]/10 bg-white p-6 shadow-[0_8px_28px_rgba(37,48,43,.04)]">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#4d8982]">
@@ -1575,26 +1642,34 @@ export default function LaundrySettings() {
           </p>
         )}
       </section>
-      <TagTemplateConfiguratorV2
-        value={form.tagTemplate}
-        onChange={(tagTemplate) => setForm({ ...form, tagTemplate })}
-        onSave={() => save.mutate()}
-        saving={save.isPending}
-      />
-      <RecoveryRehearsal />
       <CompatibilityAuditPanel
         audit={compatibility.data}
         loading={compatibility.isLoading}
       />
       <EntityNormalizationPanel />
-      <ServiceZoneMaster />
-      <RackProfileMaster />
       <GarmentBackfillPanel />
-      <HardwareStatusPanel />
-      <PrinterProfileManager
-        profiles={form.printerProfiles}
-        onChange={(printerProfiles) => setForm({ ...form, printerProfiles })}
-      />
+      </div> : null}
+      {activeArea === "printing-setup" ? <div id="settings-panel-printing-setup" role="tabpanel" aria-labelledby="settings-tab-printing-setup" className="mt-6 space-y-6">
+        <div id="printing-setup" className="scroll-mt-24">
+          <TagTemplateConfiguratorV2
+            value={form.tagTemplate}
+            onChange={(tagTemplate) => setForm({ ...form, tagTemplate })}
+            onSave={() => save.mutate()}
+            saving={save.isPending}
+          />
+        </div>
+        <div className="scroll-mt-24">
+          <PrinterProfileManager
+            profiles={form.printerProfiles}
+            onChange={(printerProfiles) => setForm({ ...form, printerProfiles })}
+          />
+        </div>
+      </div> : null}
+      {activeArea === "data-safety" ? <div id="settings-panel-data-safety" role="tabpanel" aria-labelledby="settings-tab-data-safety" className="mt-6 space-y-6">
+        <div id="data-safety" className="scroll-mt-24">
+          <RecoveryRehearsal />
+        </div>
+        <HardwareStatusPanel />
       {backupHealth ? (
         <section className="mt-5 rounded-[22px] border border-[#263f44]/10 bg-white p-4 shadow-[0_8px_28px_rgba(37,48,43,.04)]">
           <p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#4d8982]">
@@ -1624,6 +1699,7 @@ export default function LaundrySettings() {
           <p className="mt-1 text-xs text-[#718087]">{backupHealth.reason}</p>
         </section>
       ) : null}
+      </div> : null}
     </div>
   );
 }

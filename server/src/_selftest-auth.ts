@@ -10,7 +10,7 @@ let closeStore: (() => void) | undefined;
 try {
   const Fastify = (await import('fastify')).default;
   const { store } = await import('./kernel/store.js');
-  const { bootstrapOwner, changePassword, createOperationalUser, signIn, signOut, contextForToken } = await import('./modules/auth/auth.js');
+  const { bootstrapOwner, changePassword, createOperationalUser, ensureDemoOwner, signIn, signOut, contextForToken } = await import('./modules/auth/auth.js');
   const { seedLaundryDefaults, laundryCatalogue } = await import('./modules/laundry/domain.js');
   const { registerApi } = await import('./api.js');
   closeStore = () => store.close();
@@ -26,6 +26,14 @@ try {
   changePassword(passwordSession.context, 'StrongPassword!26', 'ChangedPassword!26');
   assert.throws(() => signIn('owner-test', 'StrongPassword!26'), /invalid username or password/, 'old password is rejected after change');
   signOut(passwordSession.token);
+
+  const previousWorkspaceMode = process.env.EPIC_WORKSPACE_MODE;
+  process.env.EPIC_WORKSPACE_MODE = 'demo';
+  const demoOwner = ensureDemoOwner('DEMO-AUTH', 'STORE-DEMO');
+  assert.deepEqual(demoOwner, { username: 'demo', password: 'DemoLaundry!2026' }, 'demo credential contract is deterministic and demo-only');
+  assert.equal(signIn(demoOwner.username, demoOwner.password).context.tenant, 'DEMO-AUTH', 'demo credential signs into its isolated tenant');
+  if (previousWorkspaceMode === undefined) delete process.env.EPIC_WORKSPACE_MODE;
+  else process.env.EPIC_WORKSPACE_MODE = previousWorkspaceMode;
 
   const app = Fastify();
   registerApi(app);
@@ -65,6 +73,14 @@ try {
   assert.equal(settingsRead.json().logoDataUrl, 'data:image/svg+xml;base64,PHN2Zy8+', 'a local store logo round-trips without an external upload');
   assert.equal(settingsRead.json().taxMode, 'gst', 'tax mode is persisted in the scoped store profile');
   assert.equal(settingsRead.json().gstin, '22AAAAA0000A1Z5', 'GSTIN is normalized and persisted');
+  const gstProfile = await app.inject({ method: 'PUT', url: '/api/gst/tax-profile', headers: { ...headers, 'idempotency-key': 'gst-profile-sync-001' }, payload: { legalName: 'Auth Test Laundry Pvt Ltd', address: 'Kolkata, West Bengal', stateCode: '19', pincode: '700001', registrationStatus: 'Registered', gstin: '19ABCDE1234F1Z5', einvoiceState: 'NotApplicable', invoiceSeries: 'AUTH' } });
+  assert.equal(gstProfile.statusCode, 200, 'owner can save a valid registered GST supplier profile');
+  assert.equal(gstProfile.json().counterTaxMode, 'gst', 'a registered GST profile enables the counter tax mode');
+  const gstSyncedSettings = await app.inject({ method: 'GET', url: '/api/settings/store', headers });
+  assert.equal(gstSyncedSettings.json().gstin, '19ABCDE1234F1Z5', 'the counter uses the GSTIN from the persisted supplier profile');
+  const unregisteredProfile = await app.inject({ method: 'PUT', url: '/api/gst/tax-profile', headers: { ...headers, 'idempotency-key': 'gst-profile-sync-002' }, payload: { legalName: 'Auth Test Laundry Pvt Ltd', address: 'Kolkata, West Bengal', stateCode: '19', pincode: '700001', registrationStatus: 'Unregistered', einvoiceState: 'NotApplicable', invoiceSeries: 'AUTH' } });
+  assert.equal(unregisteredProfile.statusCode, 200, 'owner can save an unregistered supplier profile');
+  assert.equal(unregisteredProfile.json().counterTaxMode, 'none', 'an unregistered supplier profile disables counter GST');
   assert.equal(settingsRead.json().printerProfile, 'thermal-80mm', 'printer profile is persisted without claiming a hardware connection');
   assert.equal(settingsRead.json().afterBooking, 'open-print-centre', 'post-booking print behavior is persisted per store');
   assert.equal(settingsRead.json().printerProfiles[0].device, 'USB001', 'printer profile device metadata is persisted without claiming connection');

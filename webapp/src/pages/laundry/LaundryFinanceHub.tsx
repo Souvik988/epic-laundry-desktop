@@ -1,5 +1,8 @@
 import { NavLink } from 'react-router-dom'
 import { Banknote, BarChart3, ClipboardCheck, FileWarning, Landmark, Printer, ReceiptText, Settings2, WalletCards, ShieldCheck } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { apiGet } from '@/lib/api'
+import { formatINR, localDateKey } from '@/lib/utils'
 
 type FinanceWorkstream = {
   to: string
@@ -22,12 +25,19 @@ const workstreams: FinanceWorkstream[] = [
 ]
 
 export default function LaundryFinanceHub() {
+  const today = localDateKey(); const monthStart = `${today.slice(0, 7)}-01`
+  const statutory = useQuery({ queryKey: ['finance-statutory-dashboard', monthStart, today], queryFn: () => apiGet<any>(`/finance/statutory-dashboard?from=${monthStart}&to=${today}`) })
+  const data = statutory.data; const command = data?.commandCenter
   return <section className="animate-in fade-in slide-in-from-bottom-2 duration-500">
     <div className="max-w-3xl">
       <p className="text-[10px] font-extrabold uppercase tracking-[.18em] text-[#39786f]">Finance & compliance</p>
-      <h1 className="mt-2 font-display text-3xl font-semibold tracking-[-.035em] text-[#17353c]">Money and documents that trace back to work done.</h1>
-      <p className="mt-3 max-w-2xl text-sm leading-6 text-[#617178]">Finance is part of the Laundry Desk: every cash movement, settlement and document originates from the same store and order lifecycle—not a disconnected accounting prototype.</p>
+      <h1 className="mt-2 font-display text-3xl font-semibold tracking-[-.035em] text-[#17353c]">Money and compliance, with a clear next move.</h1>
+      <p className="mt-3 max-w-2xl text-sm leading-6 text-[#617178]">Every financial record traces to local store work. The statutory workspace keeps source transactions, policies, evidence and return state together.</p>
     </div>
+    <NavLink to="/laundry/finance/statutory" className="group mt-6 block overflow-hidden rounded-[26px] border border-[#17353c]/10 bg-[radial-gradient(circle_at_92%_18%,rgba(118,90,255,.2),transparent_24%),linear-gradient(135deg,#143442,#1e6061)] p-5 text-white shadow-[0_18px_40px_rgba(18,48,57,.14)] md:p-6">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-[10px] font-extrabold uppercase tracking-[.18em] text-[#aee0d8]">Finance health</p><h2 className="mt-1 font-display text-2xl font-semibold tracking-[-.035em]">{command?.health === 'ACTION_REQUIRED' ? 'Attention required' : command?.health === 'ON_TRACK_WITH_ACTIONS' ? 'On track with actions' : 'Controlled'}</h2><p className="mt-2 max-w-xl text-sm leading-6 text-[#c8dfdd]">Open statutory controls to see the amount, source, return journey and real evidence state—without treating a prepared return as filed.</p></div><span className="inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-extrabold text-[#17353c] transition group-hover:bg-[#f1fffc]">Open control room <span className="ml-2">→</span></span></div>
+      <div className="mt-5 grid gap-2 sm:grid-cols-3"><HubMetric label="Recorded liability" value={data ? formatINR(Number(data.liabilities.totalPaise || 0) / 100) : '—'} /><HubMetric label="Return actions" value={data ? String(data.openReturns) : '—'} /><HubMetric label="Evidence gaps" value={command ? String(command.missingEvidenceCount) : '—'} /></div>
+    </NavLink>
     <div className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       {workstreams.map((item) => <NavLink key={item.to} to={item.to} className="group rounded-[22px] border border-[#263f44]/10 bg-[#fffdf8] p-5 shadow-[0_1px_1px_rgba(12,42,48,.03)] transition hover:-translate-y-0.5 hover:border-[#39786f]/30 hover:shadow-[0_14px_30px_rgba(12,42,48,.09)]">
         <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#e7f3ef] text-[#277267]"><item.icon className="h-5 w-5" /></span>
@@ -42,3 +52,5 @@ export default function LaundryFinanceHub() {
     </div>
   </section>
 }
+
+function HubMetric({ label, value }: { label: string; value: string }) { return <div className="rounded-xl border border-white/10 bg-white/10 px-3 py-3 backdrop-blur-sm"><p className="text-[9px] font-extrabold uppercase tracking-[.12em] text-[#b5dcda]">{label}</p><p className="mt-1 text-lg font-display font-semibold tabular-nums text-white">{value}</p></div> }

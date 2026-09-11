@@ -1333,7 +1333,24 @@ export function registerApi(app: FastifyInstance) {
   app.get('/api/gst/tax-profile', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => supplierTaxProfile(req.auth!.tenant) || { ready: false, code: 'TAX_PROFILE_INCOMPLETE', profile: null }));
   app.get('/api/gst/tax-readiness', { preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => taxReadiness(req.auth!.tenant)));
   app.put('/api/gst/tax-profile', { schema: { body: gstSupplierProfileBody }, preHandler: [guard, allow('settings.manage')] }, async (req: any, rep: any) => {
-    try { return inStore(req, () => idempotent(req, 'gst.tax-profile', () => saveSupplierTaxProfile(req.auth!.tenant, req.auth!.actor, req.body))); }
+    try {
+      return inStore(req, () => idempotent(req, 'gst.tax-profile', () => {
+        const profile = saveSupplierTaxProfile(req.auth!.tenant, req.auth!.actor, req.body);
+        // Keep the owner-facing supplier registration and the counter's tax
+        // mode in one truth. A registered profile has already passed GSTIN
+        // validation; an unregistered profile must not leave GST charging on.
+        const settings = store.saveStoreSettings(req.auth!.tenant, req.auth!.actor, {
+          taxMode: profile.data.registrationStatus === 'Registered' ? 'gst' : 'none',
+          gstin: profile.data.gstin || '',
+        });
+        audit(req.auth!.tenant, req.auth!.actor, 'gst:counter-tax-mode-synchronised', {
+          entity: profile.entity,
+          row_id: profile.id,
+          after: { taxMode: settings.taxMode, gstinPresent: Boolean(settings.gstin) },
+        });
+        return { ...profile.data, counterTaxMode: settings.taxMode };
+      }));
+    }
     catch (error: any) { return rep.code(400).send({ code: error.message, error: error.message }); }
   });
   app.get('/api/gst/tax-rules', { schema: { querystring: gstTaxPolicyQuery }, preHandler: [guard, allow('settings.manage')] }, async (req: any) => inStore(req, () => listTaxPolicyRules(req.auth!.tenant, req.query?.asOf)));

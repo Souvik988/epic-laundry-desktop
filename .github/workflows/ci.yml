@@ -51,6 +51,17 @@ jobs:
           npm run test:cash-shift && npm run test:routes && npm run test:hardware &&
           npm run test:diagnostics && npm run test:backup-crypto &&
           npm run test:financial-normalization && npm run test:entity-normalization &&
+          npm run test:canonical-tax && npm run test:statutory && npm run test:tax-policy &&
+          npm run test:marketplace-sync && npm run test:marketplace-cross-channel &&
+          npm run test:marketplace-api && npm run test:marketplace-device-api &&
+          npm run test:marketplace-catalogue && npm run test:marketplace-customer-links &&
+          npm run test:marketplace-order-truth && npm run test:marketplace-customer-status &&
+          npm run test:marketplace-pickup && npm run test:marketplace-settlement &&
+          npm run test:marketplace-settlement-batches && npm run test:marketplace-cash &&
+          npm run test:provider-events && npm run test:provider-events-api &&
+          npm run test:marketplace-notifications && npm run test:marketplace-notifications-api &&
+          npm run test:customer-privacy && npm run test:customer-privacy-api &&
+          npm run test:customer-portal && npm run test:garment-assets && npm run test:order-search &&
           npm run test:e2e
         working-directory: server
       - name: Install web dependencies
@@ -78,6 +89,9 @@ jobs:
         working-directory: webapp
       - name: Run frontend interaction smoke test
         run: npm run test:e2e
+        working-directory: webapp
+      - name: Run fresh-production empty-state walkthrough
+        run: npm run test:e2e:empty
         working-directory: webapp
       - name: Install desktop dependencies
         run: npm ci

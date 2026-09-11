@@ -9,7 +9,8 @@ import { registerSeedAutomations } from './automations/seed.js';
 import { listRows } from './kernel/entity-service.js';
 import { assignLaundryOrder, bookLaundryOrder, createLaundryRider, laundryCatalogue, scanLaundryGarment, seedLaundryDefaults, transitionLaundryOrder } from './modules/laundry/domain.js';
 import { laundryBusinessDate } from './modules/laundry/dates.js';
-import { seedLaundryDemoExpansion } from './modules/laundry/demo-data.js';
+import { seedLaundryDemoExpansion, seedLaundryDemoExperienceCoverage, seedLaundryDemoLifecycleCoverage } from './modules/laundry/demo-data.js';
+import { ensureDemoOwner } from './modules/auth/auth.js';
 
 const TENANT = process.env.EPIC_TENANT || 'T1';
 const PORT = Number(process.env.PORT || 3001);
@@ -22,6 +23,43 @@ process.env.EPIC_WORKSPACE_MODE = WORKSPACE_MODE;
 const app = Fastify({ logger: true });
 const configuredCorsOrigins = String(process.env.EPIC_CORS_ORIGIN || '').split(',').map((origin) => origin.trim()).filter(Boolean);
 await app.register(cors, { origin: configuredCorsOrigins.length ? configuredCorsOrigins : false });
+
+// Keep the retired generic ERP pages from being opened by the desktop or old
+// bookmarks. These redirects preserve useful entry points while ensuring
+// every operational surface lands in the authenticated Laundry Desk UI.
+const retiredUiRouteRedirects: Record<string, string> = {
+  '/ui/': '/ui/app/',
+  '/ui/index.html': '/ui/app/#/laundry/dashboard',
+  '/ui/pos.html': '/ui/app/#/laundry/new-order',
+  '/ui/invoice.html': '/ui/app/#/laundry/print-centre',
+  '/ui/invoices.html': '/ui/app/#/laundry/print-centre',
+  '/ui/crm.html': '/ui/app/#/laundry/customers',
+  '/ui/engage.html': '/ui/app/#/laundry/customers',
+  '/ui/inventory.html': '/ui/app/#/laundry/catalogue',
+  '/ui/buying.html': '/ui/app/#/laundry/expenses',
+  '/ui/purchases.html': '/ui/app/#/laundry/expenses',
+  '/ui/selling.html': '/ui/app/#/laundry/orders',
+  '/ui/manufacturing.html': '/ui/app/#/laundry/production-queue',
+  '/ui/accounting.html': '/ui/app/#/laundry/finance',
+  '/ui/banking.html': '/ui/app/#/laundry/finance',
+  '/ui/gst.html': '/ui/app/#/laundry/finance/statutory',
+  '/ui/compliance.html': '/ui/app/#/laundry/quality-claims',
+  '/ui/returns.html': '/ui/app/#/laundry/returns',
+  '/ui/hr.html': '/ui/app/#/laundry/management',
+  '/ui/projects.html': '/ui/app/#/laundry/operations',
+  '/ui/assets.html': '/ui/app/#/laundry/catalogue',
+  '/ui/ai.html': '/ui/app/#/laundry/dashboard',
+  '/ui/ops.html': '/ui/app/#/laundry/operations',
+  '/ui/multi-entity.html': '/ui/app/#/laundry/settings',
+  '/ui/migration.html': '/ui/app/#/laundry/import-catalogue',
+  '/ui/ecosystem.html': '/ui/app/#/laundry/sync-status',
+  '/ui/portal.html': '/ui/app/#/laundry/customers',
+};
+app.addHook('onRequest', async (request, reply) => {
+  const pathname = request.raw.url?.split('?')[0] || '';
+  const destination = retiredUiRouteRedirects[pathname];
+  if (destination) return reply.redirect(destination);
+});
 
 const DEMO_ASSEMBLY_STATES = ['Sorted', 'Processing', 'QC', 'Assembly', 'Racked'] as const;
 function completeDemoAssembly(units: Array<{ tagCode: string; sequence: number }>, batch: string) {
@@ -37,9 +75,12 @@ await app.register(fastifyStatic, {
 registerApi(app);
 registerSeedAutomations(TENANT);
 if (WORKSPACE_MODE === 'demo') {
+  ensureDemoOwner(TENANT, 'STORE-DEFAULT');
   seedLaundryDefaults(TENANT);
   seedLaundryDemo();
   seedLaundryDemoExpansion(TENANT);
+  seedLaundryDemoLifecycleCoverage(TENANT);
+  seedLaundryDemoExperienceCoverage(TENANT);
 }
 
 function seedLaundryDemo() {
@@ -116,7 +157,7 @@ try {
     console.log(`EPIC_READY ${JSON.stringify({ port: activePort, nonce: startupNonce, proof })}`);
   }
   console.log(`\n  Epic Laundry ${WORKSPACE_MODE} workspace on http://localhost:${activePort}`);
-  console.log(`  Demo UI:         http://localhost:${activePort}/ui/`);
+  console.log(`  Laundry Desk UI: http://localhost:${activePort}/ui/app/`);
   console.log(`  API health:      http://localhost:${activePort}/api/health`);
   console.log('  Session auth:    enabled\n');
 } catch (e) {

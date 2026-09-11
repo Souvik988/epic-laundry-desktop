@@ -54,6 +54,7 @@ export function App() {
         <Route path="packages" element={<PermissionGate permission="packages.read"><LaundryPackages /></PermissionGate>} />
         <Route path="new-order" element={<PermissionGate permission="orders.create"><LaundryBooking /></PermissionGate>} />
         <Route path="orders" element={<PermissionGate permission="orders.read"><LaundryOrders /></PermissionGate>} />
+        <Route path="orders/:id" element={<PermissionGate permission="orders.read"><LaundryOrders /></PermissionGate>} />
         <Route path="online-orders" element={<PermissionGate permission="orders.read"><LaundryOnlineOrders /></PermissionGate>} />
         <Route path="sync-status" element={<PermissionGate permission="settings.manage"><LaundrySyncStatus /></PermissionGate>} />
         <Route path="garment-tracking" element={<PermissionGate permission="garments.read"><LaundryGarmentTracking /></PermissionGate>} />

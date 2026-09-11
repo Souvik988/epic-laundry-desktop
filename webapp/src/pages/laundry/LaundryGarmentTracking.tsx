@@ -21,6 +21,7 @@ import {
   type PrintSettings,
   type PrintTag,
 } from "@/lib/laundryPrint";
+import VisualEmptyState from "@/components/laundry/VisualEmptyState";
 
 type Unit = {
   id: string;
@@ -541,10 +542,12 @@ export default function LaundryGarmentTracking() {
             ))}
           </div>
         ) : (
-          <div className="p-12 text-center text-sm text-[#718087]">
-            <Box className="mx-auto mb-3 h-7 w-7 text-[#aab8b2]" />
-            No physical garment units match this search.
-          </div>
+          <VisualEmptyState
+            kind="operations"
+            compact
+            title={search || stateFilter ? "No garment units match" : "No garment units yet"}
+            detail={search || stateFilter ? "Try another tag, order, unit or state filter." : "Garment units will appear here after the first intake is tagged."}
+          />
         )}
       </section>
     </div>
@@ -872,9 +875,12 @@ function RackOccupancyPanel({ data }: { data: RackOccupancy }) {
           ))}
         </div>
       ) : (
-        <p className="mt-4 text-xs text-[#718087]">
-          No garments are currently recorded in a rack or bin.
-        </p>
+        <VisualEmptyState
+          kind="operations"
+          compact
+          title="Rack is clear"
+          detail="Racked garments will appear here with their physical location and retrieval trail."
+        />
       )}
       <p className="mt-4 text-[10px] text-[#819095]">
         Occupancy is derived from durable Racked units; capacity is not claimed

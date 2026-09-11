@@ -15,9 +15,58 @@ import { ensureCanonicalInvoiceForLegacy } from '../gst/legacy-invoice-bridge.js
 import { supplierStateCodeForTenant, supplierTaxProfile } from '../gst/tax-policy.js';
 import { createLaundryCancellationCreditNote } from '../gst/cancellation-credit-note.js';
 import { financeExpenseCategory } from '../finance/classification.js';
+import { VISUAL_ASSETS } from './garment-assets.js';
 
 function canonicalTaxEvidenceConfigured(tenant: string) {
-  return Boolean(supplierTaxProfile(tenant) && store.rowsOf(tenant, 'tax_policy_rule').some((row) => row.status === 'Approved' && row.data?.approvalStatus === 'Approved'));
+  // A supplier profile and approved rule are not enough to activate GST on a
+  // counter order. The store-level tax mode is the explicit operator choice;
+  // without it, a tax-free local invoice must remain a valid tax-free invoice
+  // instead of being reconciled against the standard 18% policy.
+  return Boolean(store.getStoreSettings(tenant).taxMode === 'gst' && supplierTaxProfile(tenant) && store.rowsOf(tenant, 'tax_policy_rule').some((row) => row.status === 'Approved' && row.data?.approvalStatus === 'Approved'));
+}
+
+function inferredGarmentVisualKey(name: string, category: string) {
+  const value = `${name} ${category}`.toLowerCase();
+  if (/shoe|sneaker|slipper|footwear/.test(value)) return 'shoePair';
+  if (/bag|handbag|purse|luggage/.test(value)) return 'handbag';
+  if (/saree|dupatta|stole|scarf|muffler|turban/.test(value)) return value.includes('scarf') || value.includes('stole') ? 'tieScarf' : 'foldedSaree';
+  if (/salwar/.test(value)) return 'salwarSuit';
+  if (/lehenga/.test(value)) return 'lehenga';
+  if (/sherwani/.test(value)) return 'sherwani';
+  if (/blouse/.test(value)) return 'blouse';
+  if (/kurti/.test(value)) return 'foldedKurti';
+  if (/kurta|pyjama/.test(value)) return 'foldedKurta';
+  if (/dress|gown|frock|nighty|skirt/.test(value)) return 'foldedDress';
+  if (/blazer|suit|coat|jacket/.test(value)) return 'foldedBlazer';
+  if (/jean|denim/.test(value)) return 'foldedJeans';
+  if (/hoodie|sweater|sweatshirt/.test(value)) return 'foldedHoodie';
+  if (/blanket|comforter/.test(value)) return 'foldedBlanket';
+  if (/quilt|duvet/.test(value)) return 'quiltDuvet';
+  if (/pillow/.test(value)) return 'pillowCover';
+  if (/curtain/.test(value)) return 'curtain';
+  if (/carpet|rug/.test(value)) return 'carpetRug';
+  if (/towel/.test(value)) return 'towel';
+  if (/sock/.test(value)) return 'socksPair';
+  if (/bed ?sheet|bedsheet|bed ?cover|table ?cloth|napkin|cushion|cloth|mixed/.test(value)) return 'foldedBedsheet';
+  if (/shirt|top|cap|uniform|dhoti|pant|trouser|lower|short|capri|underwear|inner|boxer|bra|petti|safari/.test(value)) return /jean|denim/.test(value) ? 'foldedJeans' : 'foldedShirt';
+  if (/soft toy/.test(value)) return 'softToy';
+  return 'mixedClothes';
+}
+
+function backfillLaundryGarmentVisuals(tenant: string) {
+  let applied = 0;
+  for (const row of store.rowsOf(tenant, 'laundry_garment')) {
+    if (row.data.active === false || String(row.data.visual_key || '').trim()) continue;
+    const visualKey = inferredGarmentVisualKey(String(row.data.name || ''), String(row.data.category || ''));
+    const photo = VISUAL_ASSETS[visualKey];
+    if (!photo) continue;
+    row.data.visual_key = visualKey;
+    row.data.photo = photo;
+    row.updated_at = new Date().toISOString();
+    store.updateRow(row);
+    applied += 1;
+  }
+  if (applied) audit(tenant, 'system', 'laundry:garment-visuals-backfilled', { after: { applied, strategy: 'explicit-persisted-visual-key' } });
 }
 
 export const LAUNDRY_STATES = ['Booked', 'Picked Up', 'In Process', 'Ready', 'Out for Delivery', 'Delivered', 'Cancelled'] as const;
@@ -1019,6 +1068,10 @@ export function getLaundryOrder(tenant: string, id: string) {
 }
 
 export function laundryCatalogue(tenant: string) {
+  // This is a safe, idempotent catalogue migration for stores created before
+  // the standard laundry-service GST rule existed. It does not alter prices,
+  // historic orders, tax profiles, or any owner-configured tax rule.
+  ensureStandardLaundryTaxRule(tenant);
   const categories: Array<Record<string, any> & { id: string }> = activeRows(tenant, 'laundry_category').map((row) => ({ id: row.id, ...row.data }));
   const services: Array<Record<string, any> & { id: string }> = activeRows(tenant, 'laundry_service').map((row) => ({ id: row.id, ...row.data }));
   const categoryName = new Map(categories.map((category) => [category.id, category.name]));
@@ -1265,10 +1318,25 @@ export function assignLaundryOrder(tenant: string, actor: string, id: string, in
 
 export function laundryDispatch(tenant: string) {
   const orders = listLaundryOrders(tenant);
+  const operatingDate = today();
+  // The dispatch board is deliberately a projection of the same orders that
+  // riders operate through route runs.  It does not create a parallel status
+  // model: Ready / Out for Delivery / Delivered and Booked / Picked Up remain
+  // the canonical laundry lifecycle.
   return {
     riders: listLaundryRiders(tenant),
     pickups: orders.filter((order) => order.fulfillmentMode === 'Pickup Order' && order.state === 'Booked'),
     deliveries: orders.filter((order) => order.fulfillmentMode !== 'Pickup Order' && ['Ready', 'Out for Delivery'].includes(order.state)),
+    deliveredToday: orders.filter((order) => order.state === 'Delivered' && String(order.updatedAt || '').slice(0, 10) === operatingDate),
+    capabilities: {
+      // There is no WebSocket/SSE transport in the local Fastify node yet.
+      // Clients poll this projection and must not present it as push realtime.
+      updateTransport: 'POLLING_FALLBACK',
+      riderPresence: false,
+      riderLocation: false,
+      deliveryOtp: false,
+      proofOfDelivery: false,
+    },
   };
 }
 
@@ -2015,5 +2083,23 @@ export function seedLaundryDefaults(tenant: string) {
       if (!exists) createRow(tenant, actor, 'laundry_price', { garment: garment.id, service: serviceId, rate, active: true });
     }
   }
+  ensureStandardLaundryTaxRule(tenant, actor);
+  backfillLaundryGarmentVisuals(tenant);
   audit(tenant, actor, 'laundry:catalogue-seeded', { after: { garments: defaults.length } });
+}
+
+const STANDARD_LAUNDRY_GST_RULE = 'GST 18% · Laundry service (SAC 9997)';
+
+/**
+ * Adds the currently verified standard laundry-service GST rule once per
+ * scoped catalogue. The booking desk defaults it only after the supplier has
+ * configured a registered GST profile; that profile remains the authority for
+ * whether GST can be enabled.
+ */
+export function ensureStandardLaundryTaxRule(tenant: string, actor = 'system') {
+  const existing = store.rowsOf(tenant, 'laundry_tax_rule').find((row) => String(row.data.name || '').trim().toLowerCase() === STANDARD_LAUNDRY_GST_RULE.toLowerCase());
+  if (existing) return { id: existing.id, ...existing.data };
+  const row = createRow(tenant, actor, 'laundry_tax_rule', { name: STANDARD_LAUNDRY_GST_RULE, rate: 18, active: true });
+  audit(tenant, actor, 'laundry:standard-gst-rule-added', { entity: row.entity, row_id: row.id, after: { name: STANDARD_LAUNDRY_GST_RULE, rate: 18, classification: 'SAC 9997', source: 'CBIC GST Goods and Services Rates' } });
+  return { id: row.id, ...row.data };
 }

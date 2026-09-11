@@ -24,6 +24,8 @@ try {
   const mensWear = initial.categories.find((category: any) => category.name === "Men's Wear")!;
   const steamIron = initial.services.find((service: any) => service.name === 'Steam Iron')!;
   const shirt = initial.garments.find((garment: any) => garment.name === 'Shirt / T-shirt')!;
+  const standardLaundryGst = initial.taxRules.find((rule: any) => rule.name === 'GST 18% · Laundry service (SAC 9997)')!;
+  assert.equal((standardLaundryGst as any).rate, 18, 'the seeded standard laundry GST rule is explicitly 18%');
 
   const category = saveLaundryCategory(tenant, actor, { name: 'Delicate items', color: '#664CF0', sortOrder: 8 });
   assert.equal((category as any).color, '#664CF0', 'category metadata is persisted');
@@ -53,6 +55,8 @@ try {
   const tax = saveLaundryTaxRule(tenant, actor, { name: 'Standard GST', rate: 5 });
   const governedQuote = quoteLaundryOrder(tenant, { items: [{ garment: garment.id, service: service.id, qty: 1 }], chargeRuleIds: [charge.id], discountRuleIds: [discount.id], taxRuleId: tax.id }, customer.id);
   assert.deepEqual({ charges: governedQuote.charges, discounts: governedQuote.discounts, taxRate: governedQuote.taxRate, grandTotal: governedQuote.grandTotal }, { charges: 6.9, discounts: 5, taxRate: 5, grandTotal: 74.45 }, 'selected charge, discount, and tax rules calculate server-side');
+  const standardGstQuote = quoteLaundryOrder(tenant, { items: [{ garment: garment.id, service: service.id, qty: 1 }], taxRuleId: standardLaundryGst.id }, customer.id);
+  assert.equal(standardGstQuote.taxRate, 18, 'the standard 18% GST rule applies through the same server-side quote path');
 
   const booked = bookLaundryOrder(tenant, actor, { customer: { name: 'Historic rate customer', phone: '9000000551' }, items: [{ garment: shirt.id, service: steamIron.id, qty: 1 }], expectedDeliveryDate: '2026-09-01', fulfillmentMode: 'Home Delivery' });
   const existingShirtPrice = initial.prices.find((price: any) => price.garment === shirt.id && price.service === steamIron.id)!;

@@ -56,6 +56,8 @@ export type PrintSettings = {
   phone?: string;
   email?: string;
   logoDataUrl?: string;
+  taxMode?: 'none' | 'gst';
+  gstin?: string;
   printerProfile?: string;
   afterBooking?: "ask" | "open-print-centre" | "auto-print" | "none";
   tagTemplate?: {

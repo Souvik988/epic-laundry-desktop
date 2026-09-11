@@ -13,6 +13,11 @@ const localBrowser = [
 export default defineConfig({
   testDir: './e2e',
   timeout: 60_000,
+  // Every demo spec uses one deliberately stateful local workspace. A single
+  // worker prevents a production-empty-state flow from switching the fixture
+  // while another spec is signing into demo.
+  workers: 1,
+  testIgnore: '**/empty-state-walkthrough.spec.ts',
   fullyParallel: false,
   reporter: [['list']],
   use: {

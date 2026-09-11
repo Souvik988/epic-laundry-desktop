@@ -46,7 +46,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     const workspaceStatus = window.epic?.workspaceStatus?.() || apiGet<{ mode: WorkspaceMode }>('/workspace/status').catch(() => ({ mode: 'production' as WorkspaceMode }))
     Promise.all([apiGet<Session>('/auth/session').catch(() => null), apiGet<{ needsBootstrap: boolean }>('/auth/bootstrap-status'), workspaceStatus])
-      .then(([session, bootstrap, desktopWorkspace]) => { setWorkspace(desktopWorkspace.mode); setState(session?.user ? 'ready' : bootstrap.needsBootstrap ? 'bootstrap' : 'signin') })
+      .then(([session, bootstrap, desktopWorkspace]) => {
+        setWorkspace(desktopWorkspace.mode)
+        if (!session?.user && !bootstrap.needsBootstrap && desktopWorkspace.mode === 'demo') {
+          setUsername('demo')
+          setPassword('DemoLaundry!2026')
+        }
+        setState(session?.user ? 'ready' : bootstrap.needsBootstrap ? 'bootstrap' : 'signin')
+      })
       .catch(() => { setError('The local Epic server is unavailable. Check that the desktop application is running.'); setState('signin') })
   }, [])
 
@@ -94,7 +101,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         {error ? <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
         <div className="flex gap-3">{bootstrap && setupStep > 1 ? <button type="button" onClick={() => setSetupStep((setupStep - 1) as 1 | 2)} className="inline-flex items-center gap-2 rounded-xl border border-[#17363e]/15 px-4 py-3 text-sm font-semibold text-[#31484d]"><ArrowLeft className="h-4 w-4" />Back</button> : null}<button disabled={saving} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#123039] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1d4a53] disabled:cursor-not-allowed disabled:opacity-60"><KeyRound className="h-4 w-4" />{saving ? 'Please wait…' : bootstrap && setupStep < 3 ? 'Continue' : bootstrap ? 'Finish secure setup' : 'Sign in'}</button></div>
       </form>
-      {bootstrap ? <div className="mt-5 rounded-xl bg-[#f4f8f5] p-4 text-xs leading-5 text-[#587177]"><strong className="text-[#26494b]">What happens next:</strong> default services and garments are created as editable master data. Your tax, currency, timezone, printer profile and optional backup destination are saved with this branch; catalogue import remains authenticated owner-only work and is available from the readiness checklist after setup. Your business details and current step are saved as a local draft if the desktop is restarted; passwords are never saved.</div> : <button type="button" disabled={saving} onClick={() => void chooseWorkspace(demo ? 'production' : 'demo')} className="mt-5 inline-flex items-center gap-2 text-xs font-semibold text-[#39786f]"><MonitorPlay className="h-4 w-4" />{demo ? 'Return to production workspace' : 'Open isolated demo workspace'}</button>}
+      {bootstrap ? <div className="mt-5 rounded-xl bg-[#f4f8f5] p-4 text-xs leading-5 text-[#587177]"><strong className="text-[#26494b]">What happens next:</strong> default services and garments are created as editable master data. Your tax, currency, timezone, printer profile and optional backup destination are saved with this branch; catalogue import remains authenticated owner-only work and is available from the readiness checklist after setup. Your business details and current step are saved as a local draft if the desktop is restarted; passwords are never saved.</div> : <>{demo ? <div className="mt-5 rounded-xl border border-[#e6c56e]/60 bg-[#fff8e8] p-4 text-xs leading-5 text-[#745516]"><strong className="text-[#62440e]">Demo access</strong><span className="ml-1">is prefilled for this isolated training workspace: username <code className="rounded bg-white/70 px-1 py-0.5 font-mono">demo</code> and password <code className="rounded bg-white/70 px-1 py-0.5 font-mono">DemoLaundry!2026</code>.</span></div> : null}<button type="button" disabled={saving} onClick={() => void chooseWorkspace(demo ? 'production' : 'demo')} className="mt-5 inline-flex items-center gap-2 text-xs font-semibold text-[#39786f]"><MonitorPlay className="h-4 w-4" />{demo ? 'Return to production workspace' : 'Open isolated demo workspace'}</button></>}
     </section>
   </main>
 }

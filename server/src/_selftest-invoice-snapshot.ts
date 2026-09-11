@@ -26,6 +26,7 @@ try {
   assert.throws(() => store.withStoreScope('INV', 'STORE-DEFAULT', () => createCanonicalInvoiceSnapshot('INV', 'owner', { ...input, sourceOrderId: 'ORDER-INV-2', supplier: { ...input.supplier, gstin: '' } })), /TAX_PROFILE_INCOMPLETE/);
   const bridged = store.withStoreScope('BRIDGE', 'STORE-DEFAULT', () => {
     saveSupplierTaxProfile('BRIDGE', 'owner', { legalName: 'Bridge Laundry Private Limited', address: 'Kolkata, West Bengal', stateCode: '29', pincode: '700001', registrationStatus: 'Registered', gstin: '29ABCDE1234F1Z5', invoiceSeries: 'BR', einvoiceState: 'NotApplicable' });
+    store.saveStoreSettings('BRIDGE', 'owner', { businessName: 'Bridge Laundry', address: 'Kolkata, West Bengal', phone: '9000000100', taxMode: 'gst', gstin: '29ABCDE1234F1Z5' });
     const rule = createTaxPolicyRule('BRIDGE', 'owner', { classificationType: 'SAC', classificationCode: '9997', description: 'Laundry service', supplyType: 'Service', rateBps: 1800, validFrom: '2026-04-01', validTo: '2027-03-31', sourceNote: 'Self-test approved fixture', version: '2026.1' });
     approveTaxPolicyRule('BRIDGE', 'owner', rule.id);
     const productRule = createTaxPolicyRule('BRIDGE', 'owner', { classificationType: 'HSN', classificationCode: '6109', description: 'Cotton garment', supplyType: 'Product', rateBps: 1800, validFrom: '2026-04-01', validTo: '2027-03-31', sourceNote: 'Self-test approved POS fixture', version: '2026.1' });

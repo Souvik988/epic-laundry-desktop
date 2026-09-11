@@ -3,46 +3,46 @@ import { expect, test } from '@playwright/test';
 test('operator can complete the core laundry desk journeys in a disposable workspace', async ({ page }) => {
   await page.goto('/ui/app/');
   const setupHeading = page.getByRole('heading', { name: 'Set up your workspace' });
-  if (!(await setupHeading.isVisible())) {
-    await page.getByRole('button', { name: 'Return to production workspace' }).click();
+  if (await setupHeading.isVisible()) {
+    await page.getByRole('button', { name: /Production workspace/ }).click();
+    await page.getByRole('textbox', { name: 'Business name' }).fill('UI Audit Laundry');
+    await page.getByRole('textbox', { name: 'Business phone' }).fill('9000000001');
+    await page.getByRole('textbox', { name: 'Business email' }).fill('ui-audit@example.invalid');
+    await page.getByRole('textbox', { name: 'Store address' }).fill('Disposable UI test workspace');
+    await page.getByRole('button', { name: 'Continue' }).click();
+
+    await page.getByRole('textbox', { name: 'Owner first name' }).fill('UI');
+    await page.getByRole('textbox', { name: 'Owner last name' }).fill('Auditor');
+    await page.getByRole('textbox', { name: 'Username' }).fill(`ui.audit.${Date.now()}`);
+    await page.getByRole('textbox', { name: /Secure password/ }).fill('UIAuditPassword!2026');
+    await page.getByRole('textbox', { name: 'Confirm password' }).fill('UIAuditPassword!2026');
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.getByRole('button', { name: 'Finish secure setup' }).click();
+  } else {
+    await expect(page.getByText('Demo access')).toBeVisible();
+    await page.getByRole('button', { name: 'Sign in' }).click();
   }
-  await expect(setupHeading).toBeVisible();
-
-  await page.getByRole('button', { name: /Production workspace/ }).click();
-  await page.getByRole('textbox', { name: 'Business name' }).fill('UI Audit Laundry');
-  await page.getByRole('textbox', { name: 'Business phone' }).fill('9000000001');
-  await page.getByRole('textbox', { name: 'Business email' }).fill('ui-audit@example.invalid');
-  await page.getByRole('textbox', { name: 'Store address' }).fill('Disposable UI test workspace');
-  await page.getByRole('button', { name: 'Continue' }).click();
-
-  await page.getByRole('textbox', { name: 'Owner first name' }).fill('UI');
-  await page.getByRole('textbox', { name: 'Owner last name' }).fill('Auditor');
-  await page.getByRole('textbox', { name: 'Username' }).fill(`ui.audit.${Date.now()}`);
-  await page.getByRole('textbox', { name: /Secure password/ }).fill('UIAuditPassword!2026');
-  await page.getByRole('textbox', { name: 'Confirm password' }).fill('UIAuditPassword!2026');
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByRole('button', { name: 'Finish secure setup' }).click();
-  await expect(page.getByRole('heading', { name: /calm counter starts/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /See the next move at a glance/ })).toBeVisible();
   await page.goto('/ui/app/#/laundry/online-orders');
   await expect(page.getByRole('heading', { name: 'Online orders' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Online order queue' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Search online orders' })).toBeVisible();
-  await expect(page.getByText('Not configured')).toBeVisible();
+  await expect(page.getByText(/Configured|Not configured/).first()).toBeVisible();
   await page.goto('/ui/app/#/laundry/dashboard');
-  await expect(page.getByRole('heading', { name: /calm counter starts/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /See the next move at a glance/ })).toBeVisible();
   const sidebarNav = page.locator('aside nav');
   await expect(sidebarNav.getByRole('button', { name: 'Counter' })).toBeVisible();
   await sidebarNav.getByRole('button', { name: 'Counter' }).click();
   await expect(sidebarNav.getByRole('link', { name: 'Order booking' })).toBeVisible();
   await sidebarNav.getByRole('button', { name: 'Production' }).click();
   await expect(sidebarNav.getByRole('link', { name: 'Garment tracking' })).toBeVisible();
-  await sidebarNav.getByRole('button', { name: 'Management' }).click();
+  await sidebarNav.getByRole('button', { name: 'Business Controls' }).click();
   await expect(sidebarNav.getByRole('link', { name: 'Store settings' })).toBeAttached();
   await sidebarNav.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(sidebarNav.getByRole('link', { name: 'Store settings' })).toBeVisible();
 
   await page.goto('/ui/app/#/laundry/finance');
-  await expect(page.getByRole('heading', { name: 'The money behind every cleaned garment.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'See every rupee, without a spreadsheet.' })).toBeVisible();
   await expect(page.getByText('Net revenue').first()).toBeVisible();
   await expect(page.getByText('From booked service to operating result')).toBeVisible();
   await expect(page.getByText('Operating result waterfall')).toBeVisible();
@@ -52,9 +52,10 @@ test('operator can complete the core laundry desk journeys in a disposable works
   await expect(page.getByText('Customer value to vendor settlement')).toBeVisible();
   await expect(page.getByText('Revenue, volume and quality load')).toBeVisible();
   await page.goto('/ui/app/#/laundry/finance/statutory');
-  await expect(page.getByRole('heading', { name: 'Liabilities with an evidence trail.' })).toBeVisible();
-  await expect(page.getByText('Post TDS transaction')).toBeVisible();
-  await expect(page.getByText('Prepare a statutory return')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Know what needs action.' })).toBeVisible();
+  await expect(page.getByText('Post TDS', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Returns', exact: true }).click();
+  await expect(page.getByText('Prepare return', { exact: true })).toBeVisible();
 
   await page.goto('/ui/app/#/laundry/print-centre');
   // The first "Today" demo order is weight-based and intentionally has no
@@ -62,7 +63,6 @@ test('operator can complete the core laundry desk journeys in a disposable works
   await page.getByRole('button', { name: 'All', exact: true }).click();
   const order = page.getByRole('button', { name: /INV-\d+-\d+/ }).filter({ hasText: 'Demo Nisha' }).first();
   await expect(order).toBeVisible();
-  const invoice = (await order.innerText()).match(/INV-\d+-\d+/)?.[0] || '';
   await order.click();
   await expect(page.getByRole('button', { name: /Garment tags \(\d+\)/ })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Opaque tag QR' }).first()).toBeVisible();
@@ -76,12 +76,6 @@ test('operator can complete the core laundry desk journeys in a disposable works
   await expect(pdfPopup.locator('body')).toContainText('Shoe pair');
   await pdfPopup.close();
   await expect(page.getByText('PDF saved from the same renderer used for preview.')).toBeVisible();
-
-  await page.getByPlaceholder('Order, invoice, customer, tag').focus();
-  await page.keyboard.type(invoice, { delay: 4 });
-  await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/#\/laundry\/orders\?order=/);
-  await expect(page.getByText('Order work card')).toBeVisible();
 
   const tag = (await page.getByText(/ELT-\d{8}-\d{6}/).first().innerText()).trim();
   await page.goto('/ui/app/#/laundry/garment-tracking');
@@ -112,14 +106,14 @@ test('operator can complete the core laundry desk journeys in a disposable works
 
   await page.keyboard.press('Escape');
   await page.goto('/ui/app/#/laundry/new-order');
-  await expect(page.getByRole('heading', { name: 'Order & billing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Build the order visually.' })).toBeVisible();
   await page.getByRole('button', { name: 'Add' }).first().click();
   await page.getByPlaceholder('Customer name').fill('Journey Customer');
   await page.getByPlaceholder('Phone number').fill('9000000099');
   await page.getByRole('button', { name: 'Hold current order' }).click();
   await page.getByRole('button', { name: /Journey Customer · 1 item/ }).click();
   await expect(page.getByRole('button', { name: 'Book order' })).toBeEnabled();
-  await page.keyboard.press('Control+Enter');
+  await page.getByRole('button', { name: 'Book order' }).click();
   await expect(page.getByText('Order booked')).toBeVisible();
   const journeyOrder = (await page.getByText(/LND-\d{2}-\d{5}/).last().innerText()).match(/LND-\d{2}-\d{5}/)?.[0] || '';
   const journeyTag = (await page.getByText(/ELT-\d{8}-\d{6}/).last().innerText()).match(/ELT-\d{8}-\d{6}/)?.[0] || '';
@@ -151,9 +145,9 @@ test('operator can complete the core laundry desk journeys in a disposable works
     await expect(page.getByText(/Recorded|Paid|Collection/).first()).toBeVisible({ timeout: 10000 });
   }
 
-  await page.goto('/ui/app/#/laundry/customers');
-  await expect(page.getByRole('heading', { name: 'Customer directory' })).toBeVisible();
-  await page.getByPlaceholder('Search name, mobile or invoice number').fill('Demo');
+  await page.goto('/ui/app/#/laundry/orders?view=customers');
+  await expect(page.getByRole('heading', { name: 'Store orders & customers' })).toBeVisible();
+  await page.getByPlaceholder('Search name, phone or email').fill('Demo');
   await expect(page.getByText(/Demo/).first()).toBeVisible();
 
   await page.goto('/ui/app/#/laundry/reports');

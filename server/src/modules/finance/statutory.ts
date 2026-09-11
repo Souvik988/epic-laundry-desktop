@@ -136,7 +136,34 @@ export function statutoryDashboard(tenant: string, input: { from?: string; to?: 
   const range = dateRange(input.from, input.to); const tds = rows(tenant, 'finance_tds_transaction').filter((row) => inRange(String(rowData(row).postingDate), range)); const tcs = rows(tenant, 'finance_tcs_transaction').filter((row) => inRange(String(rowData(row).postingDate), range)); const sum = (list: EntityRow[]) => list.reduce((total, row) => total + paise(rowData(row).amountPaise, 'statutory amount'), 0);
   const tdsPaise = sum(tds); const tcsPaise = sum(tcs); const byPolicy = new Map<string, { policyKey: string; amountPaise: number; count: number }>(); for (const row of [...tds, ...tcs]) { const data = rowData(row); const policyKey = String(data.calculation?.policyKey || data.policyVersion); const bucket = byPolicy.get(policyKey) || { policyKey, amountPaise: 0, count: 0 }; bucket.amountPaise += paise(data.amountPaise, 'statutory amount'); bucket.count += 1; byPolicy.set(policyKey, bucket); }
   const returns: Array<Record<string, any>> = rows(tenant, 'finance_statutory_return').sort((a, b) => String(rowData(a).dueDate).localeCompare(String(rowData(b).dueDate))).map((row) => ({ id: row.id, ...rowData(row), amount: moneyNumber(paise(rowData(row).amountPaise, 'return amount')) })); const openReturns = returns.filter((item) => !['Accepted', 'Acknowledged'].includes(String(item.state))).length;
-  return { range, liabilities: { tdsPaise, tds: moneyNumber(tdsPaise), tcsPaise, tcs: moneyNumber(tcsPaise), totalPaise: tdsPaise + tcsPaise, total: moneyNumber(tdsPaise + tcsPaise) }, transactions: { tdsCount: tds.length, tcsCount: tcs.length, byPolicy: [...byPolicy.values()].map((item) => ({ ...item, amount: moneyNumber(item.amountPaise) })).sort((a, b) => b.amountPaise - a.amountPaise) }, returns, openReturns, evidenceState: returns.some((item) => ['Submitted', 'Acknowledged', 'Accepted'].includes(String(item.state)) && !String(item.evidence || '').trim()) ? 'EVIDENCE_ERROR' : 'CONTROLLED' };
+  const now = new Date().toISOString().slice(0, 10); const isComplete = (state: unknown) => ['Accepted', 'Acknowledged'].includes(String(state));
+  const daysUntil = (date: string) => Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${now}T00:00:00Z`)) / 86_400_000);
+  const returnLabel = (type: unknown) => ({ TDS_138: 'Salary TDS return', TDS_140: 'Resident non-salary TDS return', TCS_143: 'Income-tax TCS return', GSTR_8: 'GST ECO TCS return' }[String(type)] || String(type));
+  const policyLabel = (key: string) => {
+    if (key.includes('CONTRACTOR')) return 'Contractor payments';
+    if (key.includes('PROFESSIONAL')) return 'Professional services';
+    if (key.includes('TECHNICAL')) return 'Technical services';
+    if (key.includes('COMMISSION')) return 'Commission / brokerage';
+    if (key.includes('RENT_EQUIPMENT')) return 'Equipment rent';
+    if (key.includes('RENT_PROPERTY')) return 'Property rent';
+    if (key.includes('GOODS_PURCHASE')) return 'Purchase of goods';
+    if (key.includes('ECOMMERCE')) return 'E-commerce participant';
+    if (key.includes('GST-ECO')) return 'Marketplace GST TCS';
+    return 'Configured statutory policy';
+  };
+  const dueReturns = returns.filter((item) => !isComplete(item.state));
+  const overdueReturns = dueReturns.filter((item) => daysUntil(String(item.dueDate)) < 0);
+  const dueSoonReturns = dueReturns.filter((item) => { const days = daysUntil(String(item.dueDate)); return days >= 0 && days <= 7; });
+  const missingEvidence = returns.filter((item) => ['Submitted', 'Acknowledged', 'Accepted'].includes(String(item.state)) && !String(item.evidence || '').trim());
+  const attention = [
+    ...overdueReturns.map((item) => ({ id: `overdue:${item.id}`, kind: 'OVERDUE', returnId: item.id, label: returnLabel(item.returnType), detail: `Due ${item.dueDate}`, action: 'Review return' })),
+    ...dueSoonReturns.map((item) => ({ id: `due:${item.id}`, kind: 'DUE_SOON', returnId: item.id, label: returnLabel(item.returnType), detail: `Due ${item.dueDate}`, action: 'Review return' })),
+    ...missingEvidence.map((item) => ({ id: `evidence:${item.id}`, kind: 'EVIDENCE_REQUIRED', returnId: item.id, label: returnLabel(item.returnType), detail: 'Evidence reference is missing', action: 'Add evidence' }))
+  ];
+  const policyDistribution = [...byPolicy.values()].map((item) => ({ ...item, amount: moneyNumber(item.amountPaise), label: policyLabel(item.policyKey) })).sort((a, b) => b.amountPaise - a.amountPaise);
+  const timeline = returns.map((item) => ({ id: item.id, date: item.dueDate, label: returnLabel(item.returnType), amountPaise: item.amountPaise, amount: item.amount, state: item.state, dueState: isComplete(item.state) ? 'COMPLETE' : daysUntil(String(item.dueDate)) < 0 ? 'OVERDUE' : daysUntil(String(item.dueDate)) <= 7 ? 'DUE_SOON' : 'UPCOMING' }));
+  const health = overdueReturns.length || missingEvidence.length ? 'ACTION_REQUIRED' : dueSoonReturns.length || openReturns ? 'ON_TRACK_WITH_ACTIONS' : 'CONTROLLED';
+  return { range, liabilities: { tdsPaise, tds: moneyNumber(tdsPaise), tcsPaise, tcs: moneyNumber(tcsPaise), totalPaise: tdsPaise + tcsPaise, total: moneyNumber(tdsPaise + tcsPaise) }, transactions: { tdsCount: tds.length, tcsCount: tcs.length, byPolicy: policyDistribution }, returns, openReturns, evidenceState: missingEvidence.length ? 'EVIDENCE_ERROR' : 'CONTROLLED', commandCenter: { health, overdueCount: overdueReturns.length, dueSoonCount: dueSoonReturns.length, missingEvidenceCount: missingEvidence.length, attention, timeline, policyDistribution } };
 }
 
 export function listStatutoryTransactions(tenant: string, input: { from?: string; to?: string } = {}) { const range = dateRange(input.from, input.to); return [...rows(tenant, 'finance_tds_transaction'), ...rows(tenant, 'finance_tcs_transaction')].filter((row) => inRange(String(rowData(row).postingDate), range)).sort((a, b) => String(rowData(b).postingDate).localeCompare(String(rowData(a).postingDate))).map((row) => ({ id: row.id, entity: row.entity, ...rowData(row), amount: moneyNumber(paise(rowData(row).amountPaise, 'statutory amount')) })); }

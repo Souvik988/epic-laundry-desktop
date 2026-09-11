@@ -49,6 +49,7 @@ export function RevenueTrend({ data, loading }: { data?: Point[]; loading?: bool
             </AreaChart>
           </ResponsiveContainer>
         )}
+        {!loading && <p className="sr-only">{series.length ? `${series.length}-day revenue trend totaling ${formatINR(total)}. ${series.map((point) => `${point.label}: ${formatINR(point.revenue)} and ${point.orders} order${point.orders === 1 ? '' : 's'}`).join('; ')}.` : 'No revenue records are available for this period.'}</p>}
       </CardContent>
     </Card>
   )

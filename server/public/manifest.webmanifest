@@ -1,1 +1,1 @@
-﻿{ "name":"Epic BOS","short_name":"EpicBOS","description":"India-first Business OS","start_url":"/ui/","scope":"/ui/","display":"standalone","background_color":"#0f1117","theme_color":"#0f1117","icons":[] }
+{ "name":"Epic Laundry","short_name":"Epic Laundry","description":"Offline-first laundry operations workspace","start_url":"/ui/app/","scope":"/ui/","display":"standalone","background_color":"#f3f1ec","theme_color":"#123039","icons":[{ "src":"/ui/app/brand/lndry-mark.png","sizes":"192x192","type":"image/png" }] }

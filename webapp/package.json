@@ -10,7 +10,8 @@
     "build:app": "vite build",
     "audit:a11y": "node scripts/accessibility-audit.mjs",
     "preview": "vite preview",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:empty": "playwright test --config=playwright.empty.config.ts e2e/empty-state-walkthrough.spec.ts"
   },
   "dependencies": {
     "@e965/xlsx": "0.20.3",

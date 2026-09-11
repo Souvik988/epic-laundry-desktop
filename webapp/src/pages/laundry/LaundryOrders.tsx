@@ -1,10 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
+  CalendarDays,
   Ban,
+  CheckCircle2,
   ChevronRight,
+  Clock3,
   CircleDollarSign,
   Download,
+  Eye,
+  Layers3,
   Loader2,
+  MapPin,
   Pencil,
   Printer,
   RefreshCw,
@@ -13,10 +20,14 @@ import {
   Search,
   Tag,
   Truck,
+  UserCheck,
+  UserRound,
+  UserX,
+  WalletCards,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { apiGet, apiPatch, apiPost, operatorErrorMessage } from "@/lib/api";
 import {
   nextLaundryState,
@@ -29,6 +40,7 @@ import {
 } from "@/lib/laundry";
 import { cn, formatINR } from "@/lib/utils";
 import OrderItemEditor from "@/components/laundry/OrderItemEditor";
+import VisualEmptyState from "@/components/laundry/VisualEmptyState";
 
 const states: Array<LaundryState | "all"> = [
   "all",
@@ -42,21 +54,59 @@ const states: Array<LaundryState | "all"> = [
 ];
 
 type OrderPage = { items: LaundryOrder[]; total: number; page: number; pageSize: number; totalPages: number };
+type CustomerRecord = { id: string; name: string; phone: string; email: string; address: string; preferredContact?: string; marketingConsent?: boolean };
+type CustomerInsight = {
+  asOf: string;
+  summary: { totalCustomers: number; revenue: number };
+  customers: Array<{ customerId: string; orderCount: number; revenue: number; lastOrderDate: string | null; contactEligible: boolean; segment: string }>;
+};
+type CustomerViewStatus = "all" | "contactable" | "restricted";
+type CustomerViewSegment = "all" | "new" | "repeat" | "at_risk" | "lapsed" | "no_orders" | "unknown";
+type CustomerDrawerProfile = {
+  customer: CustomerRecord & { notes?: string; servicePreferences?: string };
+  metrics: {
+    revenue: number;
+    orderBalance: number;
+    walletBalance: number;
+    rewardPoints: number;
+    lastVisit: string | null;
+    currentPackage: string | null;
+  };
+  addresses: Array<{ id: string; label: string; line1: string; line2: string; city: string; state: string; postalCode: string; isDefault: boolean; active: boolean }>;
+  orders: Array<{ id: string; orderNumber: string; orderDate: string; state: string; grandTotal: number; invoice: string | null; paymentStatus: string; fulfillmentMode?: string; expectedDeliveryDate?: string }>;
+  ledger: Array<{ id: string; entryDate: string; entryType: string; debit: number; credit: number; referenceId: string; reason: string }>;
+  timeline: Array<{ at: string; type: string; label: string; amount: number; reason: string }>;
+};
 
 export default function LaundryOrders() {
+  const { id: orderId } = useParams();
+  return orderId ? <OrderWorkCardPage id={orderId} /> : <StoreOrdersCustomersWorkspace />;
+}
+
+function StoreOrdersCustomersWorkspace() {
+  const navigate = useNavigate();
   const client = useQueryClient();
   const [search, setSearch] = useState("");
   const [state, setState] = useState<LaundryState | "all">("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [searchParams] = useSearchParams();
-  useEffect(() => {
-    const order = searchParams.get("order");
-    if (order) setSelected(order);
-  }, [searchParams]);
+  const [customerStatus, setCustomerStatus] = useState<CustomerViewStatus>("all");
+  const [customerSegment, setCustomerSegment] = useState<CustomerViewSegment>("all");
+  const [customerSort, setCustomerSort] = useState<"newest" | "spend">("newest");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const linkedCustomerId = searchParams.get("customer");
+  const linkedOrderId = searchParams.get("order");
+  const view = searchParams.get("view") === "customers" ? "customers" : "orders";
   useEffect(() => setPage(1), [search, state, from, to]);
+  useEffect(() => {
+    if (linkedCustomerId) setSelectedCustomerId(linkedCustomerId);
+  }, [linkedCustomerId]);
+  useEffect(() => {
+    if (linkedOrderId) setSelectedOrderId(linkedOrderId);
+  }, [linkedOrderId]);
   const filters = new URLSearchParams({
     search,
     ...(state === "all" ? {} : { state }),
@@ -67,17 +117,18 @@ export default function LaundryOrders() {
     queryKey: ["laundry-orders", search, state, from, to, page],
     queryFn: () =>
       apiGet<OrderPage>(`/laundry/orders?${filters.toString()}&page=${page}&pageSize=50`),
+    enabled: view === "orders",
   });
-  const detail = useQuery({
-    queryKey: ["laundry-order", selected],
-    queryFn: () =>
-      apiGet<
-        LaundryOrder & {
-          timeline: Array<{ id: string; ts: string; action: string }>;
-          tags?: Array<OrderTag>;
-        }
-      >(`/laundry/orders/${selected}`),
-    enabled: Boolean(selected),
+  const customers = useQuery({
+    queryKey: ["laundry-customers", search],
+    queryFn: () => apiGet<CustomerRecord[]>(`/laundry/customers?search=${encodeURIComponent(search)}`),
+    enabled: view === "customers",
+  });
+  const customerInsights = useQuery({
+    queryKey: ["customer-insights"],
+    queryFn: () => apiGet<CustomerInsight>("/laundry/customer-insights"),
+    enabled: view === "customers",
+    staleTime: 30_000,
   });
   const transition = useMutation({
     mutationFn: ({
@@ -101,19 +152,55 @@ export default function LaundryOrders() {
     },
   });
   const rows = orders.data?.items || [];
+  const customerRows = useMemo(() => {
+    const metrics = new Map((customerInsights.data?.customers || []).map((entry) => [entry.customerId, entry]));
+    const filtered = (customers.data || []).map((customer) => ({ customer, metric: metrics.get(customer.id) })).filter(({ metric }) => {
+      if (customerStatus === "contactable") return Boolean(metric?.contactEligible);
+      if (customerStatus === "restricted") return !metric?.contactEligible;
+      return true;
+    }).filter(({ metric }) => customerSegment === "all" || metric?.segment === customerSegment);
+    return filtered.sort((a, b) => customerSort === "spend" ? (b.metric?.revenue || 0) - (a.metric?.revenue || 0) : String(b.metric?.lastOrderDate || "").localeCompare(String(a.metric?.lastOrderDate || "")));
+  }, [customers.data, customerInsights.data, customerSegment, customerSort, customerStatus]);
+  const activeToday = (customerInsights.data?.customers || []).filter((customer) => customer.lastOrderDate === customerInsights.data?.asOf).length;
+  const restrictedCustomers = (customerInsights.data?.customers || []).filter((customer) => !customer.contactEligible).length;
+  function setView(nextView: "orders" | "customers") {
+    const params = new URLSearchParams(searchParams);
+    if (nextView === "customers") params.set("view", "customers"); else params.delete("view");
+    params.delete("order");
+    setSearch("");
+    navigate(`/laundry/orders${params.size ? `?${params.toString()}` : ""}`);
+  }
+  function closeCustomerDrawer() {
+    setSelectedCustomerId(null);
+    if (!linkedCustomerId) return;
+    const params = new URLSearchParams(searchParams);
+    params.delete("customer");
+    navigate(`/laundry/orders${params.size ? `?${params.toString()}` : ""}`, { replace: true });
+  }
+  function openOrderDrawer(id: string) {
+    setSelectedCustomerId(null);
+    setSelectedOrderId(id);
+  }
+  function closeOrderDrawer() {
+    setSelectedOrderId(null);
+    if (!linkedOrderId) return;
+    const params = new URLSearchParams(searchParams);
+    params.delete("order");
+    navigate(`/laundry/orders${params.size ? `?${params.toString()}` : ""}`, { replace: true });
+  }
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-end 2xl:justify-between">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#4d8982]">
-            Operations
+            Counter operations
           </p>
           <h1 className="mt-1 font-serif text-3xl text-[#17353c]">
-            Store orders
+            Store orders & customers
           </h1>
           <p className="mt-1 text-sm text-[#718087]">
-            Search, inspect, export, and deliberately move orders through the
-            laundry floor.
+            One workspace for bookings and customer records—without splitting the
+            operational truth across two menus.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -133,7 +220,7 @@ export default function LaundryOrders() {
           </button>
           <button
             type="button"
-            disabled={rows.length === 0}
+            disabled={view !== "orders" || rows.length === 0}
             onClick={() => void exportOrders(rows)}
             className="inline-flex items-center gap-2 rounded-xl bg-[#123039] px-3 py-2 text-sm font-bold text-white disabled:bg-[#a8b7b2]"
           >
@@ -141,8 +228,13 @@ export default function LaundryOrders() {
           </button>
         </div>
       </div>
-      <div className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,1fr)_370px]">
-        <section className="overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]">
+      <div className="mt-5 inline-flex rounded-xl bg-[#ece9f8] p-1" role="tablist" aria-label="Store workspace view">
+        <button type="button" role="tab" aria-selected={view === "orders"} onClick={() => setView("orders")} className={cn("rounded-lg px-4 py-2 text-sm font-bold transition", view === "orders" ? "bg-[#241a45] text-white shadow-sm" : "text-[#5f5a72] hover:text-[#241a45]")}>Store orders</button>
+        <button type="button" role="tab" aria-selected={view === "customers"} onClick={() => setView("customers")} className={cn("rounded-lg px-4 py-2 text-sm font-bold transition", view === "customers" ? "bg-[#241a45] text-white shadow-sm" : "text-[#5f5a72] hover:text-[#241a45]")}>Customers</button>
+      </div>
+      {view === "orders" ? <>
+        <OrderPulse rows={rows} loading={orders.isLoading} />
+        <section className="mt-6 overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]">
           <div className="grid gap-3 border-b border-[#263f44]/10 p-4 lg:grid-cols-[minmax(0,1fr)_180px_135px_135px]">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7e8d90]" />
@@ -182,9 +274,9 @@ export default function LaundryOrders() {
           <OrderTable
             rows={rows}
             loading={orders.isLoading}
-            selected={selected}
             pending={transition.isPending}
-            onSelect={setSelected}
+            onSelect={openOrderDrawer}
+            onOpenCustomer={setSelectedCustomerId}
             onTransition={(id, next, expectedVersion) =>
               transition.mutate({ id, next, expectedVersion })
             }
@@ -195,12 +287,18 @@ export default function LaundryOrders() {
             <button type="button" disabled={page >= (orders.data?.totalPages || 1) || orders.isFetching} onClick={() => setPage((value) => value + 1)} className="rounded-lg border border-[#263f44]/15 bg-white px-3 py-1.5 font-bold text-[#315d57] disabled:cursor-not-allowed disabled:opacity-40">Next</button>
           </div>
         </section>
-        <OrderDetail
-          order={detail.data}
-          loading={detail.isLoading}
-          onClose={() => setSelected(null)}
-        />
-      </div>
+      </> : <>
+        <CustomerPulse data={customerInsights.data} loading={customerInsights.isLoading} activeToday={activeToday} restricted={restrictedCustomers} />
+        <section className="mt-6 overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]">
+          <div className="grid gap-3 border-b border-[#263f44]/10 p-4 lg:grid-cols-[minmax(0,1fr)_180px_180px_150px]">
+            <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7e8d90]" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, phone or email" className="h-10 w-full rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] pl-9 pr-3 text-sm outline-none focus:border-brand-500" /></div>
+            <select aria-label="Filter customer contact status" value={customerStatus} onChange={(event) => setCustomerStatus(event.target.value as CustomerViewStatus)} className="h-10 rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] px-3 text-sm outline-none focus:border-brand-500"><option value="all">All contact states</option><option value="contactable">Contactable</option><option value="restricted">Contact restricted</option></select>
+            <select aria-label="Filter customer segment" value={customerSegment} onChange={(event) => setCustomerSegment(event.target.value as CustomerViewSegment)} className="h-10 rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] px-3 text-sm outline-none focus:border-brand-500"><option value="all">All activity</option><option value="new">New</option><option value="repeat">Repeat</option><option value="at_risk">At risk</option><option value="lapsed">Lapsed</option><option value="no_orders">No orders</option><option value="unknown">Date unknown</option></select>
+            <select aria-label="Sort customers" value={customerSort} onChange={(event) => setCustomerSort(event.target.value as "newest" | "spend")} className="h-10 rounded-xl border border-[#263f44]/15 bg-[#fbfbf9] px-3 text-sm outline-none focus:border-brand-500"><option value="newest">Latest activity</option><option value="spend">Highest spend</option></select>
+          </div>
+          <CustomerTable rows={customerRows} loading={customers.isLoading || customerInsights.isLoading} onOpen={setSelectedCustomerId} />
+        </section>
+      </>}
       {transition.isError ? (
         <p className="mt-5 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">
           {transition.error instanceof Error
@@ -208,8 +306,176 @@ export default function LaundryOrders() {
             : "The order status could not be updated."}
         </p>
       ) : null}
+      {selectedCustomerId ? (
+        <CustomerWorkCardDrawer
+          id={selectedCustomerId}
+          onClose={closeCustomerDrawer}
+          onOpenOrder={openOrderDrawer}
+        />
+      ) : null}
+      {selectedOrderId ? (
+        <OrderWorkCardDrawer id={selectedOrderId} onClose={closeOrderDrawer} />
+      ) : null}
     </div>
   );
+}
+
+function OrderPulse({ rows, loading }: { rows: LaundryOrder[]; loading: boolean }) {
+  if (loading) {
+    return (
+      <div className="mt-5 h-[132px] animate-pulse rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]" aria-label="Loading order summary" />
+    );
+  }
+
+  const counts = new Map<LaundryState, number>();
+  for (const order of rows) counts.set(order.state, (counts.get(order.state) || 0) + 1);
+  const workInProgress = rows.filter((order) => ["Booked", "Picked Up", "In Process"].includes(order.state)).length;
+  const readyToMove = rows.filter((order) => ["Ready", "Out for Delivery"].includes(order.state)).length;
+  const paymentAttention = rows.filter((order) => !["paid", "settled"].includes(order.paymentStatus.toLowerCase())).length;
+  const stages: Array<{ label: string; state: LaundryState; tone: string }> = [
+    { label: "Booked", state: "Booked", tone: "bg-[#eeeaff] text-[#5743d7]" },
+    { label: "In process", state: "In Process", tone: "bg-[#e8f3f1] text-[#24776f]" },
+    { label: "Ready", state: "Ready", tone: "bg-[#fff1d8] text-[#9a6519]" },
+    { label: "Delivered", state: "Delivered", tone: "bg-[#edf5ef] text-[#2d7561]" },
+  ];
+
+  return (
+    <section className="mt-5 overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]" aria-label="Order pulse for the current view">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#263f44]/8 px-5 py-3">
+        <div>
+          <p className="text-[10px] font-extrabold uppercase tracking-[.16em] text-[#4d8982]">Order pulse</p>
+          <p className="mt-0.5 text-xs text-[#718087]">A quick read of the currently loaded order view.</p>
+        </div>
+        <span className="rounded-full bg-[#f5f2ff] px-3 py-1 text-[11px] font-bold text-[#5743d7]">{rows.length} visible</span>
+      </div>
+      <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+        <PulseMetric icon={<Layers3 className="h-4 w-4" />} label="Active work" value={workInProgress} detail="Booked, picked up or processing" tone="text-[#5743d7] bg-[#eeeaff]" />
+        <PulseMetric icon={<CheckCircle2 className="h-4 w-4" />} label="Ready to move" value={readyToMove} detail="Ready or out for delivery" tone="text-[#24776f] bg-[#e8f3f1]" />
+        <PulseMetric icon={<CircleDollarSign className="h-4 w-4" />} label="Payment attention" value={paymentAttention} detail="Not marked paid or settled" tone="text-[#9a6519] bg-[#fff1d8]" />
+        <PulseMetric icon={<AlertTriangle className="h-4 w-4" />} label="Needs review" value={rows.filter((order) => order.state === "Cancelled").length} detail="Cancelled records in view" tone="text-[#c4554d] bg-[#fff0ee]" />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-[#263f44]/8 px-5 py-3">
+        <Clock3 className="h-4 w-4 text-[#718087]" aria-hidden="true" />
+        <span className="mr-1 text-[10px] font-extrabold uppercase tracking-[.14em] text-[#718087]">Pipeline</span>
+        {stages.map((stage, index) => (
+          <div key={stage.state} className="flex items-center gap-2">
+            <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold", stage.tone)}>
+              {stage.label}<span className="tabular-nums">{counts.get(stage.state) || 0}</span>
+            </span>
+            {index < stages.length - 1 ? <ChevronRight className="h-3.5 w-3.5 text-[#b3bfbb]" aria-hidden="true" /> : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PulseMetric({ icon, label, value, detail, tone }: { icon: ReactNode; label: string; value: number; detail: string; tone: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-[#263f44]/8 bg-[#fbfcfa] px-3 py-2.5">
+      <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-xl", tone)} aria-hidden="true">{icon}</span>
+      <div className="min-w-0">
+        <p className="text-[10px] font-extrabold uppercase tracking-[.12em] text-[#718087]">{label}</p>
+        <p className="mt-0.5 text-xl font-semibold leading-none tabular-nums text-[#17353c]">{value}</p>
+        <p className="mt-1 truncate text-[10px] text-[#718087]">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
+function CustomerPulse({ data, loading, activeToday, restricted }: { data?: CustomerInsight; loading: boolean; activeToday: number; restricted: number }) {
+  if (loading) return <div className="mt-5 h-[132px] animate-pulse rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]" aria-label="Loading customer summary" />;
+  return <section className="mt-5 overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_8px_28px_rgba(37,48,43,.04)]" aria-label="Customer summary">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#263f44]/8 px-5 py-3"><div><p className="text-[10px] font-extrabold uppercase tracking-[.16em] text-[#4d8982]">Customer summary</p><p className="mt-0.5 text-xs text-[#718087]">Live values from this store’s customer and order records.</p></div><span className="rounded-full bg-[#f5f2ff] px-3 py-1 text-[11px] font-bold text-[#5743d7]">Current branch</span></div>
+    <div className="grid gap-px bg-[#ebe7f6] sm:grid-cols-2 xl:grid-cols-4">
+      <CustomerMetric icon={<UserRound className="h-4 w-4" />} label="Total customers" value={String(data?.summary.totalCustomers || 0)} detail="Profiles in this branch" tone="text-[#5743d7]" />
+      <CustomerMetric icon={<UserCheck className="h-4 w-4" />} label="Active today" value={String(activeToday)} detail="Customers with an order today" tone="text-emerald-700" />
+      <CustomerMetric icon={<UserX className="h-4 w-4" />} label="Contact restricted" value={String(restricted)} detail="No consent or usable contact route" tone="text-rose-700" />
+      <CustomerMetric icon={<CircleDollarSign className="h-4 w-4" />} label="Total revenue" value={formatINR(data?.summary.revenue || 0)} detail="Customer revenue, before tax" tone="text-amber-700" />
+    </div>
+  </section>;
+}
+
+function CustomerMetric({ icon, label, value, detail, tone }: { icon: ReactNode; label: string; value: string; detail: string; tone: string }) {
+  return <div className="flex items-center gap-3 bg-white px-4 py-4"><span className={cn("grid h-9 w-9 place-items-center rounded-xl bg-[#f7f5ff]", tone)} aria-hidden="true">{icon}</span><div className="min-w-0"><p className="text-[10px] font-extrabold uppercase tracking-[.12em] text-[#718087]">{label}</p><p className="mt-1 text-xl font-semibold leading-none tabular-nums text-[#17353c]">{value}</p><p className="mt-1 truncate text-[10px] text-[#718087]">{detail}</p></div></div>;
+}
+
+function CustomerTable({ rows, loading, onOpen }: { rows: Array<{ customer: CustomerRecord; metric: CustomerInsight["customers"][number] | undefined }>; loading: boolean; onOpen: (id: string) => void }) {
+  return <div className="overflow-x-auto"><table className="w-full min-w-[940px] text-left text-sm"><thead className="bg-[#fafaf7] text-[10px] font-bold uppercase tracking-[.14em] text-[#718087]"><tr><th className="px-5 py-3">Customer</th><th className="px-3 py-3">Phone</th><th className="px-3 py-3">Orders</th><th className="px-3 py-3">Total spent</th><th className="px-3 py-3">Last activity</th><th className="px-3 py-3">Contact</th><th className="px-5 py-3 text-right">Action</th></tr></thead><tbody>{loading ? <tr><td colSpan={7} className="py-16 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-brand-600" /></td></tr> : rows.length ? rows.map(({ customer, metric }) => <tr key={customer.id} className="border-t border-[#263f44]/8 transition hover:bg-[#faf9ff]"><td className="px-5 py-4"><button type="button" onClick={() => onOpen(customer.id)} className="font-semibold text-brand-700 hover:underline">{customer.name || "Unnamed customer"}</button><span className="mt-1 block max-w-[260px] truncate text-xs text-[#718087]">{customer.email || customer.address || "No additional contact recorded"}</span></td><td className="px-3 py-4 text-[#40565a]">{customer.phone || "—"}</td><td className="px-3 py-4 font-semibold tabular-nums">{metric?.orderCount || 0}</td><td className="px-3 py-4 font-semibold tabular-nums">{formatINR(metric?.revenue || 0)}</td><td className="px-3 py-4 text-xs text-[#617178]">{metric?.lastOrderDate || "No order date"}</td><td className="px-3 py-4"><span className={cn("rounded-full px-2 py-1 text-[10px] font-bold", metric?.contactEligible ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700")}>{metric?.contactEligible ? "Contactable" : "Restricted"}</span></td><td className="px-5 py-4 text-right"><button type="button" onClick={() => onOpen(customer.id)} className="rounded-lg border border-brand-200 bg-white px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-50">Open profile</button></td></tr>) : <tr><td colSpan={7}><VisualEmptyState kind="customers" compact title="No customers match these filters" detail="Clear a filter or create a new customer account from the customer directory." /></td></tr>}</tbody></table></div>;
+}
+
+function CustomerWorkCardDrawer({ id, onClose, onOpenOrder }: { id: string; onClose: () => void; onOpenOrder: (id: string) => void }) {
+  const [section, setSection] = useState<"activity" | "orders" | "ledger">("activity");
+  const profile = useQuery({
+    queryKey: ["laundry-customer-work-card", id],
+    queryFn: () => apiGet<CustomerDrawerProfile>(`/laundry/customers/${id}`),
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const customer = profile.data?.customer;
+  const metrics = profile.data?.metrics;
+  const address = profile.data?.addresses.find((entry) => entry.isDefault && entry.active) || profile.data?.addresses.find((entry) => entry.active);
+  const tabs: Array<{ value: "activity" | "orders" | "ledger"; label: string }> = [
+    { value: "activity", label: "Activity" },
+    { value: "orders", label: "Orders" },
+    { value: "ledger", label: "Ledger" },
+  ];
+
+  return <>
+    <button type="button" aria-label="Close customer work card" onClick={onClose} className="fixed inset-0 z-40 cursor-default bg-[#171024]/65 backdrop-blur-[2px]" />
+    <aside role="dialog" aria-modal="true" aria-labelledby="customer-work-card-title" className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-[#272043]/10 bg-[#fffdfb] shadow-[-22px_0_60px_rgba(32,23,60,.22)] animate-in slide-in-from-right duration-300 sm:w-[min(34vw,560px)] sm:min-w-[440px]">
+      <header className="relative overflow-hidden border-b border-[#272043]/10 bg-[#fcfbff] px-5 py-5">
+        <div className="pointer-events-none absolute -left-14 -top-16 h-36 w-36 rounded-full bg-brand-100/75 blur-2xl" />
+        <div className="relative flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[10px] font-extrabold uppercase tracking-[.17em] text-brand-700">Customer work card</p>
+            {profile.isLoading ? <div className="mt-2 h-7 w-48 animate-pulse rounded bg-brand-100" /> : <><h2 id="customer-work-card-title" className="mt-1 truncate font-serif text-2xl text-[#21183d]">{customer?.name || "Customer profile"}</h2><p className="mt-1 text-sm text-[#6d6682]">{customer?.phone || "No phone recorded"}{customer?.email ? ` · ${customer.email}` : ""}</p></>}
+          </div>
+          <button type="button" onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#272043]/10 bg-white text-[#554d6d] transition hover:bg-brand-50 hover:text-brand-800" aria-label="Close customer work card"><X className="h-4 w-4" /></button>
+        </div>
+      </header>
+      {profile.isLoading ? <div className="grid flex-1 place-items-center"><Loader2 className="h-5 w-5 animate-spin text-brand-600" /></div> : profile.isError || !profile.data ? <div className="m-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"><p className="font-bold">Customer details could not be loaded.</p><p className="mt-1 text-xs">Close this card, then try again from the customer list.</p></div> : <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="grid grid-cols-2 gap-px border-b border-[#272043]/10 bg-[#eae7f4] sm:grid-cols-4">
+          <DrawerMetric label="Total spend" value={formatINR(metrics?.revenue || 0)} tone="text-brand-700" />
+          <DrawerMetric label="Due balance" value={formatINR(metrics?.orderBalance || 0)} tone="text-amber-700" />
+          <DrawerMetric label="Wallet" value={formatINR(metrics?.walletBalance || 0)} tone="text-emerald-700" />
+          <DrawerMetric label="Rewards" value={String(metrics?.rewardPoints || 0)} tone="text-[#7a4cbb]" />
+        </div>
+        <div className="px-5 pt-4">
+          <div className="flex rounded-xl bg-[#f1eff8] p-1" role="tablist" aria-label="Customer work card sections">
+            {tabs.map((tab) => <button key={tab.value} type="button" role="tab" aria-selected={section === tab.value} onClick={() => setSection(tab.value)} className={cn("flex-1 rounded-lg px-2 py-2 text-xs font-bold transition", section === tab.value ? "bg-white text-brand-800 shadow-sm" : "text-[#756e89] hover:text-brand-800")}>{tab.label}</button>)}
+          </div>
+        </div>
+        {section === "activity" ? <div className="space-y-4 px-5 py-4">
+          <section className="rounded-2xl border border-[#272043]/10 bg-white p-4">
+            <p className="text-[10px] font-extrabold uppercase tracking-[.15em] text-[#777086]">Customer details</p>
+            <div className="mt-3 grid gap-3 text-sm">
+              <div className="flex items-start gap-2.5"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" /><div><p className="font-semibold text-[#2b2344]">{address ? `${address.label} address` : "No default address"}</p><p className="mt-0.5 text-xs leading-5 text-[#746d82]">{address ? [address.line1, address.line2, address.city, address.state, address.postalCode].filter(Boolean).join(", ") : customer?.address || "Add an address when needed for pickup or delivery."}</p></div></div>
+              <div className="flex items-start gap-2.5"><CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" /><div><p className="font-semibold text-[#2b2344]">Latest visit</p><p className="mt-0.5 text-xs text-[#746d82]">{metrics?.lastVisit ? new Date(`${metrics.lastVisit}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "No completed visit recorded"}</p></div></div>
+              <div className="flex items-start gap-2.5"><WalletCards className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" /><div><p className="font-semibold text-[#2b2344]">Current package</p><p className="mt-0.5 text-xs text-[#746d82]">{metrics?.currentPackage || "No active package"}</p></div></div>
+            </div>
+          </section>
+          <section className="rounded-2xl border border-[#272043]/10 bg-white p-4"><p className="text-[10px] font-extrabold uppercase tracking-[.15em] text-[#777086]">Recent activity</p><div className="mt-3 space-y-3">{profile.data.timeline.length ? profile.data.timeline.slice(0, 6).map((entry) => <div key={`${entry.at}:${entry.label}`} className="flex gap-2.5"><span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand-500" /><div className="min-w-0"><p className="text-xs font-semibold text-[#3b3253]">{entry.label}</p><p className="mt-0.5 text-[11px] text-[#7b7488]">{new Date(entry.at).toLocaleString("en-IN")} {entry.amount ? ` · ${formatINR(entry.amount)}` : ""}</p></div></div>) : <p className="text-xs text-[#7b7488]">No customer activity recorded yet.</p>}</div></section>
+        </div> : null}
+        {section === "orders" ? <div className="space-y-2 px-5 py-4">{profile.data.orders.length ? <>
+          <p className="px-1 text-[11px] leading-4 text-[#746d82]">Invoice and order details stay in this customer profile. Select the eye only when you want the separate full order work card.</p>
+          {profile.data.orders.map((order) => <article key={order.id} className="rounded-2xl border border-[#272043]/10 bg-white p-3 transition hover:border-brand-200 hover:bg-brand-50/20"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-bold text-[#332849]">{order.invoice || order.orderNumber}</p><p className="mt-1 text-xs text-[#746d82]">{order.invoice ? order.orderNumber : "No invoice yet"} · {date(order.orderDate)} · {order.paymentStatus}</p></div><div className="flex shrink-0 items-center gap-2"><StatePill state={order.state as LaundryState} /><button type="button" onClick={() => onOpenOrder(order.id)} className="grid h-8 w-8 place-items-center rounded-lg border border-brand-200 bg-white text-brand-700 transition hover:bg-brand-600 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2" aria-label={`View order ${order.invoice || order.orderNumber}`} title="Open full order work card"><Eye className="h-4 w-4" /></button></div></div><div className="mt-3 flex items-center justify-between border-t border-[#272043]/8 pt-2 text-xs"><span className="text-[#746d82]">{order.expectedDeliveryDate ? `Due ${date(order.expectedDeliveryDate)}` : "No due date"}</span><span className="font-bold tabular-nums text-[#332849]">{formatINR(order.grandTotal)}</span></div></article>)}
+        </> : <VisualEmptyState kind="orders" compact title="No orders for this customer" detail="The booking history will appear here after the first order." />}</div> : null}
+        {section === "ledger" ? <div className="space-y-2 px-5 py-4">{profile.data.ledger.length ? profile.data.ledger.slice(0, 12).map((entry) => <div key={entry.id} className="rounded-xl border border-[#272043]/10 bg-white px-3 py-3"><div className="flex justify-between gap-3"><div><p className="text-xs font-bold text-[#352b4b]">{entry.entryType}</p><p className="mt-1 text-[11px] text-[#7a7388]">{entry.reason || entry.referenceId || "Customer ledger entry"}</p></div><div className="text-right text-xs tabular-nums"><p className={entry.debit ? "font-bold text-rose-700" : "font-bold text-emerald-700"}>{entry.debit ? `−${formatINR(entry.debit)}` : `+${formatINR(entry.credit)}`}</p><p className="mt-1 text-[10px] text-[#8a8397]">{date(entry.entryDate)}</p></div></div></div>) : <VisualEmptyState kind="finance" compact title="No ledger entries" detail="Payments, invoices, credits and wallet activity will be listed here." />}</div> : null}
+      </div>}
+    </aside>
+  </>;
+}
+
+function DrawerMetric({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return <div className="bg-[#fffdfb] px-3 py-3"><p className="text-[9px] font-extrabold uppercase tracking-[.12em] text-[#817a8e]">{label}</p><p className={cn("mt-1 text-base font-semibold tabular-nums", tone)}>{value}</p></div>;
 }
 
 function DateFilter({
@@ -237,16 +503,16 @@ function DateFilter({
 function OrderTable({
   rows,
   loading,
-  selected,
   pending,
   onSelect,
+  onOpenCustomer,
   onTransition,
 }: {
   rows: LaundryOrder[];
   loading: boolean;
-  selected: string | null;
   pending: boolean;
   onSelect: (id: string) => void;
+  onOpenCustomer: (id: string) => void;
   onTransition: (
     id: string,
     next: LaundryState,
@@ -278,16 +544,16 @@ function OrderTable({
               <OrderRow
                 key={order.id}
                 order={order}
-                active={selected === order.id}
                 pending={pending}
                 onSelect={onSelect}
+                onOpenCustomer={onOpenCustomer}
                 onTransition={onTransition}
               />
             ))
           ) : (
             <tr>
-              <td colSpan={6} className="py-16 text-center text-[#718087]">
-                No orders match this view.
+              <td colSpan={6} className="text-center">
+                <VisualEmptyState kind="orders" compact title="No orders match this view" detail="Clear a filter or book the first order for this branch." />
               </td>
             </tr>
           )}
@@ -298,15 +564,15 @@ function OrderTable({
 }
 function OrderRow({
   order,
-  active,
   pending,
   onSelect,
+  onOpenCustomer,
   onTransition,
 }: {
   order: LaundryOrder;
-  active: boolean;
   pending: boolean;
   onSelect: (id: string) => void;
+  onOpenCustomer: (id: string) => void;
   onTransition: (
     id: string,
     next: LaundryState,
@@ -319,7 +585,6 @@ function OrderRow({
     <tr
       className={cn(
         "border-t border-[#263f44]/8 transition hover:bg-[#f7f8f4]",
-        active ? "bg-[#eff7f3]" : "",
       )}
     >
       <td
@@ -333,11 +598,22 @@ function OrderRow({
           {order.orderNumber} · {order.itemCount} items
         </span>
       </td>
-      <td
-        className="cursor-pointer px-3 py-4"
-        onClick={() => onSelect(order.id)}
-      >
-        <span className="block font-medium">{order.customer.name}</span>
+      <td className="cursor-pointer px-3 py-4" onClick={() => onSelect(order.id)}>
+        {order.customer.id ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenCustomer(order.customer.id!);
+            }}
+            className="block w-fit font-semibold text-brand-700 underline-offset-4 hover:text-brand-900 hover:underline"
+            title={`Open ${order.customer.name}'s customer record`}
+          >
+            {order.customer.name}
+          </button>
+        ) : (
+          <span className="block font-medium">{order.customer.name}</span>
+        )}
         <span className="text-xs text-[#718087]">{order.customer.phone}</span>
       </td>
       <td
@@ -407,10 +683,35 @@ function TraceabilitySummary({ order }: { order: LaundryOrder & { tags?: Array<O
     <div className="mt-3 flex flex-wrap gap-2"><Link to={`/laundry/garment-tracking?tag=${encodeURIComponent(units[0]?.tagCode || containers[0]?.tagCode || '')}`} className="rounded-lg border border-[#39786f]/20 bg-white px-3 py-1.5 text-[10px] font-bold text-[#39786f]">Open tracking</Link><Link to={`/laundry/print-centre?order=${encodeURIComponent(order.id)}`} className="rounded-lg border border-[#39786f]/20 bg-white px-3 py-1.5 text-[10px] font-bold text-[#39786f]">Open Print Centre</Link></div>
   </section>;
 }
+function OrderWorkCardPage({ id }: { id: string }) {
+  return <Navigate replace to={`/laundry/orders?order=${encodeURIComponent(id)}`} />;
+}
+
+function OrderWorkCardDrawer({ id, onClose }: { id: string; onClose: () => void }) {
+  const detail = useQuery({
+    queryKey: ["laundry-order", id],
+    queryFn: () => apiGet<LaundryOrder & { timeline: Array<{ id: string; ts: string; action: string }>; tags?: Array<OrderTag> }>(`/laundry/orders/${id}`),
+  });
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+  return <>
+    <button type="button" aria-label="Close order work card" onClick={onClose} className="fixed inset-0 z-40 cursor-default bg-[#171024]/65 backdrop-blur-[2px]" />
+    <aside role="dialog" aria-modal="true" aria-label="Order work card" className="fixed inset-y-0 right-0 z-50 flex w-full flex-col overflow-y-auto border-l border-[#272043]/10 bg-[#fffdfb] px-4 py-5 shadow-[-22px_0_60px_rgba(32,23,60,.22)] animate-in slide-in-from-right duration-300 sm:w-[min(52vw,820px)] sm:min-w-[520px] sm:px-5">
+      <OrderDetail order={detail.data} loading={detail.isLoading} onClose={onClose} presentation="drawer" />
+    </aside>
+  </>;
+}
+
 function OrderDetail({
   order,
   loading,
   onClose,
+  presentation = "panel",
 }: {
   order?: LaundryOrder & {
     timeline: Array<{ id: string; ts: string; action: string }>;
@@ -418,6 +719,7 @@ function OrderDetail({
   };
   loading: boolean;
   onClose: () => void;
+  presentation?: "panel" | "page" | "drawer";
 }) {
   const client = useQueryClient();
   const [amount, setAmount] = useState("");
@@ -611,7 +913,7 @@ function OrderDetail({
   const rider = order.deliveryRider || order.pickupRider;
   const summary = paymentQuery.data;
   return (
-    <aside className="h-fit rounded-[22px] border border-[#263f44]/10 bg-[#fffdf8] p-5 shadow-[0_8px_28px_rgba(37,48,43,.05)] xl:sticky xl:top-24">
+    <aside className={cn("h-fit rounded-[22px] border border-[#263f44]/10 bg-[#fffdf8] p-5 shadow-[0_8px_28px_rgba(37,48,43,.05)]", presentation === "page" ? "mx-auto max-w-[1180px]" : presentation === "drawer" ? "border-0 bg-transparent p-0 shadow-none" : "xl:sticky xl:top-24")}>
       <div className="flex justify-between gap-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#4d8982]">
@@ -625,7 +927,7 @@ function OrderDetail({
           <button
             onClick={onClose}
             className="grid h-8 w-8 place-items-center rounded-lg hover:bg-[#f0eee9]"
-            aria-label="Close order details"
+            aria-label="Back to Store Orders and Customers"
           >
             <X className="h-4 w-4" />
           </button>

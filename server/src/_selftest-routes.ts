@@ -28,7 +28,7 @@ try {
   assert.equal(run.minutesPerStop, 20, 'route run persists the ETA cadence');
   assert.equal(run.stops[0].estimatedAt, '2026-09-01T09:30:00', 'route stop exposes a deterministic planned ETA');
   const plannedAnalytics = store.withStoreScope(tenant, 'STORE-DEFAULT', () => routeCoverageAnalytics(tenant));
-  assert.deepEqual(plannedAnalytics.totals, { orders: 1, zones: 1, routes: 1, activeRoutes: 1, stops: 1, completedStops: 0, completionPercent: 0 }, 'route analytics summarizes scoped order and run workload');
+  assert.deepEqual(plannedAnalytics.totals, { orders: 1, zones: 1, routes: 1, activeRoutes: 1, stops: 1, completedStops: 0, skippedStops: 0, closedStops: 0, completionPercent: 0 }, 'route analytics summarizes scoped order and run workload');
   assert.deepEqual(plannedAnalytics.zones[0], { zone: 'North', orders: 1, pickupReady: 1, deliveryReady: 0, assigned: 1, activeRuns: 1 }, 'route analytics groups service-zone readiness and assignments');
   assert.deepEqual(store.withStoreScope(tenant, 'STORE-DEFAULT', () => listServiceZones(tenant)), ['North'], 'service-zone suggestions include the scoped master data');
   assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => createRouteRun(tenant, actor, { riderId: rider.id, stage: 'Pickup', routeDate: '2026-09-01', zone: 'Unknown', orderIds: [order.order.id] })), /active service-zone master/, 'route creation rejects unknown zones once a master is configured');
@@ -47,5 +47,14 @@ try {
   assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => getLaundryOrder(tenant, order.order.id).state), 'Picked Up', 'completed pickup stop advances the order lifecycle');
   assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => listRouteRuns(tenant, { status: 'Completed' }).length), 1, 'completed route remains in the route history');
   assert.throws(() => store.withStoreScope(tenant, 'STORE-DEFAULT', () => createRouteRun(tenant, actor, { riderId: rider.id, stage: 'Pickup', routeDate: '2026-09-01', orderIds: [order.order.id] })), /not eligible/, 'route creation rejects an order no longer eligible for pickup');
+  const skippedOrder = store.withStoreScope(tenant, 'STORE-DEFAULT', () => bookLaundryOrder(tenant, actor, { customer: { name: 'Skipped Route Customer', phone: '9000000995', address: '13 Route Street' }, items: [{ garment: garment.id, service: service.id, qty: 1 }], expectedDeliveryDate: '2026-09-08', fulfillmentMode: 'Pickup Order', serviceZone: 'North' }));
+  store.withStoreScope(tenant, 'STORE-DEFAULT', () => assignLaundryOrder(tenant, actor, skippedOrder.order.id, { stage: 'pickup', riderId: rider.id }));
+  const exceptionRun = store.withStoreScope(tenant, 'STORE-DEFAULT', () => createRouteRun(tenant, actor, { riderId: rider.id, stage: 'Pickup', routeDate: '2026-09-02', zone: 'North', orderIds: [skippedOrder.order.id] }));
+  const exceptionStarted = store.withStoreScope(tenant, 'STORE-DEFAULT', () => startRouteRun(tenant, actor, exceptionRun.id, rider.id));
+  const exceptionClosed = store.withStoreScope(tenant, 'STORE-DEFAULT', () => completeRouteStop(tenant, actor, exceptionRun.id, exceptionStarted.stops[0].id, { status: 'Skipped', note: 'Customer unavailable at handoff; coordinator follow-up required.' }, rider.id));
+  assert.equal(exceptionClosed.status, 'Completed', 'a skipped stop closes a route with an auditable exception');
+  const exceptionAnalytics = store.withStoreScope(tenant, 'STORE-DEFAULT', () => routeCoverageAnalytics(tenant, rider.id));
+  assert.equal(exceptionAnalytics.totals.skippedStops, 1, 'route analytics counts skipped stops separately');
+  assert.equal(store.withStoreScope(tenant, 'STORE-DEFAULT', () => getLaundryOrder(tenant, skippedOrder.order.id).state), 'Booked', 'skipped pickup does not falsely advance the order lifecycle');
   console.log('PASS  route planning, stop completion, lifecycle transition, and duplicate protection self-test complete');
 } finally { closeStore?.(); rmSync(tempDir, { recursive: true, force: true }); }

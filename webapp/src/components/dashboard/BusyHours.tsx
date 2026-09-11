@@ -35,6 +35,7 @@ export function BusyHours({ data, loading }: { data?: Hour[]; loading?: boolean 
             </BarChart>
           </ResponsiveContainer>
         )}
+        {!loading && <p className="sr-only">{hours.length ? `Busy hours by order count: ${hours.map((hour) => `${hour.label}: ${hour.orders} order${hour.orders === 1 ? '' : 's'}`).join('; ')}.` : 'No hourly order records are available.'}</p>}
       </CardContent>
     </Card>
   )

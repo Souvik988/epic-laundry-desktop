@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom'
 import { apiGet, apiPost, operatorErrorMessage } from '@/lib/api'
 import { cn, formatINR } from '@/lib/utils'
 import { canUseUi } from '@/components/laundry/LaundryShell'
+import VisualEmptyState from '@/components/laundry/VisualEmptyState'
 
 type OnlineOrder = { id: string; externalOrderId: string; orderNumber: string; channel: string; state: string; sourceVersion: number; customer: Record<string, unknown>; pickup: Record<string, unknown>; request: Record<string, unknown>; paymentState: string; acceptanceDeadline?: string; preferences: string; notes: string; syncState: string; localOrderId?: string; updatedAt: string }
 type QueuePage = { items: OnlineOrder[]; nextCursor?: string }
@@ -143,7 +144,7 @@ export default function LaundryOnlineOrders() {
     <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.82fr)]">
       <section className="overflow-hidden rounded-[22px] border border-[#263f44]/10 bg-white shadow-[0_10px_30px_rgba(37,48,43,.035)]" aria-label="Online order queue">
         <div className="flex items-center justify-between border-b border-[#263f44]/8 px-4 py-3"><div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#718087]">Store queue</p><p className="mt-0.5 text-sm font-semibold text-[#27454c]">{visible.length} visible request{visible.length === 1 ? '' : 's'}</p></div><SlidersHorizontal className="h-4 w-4 text-[#8b9a99]" /></div>
-        <div className="divide-y divide-[#263f44]/8">{queue.isLoading ? <div className="p-10 text-center text-sm text-[#718087]">Loading the local queue…</div> : visible.map((order) => <OrderRow key={order.id} order={order} selected={selected?.id === order.id} onSelect={() => setSelectedId(order.id)} />)}{!queue.isLoading && !visible.length ? <div className="p-12 text-center"><p className="font-serif text-xl text-[#27454c]">No matching requests</p><p className="mt-1 text-sm text-[#718087]">Try another filter or search term. The queue never fabricates cloud connectivity.</p></div> : null}</div>
+        <div className="divide-y divide-[#263f44]/8">{queue.isLoading ? <div className="p-10 text-center text-sm text-[#718087]">Loading the local queue…</div> : visible.map((order) => <OrderRow key={order.id} order={order} selected={selected?.id === order.id} onSelect={() => setSelectedId(order.id)} />)}{!queue.isLoading && !visible.length ? <VisualEmptyState kind="orders" compact title="No matching requests" detail="Try another filter or search term. The queue never fabricates cloud connectivity." /> : null}</div>
         {queue.data?.nextCursor ? <div className="border-t border-[#263f44]/8 p-3 text-center"><button type="button" onClick={loadMore} disabled={queue.isFetching} className="rounded-lg border border-[#263f44]/15 px-3 py-2 text-xs font-bold text-[#315d57] disabled:opacity-50">Load next page <ChevronRight className="ml-1 inline h-3 w-3" /></button></div> : null}
       </section>
 

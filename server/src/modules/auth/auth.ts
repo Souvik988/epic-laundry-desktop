@@ -83,6 +83,39 @@ export function bootstrapOwner(input: { username: string; password: string; tena
   });
 }
 
+/**
+ * Create the deterministic account used only by the isolated demo workspace.
+ *
+ * The production workspace never calls this function. Keeping the credential
+ * setup here (rather than in the UI or a universal internal key) means the
+ * demo can be opened repeatedly while production remains fail-closed and
+ * user-managed.
+ */
+export function ensureDemoOwner(tenant = 'T1', storeId = 'STORE-DEFAULT') {
+  if (process.env.EPIC_WORKSPACE_MODE !== 'demo') throw new Error('demo owner is available only in demo workspace mode');
+  const username = 'demo';
+  const password = 'DemoLaundry!2026';
+  const existing = store.findIdentityByUsername(username);
+  if (existing) {
+    if (existing.tenant !== tenant || existing.storeId !== storeId) throw new Error('demo owner is bound to another workspace');
+    store.transaction(() => {
+      store.updateIdentityPassword(existing.id, passwordHash(password));
+      store.setIdentityEnabled(existing.id, true);
+      store.updateIdentityProfile(existing.id, { ...existing, roles: ['owner'], enabled: true });
+      store.addStoreMembership({ identityId: existing.id, tenant, storeId, roles: ['owner'], createdAt: existing.createdAt });
+    });
+    return { username, password };
+  }
+  const identity: AuthIdentity = {
+    id: randomUUID(), tenant, storeId, username,
+    passwordHash: passwordHash(password), roles: ['owner'], enabled: true,
+    firstName: 'Demo', lastName: 'Owner', email: 'demo@epic-laundry.local', phone: '', description: 'Isolated demo workspace account', riderId: undefined,
+    createdAt: new Date().toISOString(),
+  };
+  store.transaction(() => store.createIdentity(identity));
+  return { username, password };
+}
+
 export function signIn(username: string, password: string) {
   const identity = store.findIdentityByUsername(username?.trim() || '');
   if (!identity || !identity.enabled || !passwordMatches(password, identity.passwordHash)) throw new Error('invalid username or password');

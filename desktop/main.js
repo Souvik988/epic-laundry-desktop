@@ -30,6 +30,10 @@ const serverDir = isDev
   : path.join(process.resourcesPath, 'server');
 
 const internalApiKey = crypto.randomBytes(32).toString('base64url');
+const nodeCandidates = process.platform === 'win32'
+  ? [process.env.ProgramW6432, process.env.ProgramFiles, 'C:\\Program Files'].filter(Boolean).map((base) => path.join(base, 'nodejs', 'node.exe'))
+  : [];
+const systemNode = nodeCandidates.find((candidate) => fs.existsSync(candidate)) || 'node';
 
 let serverProc = null;
 let mainWin = null;
@@ -154,8 +158,9 @@ function startServer() {
     // Dev: run via tsx. Use a shell so `npx` resolves on Windows (no extension lookup otherwise).
     serverProc = spawn('npx tsx src/index.ts', { cwd: serverDir, env, stdio, shell: true });
   } else {
-    // Prod: compiled JS is copied to resources/server.
-    serverProc = spawn('node', ['dist/index.js'], { cwd: serverDir, env, stdio });
+    // Prod: compiled JS is copied to resources/server. The bundled native
+    // SQLite driver is rebuilt for the supported system Node runtime.
+    serverProc = spawn(systemNode, ['dist/index.js'], { cwd: serverDir, env, stdio });
   }
   serverProc.stdout.on('data', processServerOutput);
   serverProc.stderr.on('data', (d) => { process.stderr.write(`[server:err] ${d}`); });
@@ -236,7 +241,9 @@ function autoBackupPassphrase() {
   if (!safeStorage.isEncryptionAvailable()) return null;
   const keyFile = path.join(app.getPath('userData'), 'auto-backup-key.bin');
   try {
-    if (fs.existsSync(keyFile)) return safeStorage.decryptString(Buffer.from(fs.readFileSync(keyFile, 'base64')));
+    // The file contains Base64 *text*. Decode that text into the original
+    // protected byte buffer before handing it to Electron safeStorage.
+    if (fs.existsSync(keyFile)) return safeStorage.decryptString(Buffer.from(fs.readFileSync(keyFile, 'utf8').trim(), 'base64'));
     const passphrase = crypto.randomBytes(32).toString('base64url');
     fs.mkdirSync(path.dirname(keyFile), { recursive: true });
     fs.writeFileSync(keyFile, safeStorage.encryptString(passphrase).toString('base64'));
@@ -623,6 +630,23 @@ function createWindow() {
 
   mainWin.loadURL(localAppUrl('/ui/app/#/laundry/dashboard'));
 
+  // Keep renderer startup failures visible in the packaged app log. Without these
+  // listeners a React/bootstrap exception looks like a completely empty window to
+  // an operator and is effectively impossible to diagnose from the desktop shell.
+  mainWin.webContents.on('dom-ready', () => {
+    console.log(`[renderer] DOM ready: ${mainWin.webContents.getURL()}`);
+  });
+  mainWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    console.error(`[renderer] load failed: code=${errorCode} description=${errorDescription} url=${validatedURL} mainFrame=${isMainFrame}`);
+  });
+  mainWin.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const severity = ['debug', 'info', 'warning', 'error'][level] || String(level);
+    console.error(`[renderer:${severity}] ${message} (${sourceId}:${line})`);
+  });
+  mainWin.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[renderer] process gone: reason=${details.reason} exitCode=${details.exitCode}`);
+  });
+
   // Navigation is local-only. Deliberately supported external providers open in the OS browser after URL allowlisting.
   mainWin.webContents.setWindowOpenHandler(({ url }) => {
     try { if (!isLocalAppUrl(url)) openApprovedExternal(url); } catch { /* blocked destination */ }
@@ -662,6 +686,7 @@ function createTray() {
 }
 
 let quitting = false;
+const recoveryMode = process.argv.includes('--recover-production-from-auto-backup') || process.env.EPIC_RECOVERY_MODE === '1';
 async function quitApp() {
   if (quitting) return;
   quitting = true;
@@ -675,6 +700,11 @@ async function quitApp() {
 // Allow the renderer to request a quit (via preload bridge).
 ipcMain.on('app:quit', (event) => { assertTrustedIpc(event); quitApp(); });
 
+if (recoveryMode) {
+  // Deliberately separate from ordinary startup: this performs a rehearsed,
+  // local-only recovery and exits without opening the operator workspace.
+  require('./scripts/recover-production-from-auto-backup.cjs');
+} else {
 // Single instance: a second launch focuses the running window instead of opening two backends.
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); }
@@ -716,6 +746,7 @@ app.whenReady().then(async () => {
 
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
+}
 
 app.on('before-quit', () => { if (serverProc) { try { serverProc.kill('SIGTERM'); } catch {} } });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') quitApp(); });

@@ -41,4 +41,26 @@ export const garmentVisuals = {
 export const generatedVisualManifest = {
   brand: lndryBrand,
   garments: garmentVisuals,
+  services: {
+    // Original Epic Laundry service artwork, generated for the visual booking desk.
+    // Functional service meaning continues to use the local catalogue and Lucide glyphs.
+    washFold: '/ui/app/services/lndry-service-wash-fold-v1.webp',
+    steamPress: '/ui/app/services/lndry-service-steam-press-v1.webp',
+    dryClean: '/ui/app/services/lndry-service-dry-clean-v1.webp',
+    shoeCare: '/ui/app/services/lndry-service-shoe-care-v1.webp',
+  },
+  illustrations: {
+    // Original order-state illustration; used only as supporting context, never as a control icon.
+    emptyOrder: '/ui/app/illustrations/lndry-empty-order-v1.webp',
+    // Generated for calm, explanatory empty states in operational and finance work.
+    // They are not used as functional icons or evidence of a business event.
+    emptyOperations: '/ui/app/illustrations/lndry-empty-operations-v1.png',
+    emptyFinance: '/ui/app/illustrations/lndry-empty-finance-v1.png',
+    emptyDelivery: '/ui/app/illustrations/lndry-empty-delivery-v1.png',
+    emptyQuality: '/ui/app/illustrations/lndry-empty-quality-v1.png',
+    emptyCustomers: '/ui/app/illustrations/lndry-empty-customers-v1.png',
+    // Decorative only: original generated lifecycle icon ribbon used beside
+    // text-labelled customer lifecycle states. It never carries business meaning alone.
+    customerLifecycleRibbon: '/ui/app/illustrations/lndry-customer-lifecycle-ribbon-v1.png',
+  },
 } as const

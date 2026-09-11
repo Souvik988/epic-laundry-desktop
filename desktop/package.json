@@ -1,7 +1,7 @@
 {
   "name": "epic-laundry-desktop",
   "version": "0.1.0",
-  "author": "Epic BOS",
+  "author": "Epic Laundry",
   "private": true,
   "description": "Offline-first Electron desktop application for Epic Laundry.",
   "main": "main.js",

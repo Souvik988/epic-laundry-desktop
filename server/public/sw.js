@@ -1,8 +1,8 @@
-// Epic BOS service worker: offline-capable, but network-first so UI/API updates always show.
+// Epic Laundry service worker: offline-capable, but network-first so UI/API updates always show.
 // (Cache-first on HTML was hiding fresh pages during active development — network-first fixes that
 // while still serving the last-known copy when truly offline.)
-const SHELL = ['/ui/', '/ui/index.html', '/ui/assets/epic-ui.css', '/ui/assets/epic-ui.js', '/ui/manifest.webmanifest'];
-const CACHE = 'epic-bos-v2';
+const SHELL = ['/ui/app/', '/ui/app/index.html', '/ui/manifest.webmanifest', '/ui/app/brand/lndry-mark.png'];
+const CACHE = 'epic-laundry-ui-v1';
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL).catch(() => {})).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', (e) => {
