@@ -19,7 +19,7 @@ The demo workspace is intentionally isolated from production. Its deterministic 
 
 ### Phase 1 — Visual language foundation
 
-- Consolidate semantic brand tokens around deep teal, cream, mint, brass, violet and critical coral.
+- Consolidate semantic brand tokens around logo violet, violet wash, lavender-white canvas, success emerald, attention amber and critical coral.
 - Keep Manrope as the bundled operational typeface and Noto Sans Devanagari as the multilingual fallback.
 - Standardise page headers, KPI hierarchy, panels, status pills, tables, charts, loading, error and empty-state primitives.
 - Preserve premium density: charts clarify; tables remain the evidence surface.

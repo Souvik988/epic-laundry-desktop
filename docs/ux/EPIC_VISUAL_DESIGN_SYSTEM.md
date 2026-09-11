@@ -4,22 +4,23 @@ Status: V4 continuation · implementation is partial and evidence-led
 
 ## Direction
 
-Premium operational density: calm cream canvas, deep teal navigation and action surfaces, mint operational success, brass attention, restrained violet brand accent, and coral critical states. The interface should feel like a capable counter and control room, not a marketing dashboard.
+Premium operational density: a quiet lavender-white canvas, deep violet navigation and action surfaces, restrained violet emphasis, emerald operational success, amber attention, and coral critical states. The interface should feel like a capable counter and control room, not a marketing dashboard.
 
 ## Tokens
 
 | Role | Token | Use |
 |---|---|---|
-| Canvas | `#f3f1ec` | App background |
-| Surface | `#fffdf8` | Primary cards and forms |
-| Deep teal | `#123039` | Navigation and high-emphasis actions |
-| Text primary | `#17353c` | Headings and key values |
-| Text secondary | `#617178` | Supporting copy |
-| Mint | `#eaf3ef` | Healthy/complete state |
-| Brand violet | `#664cf0` | Brand emphasis and selected category state |
-| Brass | `#e6bc65` | Attention and due-soon state |
-| Critical coral | `#d86b4d` | Destructive or urgent state |
-| Border | `rgba(38,63,68,.10)` | Quiet separation |
+| Canvas | `#f8f7fc` | App background |
+| Surface | `#fffefe` | Primary cards and forms |
+| Ink | `#241a45` | Navigation, headings and high-emphasis actions |
+| Text primary | `#241a45` | Headings and key values |
+| Text secondary | `#4f4a62` | Supporting copy |
+| Brand violet | `#664cf0` | Primary action, emphasis and selected state |
+| Brand wash | `#f0edff` | Selected/quiet brand surfaces |
+| Success emerald | `#187b5c` | Healthy/complete state |
+| Attention amber | `#a96916` | Attention and due-soon state |
+| Critical coral | `#dc2626` | Destructive or urgent state |
+| Border | `#e5e0f2` | Quiet separation |
 
 Color is never the only status signal: pair it with a label, icon and shape. Contrast and keyboard focus remain release gates.
 
