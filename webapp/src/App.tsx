@@ -1,44 +1,49 @@
-import { type ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { LaundryShell } from "@/components/laundry/LaundryShell";
-import LaundryDashboard from "@/pages/laundry/LaundryDashboard";
-import LaundryBooking from "@/pages/laundry/LaundryBooking";
-import LaundryOrders from "@/pages/laundry/LaundryOrders";
-import LaundryCatalogue from "@/pages/laundry/LaundryCatalogue";
-import LaundryExpenses from "@/pages/laundry/LaundryExpenses";
-import LaundryReports from "@/pages/laundry/LaundryReports";
-import LaundryImport from "@/pages/laundry/LaundryImport";
-import LaundryCatalogueImport from "@/pages/laundry/LaundryCatalogueImport";
-import LaundryDispatch from "@/pages/laundry/LaundryDispatch";
-import LaundrySettings from "@/pages/laundry/LaundrySettings";
-import LaundryCustomers from "@/pages/laundry/LaundryCustomers";
-import LaundryPackages from "@/pages/laundry/LaundryPackages";
-import LaundryPrintCentre from "@/pages/laundry/LaundryPrintCentre";
-import LaundrySettlements from "@/pages/laundry/LaundrySettlements";
-import LaundryReportDetail from "@/pages/laundry/LaundryReportDetail";
-import LaundryStatistics from "@/pages/laundry/LaundryStatistics";
-import LaundryGarmentTracking from "@/pages/laundry/LaundryGarmentTracking";
-import LaundryCashClosing from "@/pages/laundry/LaundryCashClosing";
-import LaundryProductionQueue from "@/pages/laundry/LaundryProductionQueue";
-import LaundryQualityClaims from "@/pages/laundry/LaundryQualityClaims";
-import LaundryCorrections from "@/pages/laundry/LaundryCorrections";
-import LaundryRoutes from "@/pages/laundry/LaundryRoutes";
-import LaundryOnlineOrders from "@/pages/laundry/LaundryOnlineOrders";
-import LaundrySyncStatus from "@/pages/laundry/LaundrySyncStatus";
-import LaundryOperationsHub from "@/pages/laundry/LaundryOperationsHub";
-import LaundryFinanceCommandCenter from "@/pages/laundry/LaundryFinanceCommandCenter";
-import LaundryManagement from "@/pages/laundry/LaundryManagement";
-import LaundryReturns from "@/pages/laundry/LaundryReturns";
-import LaundryFinanceSetup from "@/pages/laundry/LaundryFinanceSetup";
-import LaundryStatutoryFinance from "@/pages/laundry/LaundryStatutoryFinance";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { canUseUi, type UiPermission } from "@/components/laundry/LaundryShell";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 
+// Operational pages are independently loaded. A counter opening the dashboard
+// should not pay the startup cost of reports, statutory controls, imports, or
+// print-centre code that they may never visit in that session.
+const LaundryDashboard = lazy(() => import("@/pages/laundry/LaundryDashboard"));
+const LaundryBooking = lazy(() => import("@/pages/laundry/LaundryBooking"));
+const LaundryOrders = lazy(() => import("@/pages/laundry/LaundryOrders"));
+const LaundryCatalogue = lazy(() => import("@/pages/laundry/LaundryCatalogue"));
+const LaundryExpenses = lazy(() => import("@/pages/laundry/LaundryExpenses"));
+const LaundryReports = lazy(() => import("@/pages/laundry/LaundryReports"));
+const LaundryImport = lazy(() => import("@/pages/laundry/LaundryImport"));
+const LaundryCatalogueImport = lazy(() => import("@/pages/laundry/LaundryCatalogueImport"));
+const LaundryDispatch = lazy(() => import("@/pages/laundry/LaundryDispatch"));
+const LaundrySettings = lazy(() => import("@/pages/laundry/LaundrySettings"));
+const LaundryCustomers = lazy(() => import("@/pages/laundry/LaundryCustomers"));
+const LaundryPackages = lazy(() => import("@/pages/laundry/LaundryPackages"));
+const LaundryPrintCentre = lazy(() => import("@/pages/laundry/LaundryPrintCentre"));
+const LaundrySettlements = lazy(() => import("@/pages/laundry/LaundrySettlements"));
+const LaundryReportDetail = lazy(() => import("@/pages/laundry/LaundryReportDetail"));
+const LaundryStatistics = lazy(() => import("@/pages/laundry/LaundryStatistics"));
+const LaundryGarmentTracking = lazy(() => import("@/pages/laundry/LaundryGarmentTracking"));
+const LaundryCashClosing = lazy(() => import("@/pages/laundry/LaundryCashClosing"));
+const LaundryProductionQueue = lazy(() => import("@/pages/laundry/LaundryProductionQueue"));
+const LaundryQualityClaims = lazy(() => import("@/pages/laundry/LaundryQualityClaims"));
+const LaundryCorrections = lazy(() => import("@/pages/laundry/LaundryCorrections"));
+const LaundryRoutes = lazy(() => import("@/pages/laundry/LaundryRoutes"));
+const LaundryOnlineOrders = lazy(() => import("@/pages/laundry/LaundryOnlineOrders"));
+const LaundrySyncStatus = lazy(() => import("@/pages/laundry/LaundrySyncStatus"));
+const LaundryOperationsHub = lazy(() => import("@/pages/laundry/LaundryOperationsHub"));
+const LaundryFinanceCommandCenter = lazy(() => import("@/pages/laundry/LaundryFinanceCommandCenter"));
+const LaundryManagement = lazy(() => import("@/pages/laundry/LaundryManagement"));
+const LaundryReturns = lazy(() => import("@/pages/laundry/LaundryReturns"));
+const LaundryFinanceSetup = lazy(() => import("@/pages/laundry/LaundryFinanceSetup"));
+const LaundryStatutoryFinance = lazy(() => import("@/pages/laundry/LaundryStatutoryFinance"));
+
 export function App() {
   return (
     <AuthGate>
+    <Suspense fallback={<RouteLoading />}>
     <Routes>
       <Route path="/" element={<LaundryLanding />} />
       <Route path="/laundry" element={<LaundryShell />}>
@@ -79,8 +84,13 @@ export function App() {
       </Route>
       <Route path="*" element={<Navigate to="/laundry/dashboard" replace />} />
     </Routes>
+    </Suspense>
     </AuthGate>
   );
+}
+
+function RouteLoading() {
+  return <div className="grid min-h-72 place-items-center text-sm text-muted-foreground">Opening workspace…</div>;
 }
 
 function LaundryLanding() {

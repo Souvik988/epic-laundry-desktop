@@ -16,11 +16,13 @@ Clean-room, docs-first, then executed.
 
 ## Quick start (run it)
 ```bash
-# 1) backend kernel
-cd server && npm install && npm start
-# 2) (optional) WhatsApp — clone + run shortlinXchat, scan QR, then:
+# 1) build the counter UI (generated output is intentionally not committed)
+cd webapp && npm install && npm run build
+# 2) backend kernel
+cd ../server && npm install && npm start
+# 3) (optional) WhatsApp — clone + run shortlinXchat, scan QR, then:
 #    curl -X POST http://localhost:3001/api/wa/webhook -H "X-API-Key: dev-key-change-me"
-# 3) desktop app
+# 4) desktop app
 cd ../desktop && npm install && npm start
 ```
 Open the control UI at http://localhost:3001/ui/ — create a Sales Invoice, Submit it, and watch

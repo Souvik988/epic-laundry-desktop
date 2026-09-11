@@ -39,6 +39,12 @@ jobs:
       - name: Typecheck server
         run: npm run typecheck
         working-directory: server
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: webapp
+      - name: Build web application for server static and asset gates
+        run: npm run build
+        working-directory: webapp
       - name: Run full server regression and V3 tagging gates
         run: >-
           npm run test:laundry && npm run test:auth && npm run test:store-migration && npm run test:clean-db-bootstrap &&
@@ -64,9 +70,6 @@ jobs:
           npm run test:customer-portal && npm run test:garment-assets && npm run test:order-search &&
           npm run test:e2e
         working-directory: server
-      - name: Install web dependencies
-        run: npm ci
-        working-directory: webapp
       - name: Audit web production dependencies
         run: npm audit --omit=dev --audit-level=high
         working-directory: webapp
@@ -78,9 +81,6 @@ jobs:
         with:
           name: epic-laundry-web-sbom
           path: webapp/webapp-sbom.json
-      - name: Build web application
-        run: npm run build
-        working-directory: webapp
       - name: Run static accessibility audit
         run: npm run audit:a11y
         working-directory: webapp

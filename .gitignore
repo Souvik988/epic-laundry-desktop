@@ -20,13 +20,10 @@ demo-runtime/
 /test-results/
 /webapp/test-results/
 
-# Web build output is emitted into the server's local static directory. Source assets
-# stay under webapp/public; only existing deliberately tracked legacy files remain tracked.
-/server/public/app/assets/index-*.js
-/server/public/app/assets/index-*.css
-/server/public/app/assets/*.woff2
-/server/public/app/illustrations/
-/server/public/app/services/
+# Web build output is emitted into the server's local static directory. It is
+# reproducibly built from webapp/ for Docker and Electron packages; source assets
+# live only under webapp/public.
+/server/public/app/
 
 # logs
 *.log

@@ -1,9 +1,14 @@
 node_modules
+webapp/node_modules
+desktop/node_modules
 npm-debug.log
 .git
 server/dist
 server/data
+server/public/app/
 server/.env
+desktop/dist
+desktop/dist-*
 *.log
 *.exe
 .DS_Store

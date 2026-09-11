@@ -10,7 +10,9 @@
     "test:workspace": "node workspace.test.js",
     "test:menu-routing": "node navigation.test.js",
     "test:recovery-policy": "node recovery-policy.test.js",
+    "build:web": "npm --prefix ../webapp run build",
     "build:server": "npm --prefix ../server run build",
+    "build:runtime": "npm run build:web && npm run build:server",
     "manifest": "node scripts/release-manifest.mjs",
     "verify:manifest": "node scripts/verify-release-manifest.mjs",
     "sign:manifest": "node scripts/sign-release-manifest.mjs",
@@ -18,9 +20,9 @@
     "test:release-signature": "node scripts/release-signature.test.mjs",
     "test:production-release-guard": "node scripts/production-release-guard.test.mjs",
     "assert:production-release": "node scripts/production-release-guard.mjs",
-    "pack": "npm run build:server && electron-builder --dir && npm run manifest",
-    "dist": "npm run build:server && electron-builder && npm run manifest",
-    "dist:win": "npm run build:server && electron-builder --win && npm run manifest",
+    "pack": "npm run build:runtime && electron-builder --dir && npm run manifest",
+    "dist": "npm run build:runtime && electron-builder && npm run manifest",
+    "dist:win": "npm run build:runtime && electron-builder --win && npm run manifest",
     "dist:win:production": "node scripts/production-release.mjs"
   },
   "dependencies": {

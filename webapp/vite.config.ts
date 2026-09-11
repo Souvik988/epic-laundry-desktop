@@ -16,7 +16,26 @@ export default defineConfig({
   build: {
     outDir: path.resolve(rootDir, "../server/public/app"),
     emptyOutDir: true,
-    chunkSizeWarningLimit: 1500,
+    // Route-level lazy loading keeps the counter workspace fast; split shared
+    // foundations explicitly so a chart-heavy or reporting screen does not
+    // inflate the first dashboard download.
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined
+          if (id.includes("node_modules\\recharts") || id.includes("node_modules/recharts")) return "charts"
+          if (id.includes("node_modules\\lucide-react") || id.includes("node_modules/lucide-react")) return "icons"
+          if (id.includes("node_modules\\@tanstack\\react-query") || id.includes("node_modules/@tanstack/react-query")) return "query"
+          if (
+            id.includes("node_modules\\react\\") || id.includes("node_modules/react/") ||
+            id.includes("node_modules\\react-dom\\") || id.includes("node_modules/react-dom/") ||
+            id.includes("node_modules\\react-router") || id.includes("node_modules/react-router")
+          ) return "react"
+          return undefined
+        },
+      },
+    },
   },
   server: { port: 5199 },
 })
